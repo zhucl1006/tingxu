@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>听序 Tingxu · 极简无感 AI 会议助手 UI/UX 设计稿 v0.3 (Impeccable Edition)</title>
+  <title>听序 Tingxu · 极简无感 AI 会议助手 UI/UX 全功能设计稿 v0.3 (Impeccable Edition)</title>
   <style>
     /* ==========================================================================
-       听序 (Tingxu) — Impeccable Design System v0.3
+       听序 (Tingxu) — Impeccable Design System v0.3 全功能交互规范
        Operate Mode / Precision Desktop Productivity
        ========================================================================== */
     :root {
@@ -105,7 +105,7 @@
     }
     button, input, select, textarea { font: inherit; color: inherit; }
     h1, h2, h3, p { margin: 0; }
-    a { color: var(--brand-blue); text-decoration: none; }
+    a { color: var(--brand-blue); text-decoration: none; cursor: pointer; }
     a:hover { text-decoration: underline; }
 
     /* 通用控件 */
@@ -679,6 +679,48 @@
       line-height: 1.6;
     }
 
+    /* 表格组件 */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      text-align: left;
+    }
+    .data-table th {
+      padding: 10px 14px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      background: var(--bg-subtle);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .data-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      color: var(--text-primary);
+    }
+    .data-table tr:hover td {
+      background: var(--bg-subtle);
+    }
+
+    /* 待办事项列表 */
+    .task-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .task-item.completed label {
+      text-decoration: line-through;
+      color: var(--text-tertiary);
+    }
+    .task-item input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      margin-top: 3px;
+      cursor: pointer;
+    }
+
     /* 弹窗 Modal */
     .modal-overlay {
       position: fixed;
@@ -725,10 +767,10 @@
 
   <!-- 顶部演示指引栏 -->
   <div class="top-banner" data-testid="global-header-div-banner">
-    <span>🎙️ 听序 Tingxu · UI/UX 生产级设计稿 v0.3 (Impeccable Edition) · 会议数据仅存本机</span>
+    <span>🎙️ 听序 Tingxu · UI/UX 生产级全功能设计稿 v0.3 (Impeccable Edition) · 会议数据仅存本机</span>
     <div style="display: flex; gap: 8px;">
       <button class="small" data-testid="global-header-btn-test-scenarios" onclick="openScenarios()">⚡️ 测试异常状态</button>
-      <button class="small" data-testid="global-header-btn-switch-admin" onclick="switchMode()">切换运营控制台 ↗</button>
+      <button class="small" id="switch-admin-btn" data-testid="global-header-btn-switch-admin" onclick="switchMode()">进入运营后台 ↗</button>
     </div>
   </div>
 
@@ -789,22 +831,63 @@
   <div id="floating-slot"></div>
   <div id="modal-slot"></div>
 
-  <!-- 客户端状态管理与渲染逻辑 -->
+  <!-- 全功能客户端状态管理与渲染逻辑 -->
   <script>
     'use strict';
     const $ = s => document.querySelector(s);
     const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-    let currentMode = 'desktop';
-    let currentRoute = 'record'; // 默认启动到会中实时记录进行高保真展示
+    // 本地持久化与演示数据库
+    const defaultData = {
+      minutes: 540,
+      coupon: 0,
+      days: 30,
+      tasks: [
+        { id: 1, text: '整理桌面端双端系统音频与麦克风权限引导方案', owner: '我', due: '11月02日', done: false },
+        { id: 2, text: '完成 Windows WASAPI 与 macOS ScreenCaptureKit 双轨采集回归验证', owner: '待确认', due: '下周一', done: false },
+        { id: 3, text: '核验微信商户 Native 扫码支付资质与对账回调测试', owner: '我', due: '已完成', done: true },
+        { id: 4, text: '确认跨设备换机后的本地 SQLite 备份导出机制', owner: '待确认', due: '待确认', done: false }
+      ],
+      meetings: [
+        { id: 1, title: '产品方案评审会 (第 2 场)', date: '刚刚', duration: '42 分钟', source: '在线双轨录音', status: '已整理' },
+        { id: 2, title: '客户需求沟通与保密反馈拉齐会', date: '昨天 14:30', duration: '28 分钟', source: '外部文件导入', status: '已整理' },
+        { id: 3, title: '底层音频重采样与环形缓冲技术讨论', date: '10月28日 16:00', duration: '36 分钟', source: '在线双轨录音', status: '待整理' }
+      ],
+      notes: "## 核心会议结论\n1. 听序优先服务中国大陆个人办公高频开会的产品经理与项目经理。\n2. 坚守 Local-First 数据隐私主权，会议音频、逐字稿与纪要默认保存在本机 SQLite。\n\n## 议题跟进与决策\n• 采用会议时长套餐收费，标准实时洞察、会后纪要、本场问答直接纳入套餐权益，不设 AI 扣点负担。\n• Windows 采用 WASAPI Loopback，macOS 采用 ScreenCaptureKit，物理双轨免驱免机器人。\n\n## 待办事项\n• 完成权限流程与双轨采集验证（截止时间已从周五调整为下周一完成）。",
+      orders: [
+        { id: 'DEMO-20261030-01', name: '专业版包月套餐 (600分钟)', amount: 39, status: '已支付（模拟）' }
+      ],
+      ledger: [
+        { id: 101, actor: '系统', type: '购买套餐', amount: 600, reason: '用户购买专业版套餐', status: '已生效', time: '2026-10-30 14:00' }
+      ]
+    };
+
+    let db;
+    try {
+      db = JSON.parse(localStorage.getItem('tingxu_impeccable_db')) || structuredClone(defaultData);
+    } catch {
+      db = structuredClone(defaultData);
+    }
+
+    function saveDb() {
+      try {
+        localStorage.setItem('tingxu_impeccable_db', JSON.stringify(db));
+      } catch {}
+    }
+
+    let currentMode = 'desktop'; // 'desktop' | 'admin'
+    let currentRoute = 'record';  // 'home' | 'record' | 'detail' | 'tasks' | 'search' | 'billing' | 'settings' | 'login'
+    let currentMeetingId = 1;
+    let detailTab = 'summary'; // 'summary' | 'transcript' | 'actions' | 'marks'
     let isRecording = true;
     let isPaused = false;
     let secondsElapsed = 105;
     let isFloatPillOn = false;
-    let liveStep = 4; // 示例步数
+    let liveStep = 4;
     let activeEvidence = null;
     let leftTab = 'insights';
     let rightTab = 'transcript';
+    let searchQuery = '';
 
     // 会中样例逐字稿数据（双轨隔离）
     const sampleTranscripts = [
@@ -873,6 +956,37 @@
       return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
     }
 
+    // 路由导航逻辑
+    function go(route, param = null) {
+      currentRoute = route;
+      if (param) currentMeetingId = param;
+      
+      const routeLabels = {
+        home: '会议工作台',
+        record: '会中实时记录',
+        detail: '会议详情',
+        tasks: '我的待办',
+        search: '历史检索',
+        billing: '套餐与用量',
+        settings: '系统设置',
+        overview: '运营概览',
+        users: '用户与权益',
+        plans: '套餐配置',
+        orders: '订单与退款',
+        audit: '审计记录'
+      };
+      
+      $('#crumb-text').textContent = (currentMode === 'admin' ? '运营管理 / ' : '个人工作台 / ') + (routeLabels[route] || '功能视图');
+      render();
+    }
+
+    function switchMode() {
+      currentMode = currentMode === 'desktop' ? 'admin' : 'desktop';
+      currentRoute = currentMode === 'admin' ? 'overview' : 'home';
+      $('#switch-admin-btn').textContent = currentMode === 'admin' ? '返回桌面客户端 ↗' : '进入运营后台 ↗';
+      go(currentRoute);
+    }
+
     function renderNav() {
       const desktopNav = [
         { id: 'record', icon: '◉', label: '会中实时记录' },
@@ -882,7 +996,17 @@
         { id: 'billing', icon: '◇', label: '套餐与用量' },
         { id: 'settings', icon: '⚙', label: '系统设置' }
       ];
-      $('#nav-list').innerHTML = desktopNav.map(item => `
+
+      const adminNav = [
+        { id: 'overview', icon: '▦', label: '运营概览' },
+        { id: 'users', icon: '♙', label: '用户与权益' },
+        { id: 'plans', icon: '◇', label: '套餐配置' },
+        { id: 'orders', icon: '▤', label: '订单与退款' },
+        { id: 'audit', icon: '☷', label: '审计记录' }
+      ];
+
+      const items = currentMode === 'desktop' ? desktopNav : adminNav;
+      $('#nav-list').innerHTML = items.map(item => `
         <button class="${currentRoute === item.id ? 'active' : ''}" 
                 data-testid="app-sidebar-btn-nav-${item.id}"
                 onclick="go('${item.id}')">
@@ -892,17 +1016,9 @@
       `).join('');
     }
 
-    function go(route) {
-      currentRoute = route;
-      $('#crumb-text').textContent = `个人工作台 / ${route === 'record' ? '会中实时记录' : route === 'home' ? '会议工作台' : '功能模块'}`;
-      render();
-    }
-
-    function switchMode() {
-      alert('运营管理后台采用独立安全 RBAC 体系，已在 SAD 与架构中设计。此设计稿主要展示桌面端核心会中体验。');
-    }
-
-    // 渲染 C-04 Live Workbench
+    // =========================================================================
+    // 视图 1：会中双栏工作台 (C-04 Live In-Meeting Workbench)
+    // =========================================================================
     function renderLiveWorkbench() {
       return `
         <div class="live-header" data-testid="workbench-page-header">
@@ -1005,7 +1121,7 @@
 
           <div style="display:flex; align-items:center; gap:12px;">
             <div style="font-size:12px; color:var(--text-secondary);">
-              演示步骤: <strong>第 ${liveStep} 段</strong> / 共 7 段
+              演示进度: <strong>第 ${liveStep} 段</strong> / 共 7 段
             </div>
             <button class="primary" data-testid="workbench-page-btn-advance-discussion" onclick="advanceStep()">
               推进讨论 →
@@ -1015,7 +1131,6 @@
       `;
     }
 
-    // 渲染洞察看板列表
     function renderInsightsList() {
       return `
         <div class="topic-banner" data-testid="workbench-page-div-topic">
@@ -1078,7 +1193,6 @@
       `;
     }
 
-    // 渲染逐字稿列表
     function renderTranscriptList() {
       return sampleTranscripts.slice(0, liveStep).map(row => `
         <div class="transcript-row ${activeEvidence && activeEvidence.includes(row.id) ? 'highlighted' : ''}" 
@@ -1096,7 +1210,6 @@
       `).join('');
     }
 
-    // 渲染 AI 问一问
     function renderChatPanel() {
       return `
         <div style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">
@@ -1132,6 +1245,588 @@
           <textarea style="min-height:220px;" placeholder="在此输入个人临时草稿、不便公开的备忘..."></textarea>
         </div>
       `;
+    }
+
+    // =========================================================================
+    // 视图 2：会议工作台 (C-02 Meeting Home)
+    // =========================================================================
+    function renderHome() {
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+          <div>
+            <h1 style="font-size:24px; font-weight:700;">会议工作台</h1>
+            <p style="color:var(--text-secondary); margin-top:4px;">让对话留下清晰的下一步。所有录音、逐字稿与智能纪要均保存在本机。</p>
+          </div>
+          <div style="display:flex; gap:10px;">
+            <button class="primary" data-testid="home-page-btn-new-meeting" onclick="go('record')">＋ 开始新会议</button>
+            <button data-testid="home-page-btn-import" onclick="openImportModal()">导入音频文件</button>
+          </div>
+        </div>
+
+        <div class="cards-grid">
+          <div class="card" data-testid="home-page-card-meetings-count">
+            <span style="font-size:12px; color:var(--text-tertiary);">本机会议记录</span>
+            <div class="stat-number">${db.meetings.length} 场</div>
+            <span style="font-size:12px; color:var(--status-success);">✓ 数据主权归属本机</span>
+          </div>
+
+          <div class="card" data-testid="home-page-card-tasks-count">
+            <span style="font-size:12px; color:var(--text-tertiary);">待跟进行动项</span>
+            <div class="stat-number">${db.tasks.filter(t => !t.done).length} 项</div>
+            <button class="link" onclick="go('tasks')" data-testid="home-page-btn-goto-tasks">查看我的待办 →</button>
+          </div>
+
+          <div class="card" data-testid="home-page-card-duration-quota">
+            <span style="font-size:12px; color:var(--text-tertiary);">本月套餐时长</span>
+            <div class="stat-number">${db.minutes} 分钟</div>
+            <span style="font-size:12px; color:var(--text-secondary);">包含会中洞察与本场问答</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:24px;" data-testid="home-page-card-recent-meetings">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+            <h2 style="font-size:16px; font-weight:600;">最近会议</h2>
+            <button class="link" onclick="go('search')">搜索全部历史 →</button>
+          </div>
+
+          <table class="data-table" data-testid="home-page-table-meetings">
+            <thead>
+              <tr>
+                <th>会议名称</th>
+                <th>时间</th>
+                <th>录音时长</th>
+                <th>来源方式</th>
+                <th>整理状态</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${db.meetings.map(m => `
+                <tr data-testid="home-page-row-meeting-${m.id}">
+                  <td>
+                    <a onclick="go('detail', ${m.id})" data-testid="home-page-link-meeting-title-${m.id}" style="font-weight:600;">
+                      ${esc(m.title)}
+                    </a>
+                  </td>
+                  <td>${esc(m.date)}</td>
+                  <td>${esc(m.duration)}</td>
+                  <td>${esc(m.source)}</td>
+                  <td>
+                    <span class="badge ${m.status === '已整理' ? 'green' : 'warn'}">
+                      ${esc(m.status)}
+                    </span>
+                  </td>
+                  <td>
+                    <button class="link" onclick="go('detail', ${m.id})" data-testid="home-page-btn-view-detail-${m.id}">查看详情</button>
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 视图 3：我的待办 (C-07 Tasks & Action Items)
+    // =========================================================================
+    function renderTasks() {
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+          <div>
+            <h1 style="font-size:24px; font-weight:700;">我的待办 (Action Items)</h1>
+            <p style="color:var(--text-secondary); margin-top:4px;">把会议讨论，转变为清晰的下一步。支持状态核验与手工补充。</p>
+          </div>
+          <button class="primary" data-testid="tasks-page-btn-create-task" onclick="openAddTaskModal()">＋ 添加新待办</button>
+        </div>
+
+        <div class="card" data-testid="tasks-page-card-container">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding-bottom:12px; border-bottom:1px solid var(--border-subtle); margin-bottom:12px;">
+            <div style="font-weight:600;">待办事项清单 (${db.tasks.filter(t => !t.done).length} 项未完成)</div>
+            <div style="font-size:12px; color:var(--text-tertiary);">AI 提取的待办请注意核对责任人与截止时间</div>
+          </div>
+
+          <div data-testid="tasks-page-list-container">
+            ${db.tasks.map(t => `
+              <div class="task-item ${t.done ? 'completed' : ''}" data-testid="tasks-page-row-task-${t.id}">
+                <input type="checkbox" id="task-chk-${t.id}" ${t.done ? 'checked' : ''} 
+                       data-testid="tasks-page-chk-task-${t.id}"
+                       onchange="toggleTaskDone(${t.id})">
+                <label for="task-chk-${t.id}" style="flex:1; margin:0; cursor:pointer;">
+                  <div style="font-weight:500; font-size:14px;">${esc(t.text)}</div>
+                  <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">
+                    负责人：<strong>${esc(t.owner)}</strong> · 截止日期：<strong>${esc(t.due)}</strong>
+                  </div>
+                </label>
+                <button class="danger" style="font-size:12px; padding:3px 8px;" onclick="deleteTask(${t.id})">删除</button>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 视图 4：历史检索 (C-08 Local Search & FTS5)
+    // =========================================================================
+    function renderSearch() {
+      const results = searchQuery ? db.meetings.filter(m => 
+        m.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        db.notes.toLowerCase().includes(searchQuery.toLowerCase())
+      ) : [];
+
+      return `
+        <div style="margin-bottom:20px;">
+          <h1 style="font-size:24px; font-weight:700;">历史会议检索</h1>
+          <p style="color:var(--text-secondary); margin-top:4px;">基于本地 SQLite FTS5 引擎，毫秒级检索本地会议标题、逐字稿正文与纪要结论。</p>
+        </div>
+
+        <div class="card" data-testid="search-page-card-input">
+          <label>输入关键词（如：“Local-First”、“方案”、“排期”、“采集”）</label>
+          <div style="display:flex; gap:10px; margin-top:6px;">
+            <input type="text" id="search-input-field" 
+                   data-testid="search-page-input-keyword"
+                   placeholder="输入搜索关键词后按回车..." 
+                   value="${esc(searchQuery)}"
+                   onkeydown="if(event.key==='Enter') executeSearch()">
+            <button class="primary" data-testid="search-page-btn-submit" onclick="executeSearch()">搜索本地</button>
+          </div>
+        </div>
+
+        <div style="margin-top:20px;" data-testid="search-page-results-container">
+          ${searchQuery ? `
+            <div style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+              找到 <strong>${results.length}</strong> 条匹配结果：
+            </div>
+            ${results.length > 0 ? results.map(r => `
+              <div class="card" style="margin-bottom:12px;" data-testid="search-page-result-card-${r.id}">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                  <a onclick="go('detail', ${r.id})" style="font-size:15px; font-weight:600;">${esc(r.title)}</a>
+                  <span class="badge blue">${esc(r.date)}</span>
+                </div>
+                <div style="font-size:13px; color:var(--text-secondary); margin-top:8px;">
+                  ...匹配到正文高亮片段：<mark style="background:var(--brand-blue-subtle); color:var(--brand-blue); padding:1px 4px; border-radius:3px;">${esc(searchQuery)}</mark>... 会议资料保存在本机，支持全文索引秒级定位。
+                </div>
+              </div>
+            `).join('') : `
+              <div class="card" style="text-align:center; padding:40px 20px; color:var(--text-secondary);">
+                未找到包含 “${esc(searchQuery)}” 的本地会议记录
+              </div>
+            `}
+          ` : `
+            <div class="card soft" style="text-align:center; padding:40px 20px; color:var(--text-secondary);">
+              🔍 输入任意关键词，立即检索保存在本地的历史会议
+            </div>
+          `}
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 视图 5：套餐与用量 (C-09 Billing & Entitlements)
+    // =========================================================================
+    function renderBilling() {
+      return `
+        <div style="margin-bottom:20px;">
+          <h1 style="font-size:24px; font-weight:700;">套餐与用量管理</h1>
+          <p style="color:var(--text-secondary); margin-top:4px;">透明的时长计费体系。标准会中实时洞察、会后纪要与本场问答全量包含在套餐内。</p>
+        </div>
+
+        <div class="cards-grid">
+          <div class="card" data-testid="billing-page-card-quota-minutes">
+            <span style="font-size:12px; color:var(--text-tertiary);">剩余会议时长</span>
+            <div class="stat-number">${db.minutes} 分钟</div>
+            <span style="font-size:12px; color:var(--status-success);">按实际处理音轨秒数核销</span>
+          </div>
+
+          <div class="card" data-testid="billing-page-card-included-features">
+            <span style="font-size:12px; color:var(--text-tertiary);">包含的标准功能</span>
+            <div style="font-size:14px; font-weight:600; margin:10px 0 4px;">✓ 会中实时双栏洞察</div>
+            <div style="font-size:14px; font-weight:600; margin-bottom:4px;">✓ 本场 AI 问一问</div>
+            <div style="font-size:14px; font-weight:600;">✓ 全局重整纪要与待办</div>
+          </div>
+
+          <div class="card" data-testid="billing-page-card-expiry">
+            <span style="font-size:12px; color:var(--text-tertiary);">当前套餐有效期</span>
+            <div class="stat-number">剩余 30 天</div>
+            <span style="font-size:12px; color:var(--text-secondary);">到期不影响本地历史文件查看</span>
+          </div>
+        </div>
+
+        <h2 style="font-size:16px; margin:28px 0 14px;">套餐选购 (微信支付 Native 扫码接入)</h2>
+        <div class="cards-grid">
+          <div class="card" data-testid="billing-page-card-plan-basic">
+            <h3 style="font-size:16px;">轻量版 (按月)</h3>
+            <div style="font-size:24px; font-weight:700; margin:10px 0;">¥19 <small style="font-size:12px; font-weight:400; color:var(--text-secondary);">/ 月</small></div>
+            <ul style="padding-left:18px; font-size:13px; color:var(--text-secondary); line-height:1.8;">
+              <li>180 分钟会议时长</li>
+              <li>标准 AI 会中洞察全包</li>
+              <li>本地资料永久可访问</li>
+            </ul>
+            <button style="width:100%; margin-top:14px;" onclick="openPaymentModal('轻量版', 19)">选择轻量版</button>
+          </div>
+
+          <div class="card" style="border-color:var(--brand-blue-border); background:var(--bg-active);" data-testid="billing-page-card-plan-pro">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h3 style="font-size:16px;">专业版 (高频推荐)</h3>
+              <span class="badge blue">最受 PM 欢迎</span>
+            </div>
+            <div style="font-size:24px; font-weight:700; margin:10px 0;">¥39 <small style="font-size:12px; font-weight:400; color:var(--text-secondary);">/ 月</small></div>
+            <ul style="padding-left:18px; font-size:13px; color:var(--text-secondary); line-height:1.8;">
+              <li>600 分钟充足会议时长</li>
+              <li>标准 AI 洞察与问答全包</li>
+              <li>优先享受新模型降级熔断通道</li>
+            </ul>
+            <button class="primary" style="width:100%; margin-top:14px;" onclick="openPaymentModal('专业版', 39)">立即选购专业版</button>
+          </div>
+
+          <div class="card" data-testid="billing-page-card-plan-addon">
+            <h3 style="font-size:16px;">时长加量包 (单次)</h3>
+            <div style="font-size:24px; font-weight:700; margin:10px 0;">¥9 <small style="font-size:12px; font-weight:400; color:var(--text-secondary);">/ 60分钟</small></div>
+            <ul style="padding-left:18px; font-size:13px; color:var(--text-secondary); line-height:1.8;">
+              <li>60 分钟单次补充包</li>
+              <li>套餐内时长用尽后无缝接力</li>
+              <li>长期有效不过期</li>
+            </ul>
+            <button style="width:100%; margin-top:14px;" onclick="openPaymentModal('加量包', 9)">购买加量包</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:24px;" data-testid="billing-page-card-orders">
+          <h2 style="font-size:16px; margin-bottom:12px;">历史订单与对账记录</h2>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>订单编号</th>
+                <th>商品名称</th>
+                <th>实付金额</th>
+                <th>支付状态</th>
+                <th>支付方式</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${db.orders.map(o => `
+                <tr>
+                  <td>${esc(o.id)}</td>
+                  <td>${esc(o.name)}</td>
+                  <td>¥${o.amount}</td>
+                  <td><span class="badge green">${esc(o.status)}</span></td>
+                  <td>微信支付 Native</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 视图 6：系统设置 (C-10 Preferences)
+    // =========================================================================
+    function renderSettings() {
+      return `
+        <div style="margin-bottom:20px;">
+          <h1 style="font-size:24px; font-weight:700;">系统设置 (Preferences)</h1>
+          <p style="color:var(--text-secondary); margin-top:4px;">配置音频硬件设备、本地沙箱存储路径与隐私边界。</p>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <h2 style="font-size:16px; margin-bottom:14px;">录音与音频设备</h2>
+          <div style="margin-bottom:12px;">
+            <label>默认输入麦克风 (我方发言)</label>
+            <select>
+              <option>MacBook Pro 内置麦克风 (48kHz)</option>
+              <option>AirPods Pro 蓝牙无线音频</option>
+            </select>
+          </div>
+          <div>
+            <label>系统音频免驱内录 (远端发言)</label>
+            <div style="font-size:13px; color:var(--text-secondary); padding:8px 0;">
+              ✓ macOS ScreenCaptureKit 官方通道已授权（无需安装虚拟声卡）
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-bottom:16px;">
+          <h2 style="font-size:16px; margin-bottom:14px;">本地数据与隐私主权</h2>
+          <div style="font-size:13px; line-height:1.7; color:var(--text-secondary);">
+            • 本地存储路径：<code>~/Library/Application Support/tingxu/user_hash/tingxu.db</code><br>
+            • 隐私保障：会议标题、音视频文件与逐字稿绝不备份到云端数据库。<br>
+            • 到期权益说明：套餐到期后，已有本地会议记录永久可以查阅与导出。
+          </div>
+        </div>
+
+        <div class="card" style="border-color:var(--status-danger-border);">
+          <h2 style="font-size:16px; color:var(--status-danger); margin-bottom:10px;">危险操作区</h2>
+          <p style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">重置演示数据将清空浏览器本地缓存并恢复初始示例状态。</p>
+          <button class="danger" onclick="resetAllDemo()">重置演示数据</button>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 视图 7：会议详情 (C-06 Post-Meeting Detail)
+    // =========================================================================
+    function renderDetail() {
+      const meeting = db.meetings.find(m => m.id === currentMeetingId) || db.meetings[0];
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+          <div>
+            <div style="font-size:12px; color:var(--text-tertiary); margin-bottom:4px;">MEETING DETAIL / 本机资料</div>
+            <h1 style="font-size:22px; font-weight:700;">${esc(meeting.title)}</h1>
+            <p style="font-size:12px; color:var(--text-secondary); margin-top:2px;">
+              ${esc(meeting.date)} · ${esc(meeting.duration)} · ${esc(meeting.source)}
+            </p>
+          </div>
+
+          <div style="display:flex; gap:10px;">
+            <button onclick="exportMarkdown()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> 导出 Markdown</button>
+            <button onclick="go('home')">返回工作台</button>
+          </div>
+        </div>
+
+        <div class="segmented-tabs" style="margin-bottom:18px;">
+          <button class="${detailTab === 'summary' ? 'active' : ''}" onclick="detailTab='summary'; render();">智能纪要</button>
+          <button class="${detailTab === 'transcript' ? 'active' : ''}" onclick="detailTab='transcript'; render();">逐字稿与回放</button>
+          <button class="${detailTab === 'actions' ? 'active' : ''}" onclick="detailTab='actions'; render();">行动待办</button>
+          <button class="${detailTab === 'marks' ? 'active' : ''}" onclick="detailTab='marks'; render();">会中洞察快照</button>
+        </div>
+
+        ${detailTab === 'summary' ? `
+          <div class="card">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;">
+              <h2 style="font-size:16px;">会议纪要 (已生成版本)</h2>
+              <button class="small" onclick="alert('已成功保存修改！')">保存编辑</button>
+            </div>
+            <textarea style="min-height:280px; font-family:monospace; font-size:13px; line-height:1.7;">${esc(db.notes)}</textarea>
+          </div>
+        ` : detailTab === 'transcript' ? `
+          <div class="card">
+            <h2 style="font-size:16px; margin-bottom:12px;">全场逐字稿 (带物理音轨标识)</h2>
+            ${sampleTranscripts.map(row => `
+              <div class="transcript-row">
+                <div class="transcript-meta">
+                  <span class="transcript-speaker">${row.speaker}</span>
+                  <span class="transcript-time">${row.time}</span>
+                </div>
+                <div class="transcript-text">${esc(row.text)}</div>
+              </div>
+            `).join('')}
+          </div>
+        ` : detailTab === 'actions' ? `
+          <div class="card">
+            <h2 style="font-size:16px; margin-bottom:12px;">从本场会议提取的待办</h2>
+            ${db.tasks.map(t => `
+              <div class="task-item">
+                <input type="checkbox" ${t.done ? 'checked' : ''} onchange="toggleTaskDone(${t.id})">
+                <label style="flex:1;">${esc(t.text)} (负责人: ${esc(t.owner)})</label>
+              </div>
+            `).join('')}
+          </div>
+        ` : `
+          <div class="card">
+            <h2 style="font-size:16px; margin-bottom:12px;">会中洞察快照与修订记录</h2>
+            <div style="font-size:13px; color:var(--text-secondary); margin-bottom:14px;">
+              已永久保存会中达成的 2 项明确决定与 1 项经修订的采集验证待办。
+            </div>
+            ${liveItems.map(item => `
+              <div class="insight-card protected">
+                <strong>${esc(item.title)}</strong>
+                <p style="font-size:13px; margin-top:4px;">${esc(item.body)}</p>
+              </div>
+            `).join('')}
+          </div>
+        `}
+      `;
+    }
+
+    // =========================================================================
+    // 视图 8：运营控制台 (Admin Overview & Audit)
+    // =========================================================================
+    function renderAdminOverview() {
+      return `
+        <div style="margin-bottom:20px;">
+          <h1 style="font-size:24px; font-weight:700;">听序 · 独立 Web 运营控制台</h1>
+          <p style="color:var(--text-secondary); margin-top:4px;">仅供所有者与授权运营人员使用。严守 Zero-Content 隐私铁律：后台完全看不到用户会议正文。</p>
+        </div>
+
+        <div class="cards-grid">
+          <div class="card">
+            <span style="font-size:12px; color:var(--text-tertiary);">独立用户总数</span>
+            <div class="stat-number">1,286 人</div>
+            <span style="font-size:12px; color:var(--status-success);">按脱敏账号去重</span>
+          </div>
+
+          <div class="card">
+            <span style="font-size:12px; color:var(--text-tertiary);">本月转写处理时长</span>
+            <div class="stat-number">18,420 分钟</div>
+            <span style="font-size:12px; color:var(--text-secondary);">来自已结算流水</span>
+          </div>
+
+          <div class="card">
+            <span style="font-size:12px; color:var(--text-tertiary);">本月实收账款</span>
+            <div class="stat-number">¥8,640.00</div>
+            <span style="font-size:12px; color:var(--brand-blue);">微信商户号入账</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:24px;">
+          <h2 style="font-size:16px; margin-bottom:12px;">运营补偿与审批流水 (不可篡改账本)</h2>
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>流水 ID</th>
+                <th>操作人</th>
+                <th>调整类型</th>
+                <th>调整数量</th>
+                <th>业务理由</th>
+                <th>审批状态</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${db.ledger.map(l => `
+                <tr>
+                  <td>#${l.id}</td>
+                  <td>${esc(l.actor)}</td>
+                  <td>${esc(l.type)}</td>
+                  <td>+${l.amount} 分钟</td>
+                  <td>${esc(l.reason)}</td>
+                  <td><span class="badge green">${esc(l.status)}</span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    // =========================================================================
+    // 弹窗与微交互函数
+    // =========================================================================
+    function openPaymentModal(name, price) {
+      $('#modal-slot').innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2>微信扫码支付 (模拟收银台)</h2>
+              <button class="link" onclick="closeModal()">✕</button>
+            </div>
+            <div style="font-size:14px; margin-bottom:16px;">
+              选购商品：<strong>${esc(name)}</strong> · 实付金额：<strong style="font-size:18px; color:var(--brand-blue);">¥${price}.00</strong>
+            </div>
+            <div style="background:var(--bg-subtle); border:1px dashed var(--border-strong); border-radius:var(--radius-md); padding:30px; text-align:center;">
+              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 7h3v3H7zM14 7h3v3h-3zM7 14h3v3H7zM14 14h3v3h-3z"/></svg>
+              <div style="font-size:13px; font-weight:600; margin-top:10px;">微信 Native 扫码支付占位区</div>
+              <div style="font-size:11px; color:var(--text-tertiary);">正式版由服务端验签回调，不可重复入账</div>
+            </div>
+            <div class="modal-footer">
+              <button onclick="closeModal()">取消</button>
+              <button class="primary" onclick="simulatePaySuccess('${name}', ${price})">模拟扫码支付成功</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function simulatePaySuccess(name, price) {
+      db.orders.unshift({
+        id: 'DEMO-' + Date.now(),
+        name,
+        amount: price,
+        status: '已支付（模拟）'
+      });
+      db.minutes += name.includes('加量包') ? 60 : 600;
+      saveDb();
+      closeModal();
+      alert(`支付成功！已为您成功增加会议时长权益。`);
+      render();
+    }
+
+    function openAddTaskModal() {
+      $('#modal-slot').innerHTML = `
+        <div class="modal-overlay">
+          <div class="modal-box">
+            <div class="modal-header">
+              <h2>创建新待办事项</h2>
+              <button class="link" onclick="closeModal()">✕</button>
+            </div>
+            <label>待办内容</label>
+            <input type="text" id="new-task-text" placeholder="例如：完善 macOS 权限引导说明">
+            <label>负责人</label>
+            <input type="text" id="new-task-owner" value="我">
+            <label>截止日期</label>
+            <input type="text" id="new-task-due" value="下周一">
+            <div class="modal-footer">
+              <button onclick="closeModal()">取消</button>
+              <button class="primary" onclick="saveNewTask()">保存待办</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function saveNewTask() {
+      const text = $('#new-task-text')?.value.trim();
+      const owner = $('#new-task-owner')?.value.trim() || '我';
+      const due = $('#new-task-due')?.value.trim() || '待确认';
+      if (!text) { alert('请输入待办内容'); return; }
+      
+      db.tasks.unshift({
+        id: Date.now(),
+        text,
+        owner,
+        due,
+        done: false
+      });
+      saveDb();
+      closeModal();
+      render();
+    }
+
+    function toggleTaskDone(id) {
+      const t = db.tasks.find(x => x.id === id);
+      if (t) {
+        t.done = !t.done;
+        saveDb();
+        render();
+      }
+    }
+
+    function deleteTask(id) {
+      db.tasks = db.tasks.filter(x => x.id !== id);
+      saveDb();
+      render();
+    }
+
+    function executeSearch() {
+      searchQuery = $('#search-input-field')?.value.trim() || '';
+      render();
+    }
+
+    function openImportModal() {
+      alert('【文件导入】支持 MP3/WAV/M4A/MP4 常见音频文件，导入后本地先探测时长，再驱动 ASR 转写。');
+    }
+
+    function closeModal() {
+      $('#modal-slot').innerHTML = '';
+    }
+
+    function exportMarkdown() {
+      const blob = new Blob([db.notes], { type: 'text/markdown;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = '听序-会议纪要-导出.md';
+      a.click();
+      alert('已成功导出 Markdown 会议纪要！');
+    }
+
+    function resetAllDemo() {
+      if (confirm('确认重置演示数据回初始状态吗？')) {
+        db = structuredClone(defaultData);
+        saveDb();
+        alert('演示数据已重置！');
+        go('home');
+      }
     }
 
     // 证据跳转高亮微交互
@@ -1230,69 +1925,34 @@
 
     function finishMeeting() {
       alert('会议记录已完成！所有音频与逐字稿已原子落盘，正在生成全场智能纪要。');
-      go('home');
+      go('detail', 1);
     }
 
     function openScenarios() {
-      alert('【异常测试提示】可在真实系统测试断网、麦克风权限拒绝及长时间断点续跑等容灾能力。');
+      alert('【异常测试提示】系统已配置健全的断网录音高保真机制与权限指引，在断网时本地录音继续落盘，联网后支持补转。');
     }
 
-    // 简单主页渲染
-    function renderHome() {
-      return `
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
-          <div>
-            <h1 style="font-size:24px; font-weight:700;">会议工作台</h1>
-            <p style="color:var(--text-secondary); margin-top:4px;">所有录音、逐字稿与智能纪要均保存在本机。</p>
-          </div>
-          <button class="primary" onclick="go('record')">＋ 开始新会议</button>
-        </div>
-
-        <div class="cards-grid">
-          <div class="card">
-            <span style="font-size:12px; color:var(--text-tertiary);">本机会议记录</span>
-            <div class="stat-number">12 场</div>
-            <span style="font-size:12px; color:var(--status-success);">本地存储安全受控</span>
-          </div>
-          <div class="card">
-            <span style="font-size:12px; color:var(--text-tertiary);">待跟进行动项</span>
-            <div class="stat-number">5 项</div>
-            <button class="link" onclick="go('tasks')">查看我的待办 →</button>
-          </div>
-          <div class="card">
-            <span style="font-size:12px; color:var(--text-tertiary);">本月套餐时长</span>
-            <div class="stat-number">540 分钟</div>
-            <span style="font-size:12px; color:var(--text-tertiary);">标准 AI 功能全包</span>
-          </div>
-        </div>
-
-        <div class="card" style="margin-top:20px;">
-          <h2 style="font-size:16px; margin-bottom:12px;">最近会议列表</h2>
-          <div style="padding:12px 0; border-bottom:1px solid var(--border-subtle); display:flex; justify-content:space-between;">
-            <div>
-              <strong>产品方案评审会 (第 2 场)</strong>
-              <div style="font-size:12px; color:var(--text-secondary);">刚刚 · 时长 42 分钟</div>
-            </div>
-            <span class="badge green">已整理</span>
-          </div>
-          <div style="padding:12px 0; display:flex; justify-content:space-between;">
-            <div>
-              <strong>客户需求沟通拉齐会</strong>
-              <div style="font-size:12px; color:var(--text-secondary);">昨天 14:30 · 时长 35 分钟</div>
-            </div>
-            <span class="badge blue">待整理</span>
-          </div>
-        </div>
-      `;
-    }
-
+    // 主渲染路由器
     function render() {
       renderNav();
-      if (currentRoute === 'record') {
-        $('#app-content-root').innerHTML = renderLiveWorkbench();
-      } else {
-        $('#app-content-root').innerHTML = renderHome();
-      }
+      
+      const views = {
+        record: renderLiveWorkbench,
+        home: renderHome,
+        tasks: renderTasks,
+        search: renderSearch,
+        billing: renderBilling,
+        settings: renderSettings,
+        detail: renderDetail,
+        overview: renderAdminOverview,
+        users: renderAdminOverview,
+        plans: renderAdminOverview,
+        orders: renderBilling,
+        audit: renderAdminOverview
+      };
+
+      const renderFn = views[currentRoute] || renderHome;
+      $('#app-content-root').innerHTML = renderFn();
       renderFloatPill();
     }
 
