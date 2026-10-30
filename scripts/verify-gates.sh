@@ -7,6 +7,11 @@
 
 set -eo pipefail
 
+# 适配 macOS Xcode SDK 路径，规避 CommandLineTools 损坏 SDK 的 tapi arm64e 缺陷
+if [ -d "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk" ]; then
+    export SDKROOT="/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -133,7 +138,15 @@ fi
 if [ -f "package.json" ] && grep -q '"test"' package.json; then
     echo -e "${BLUE}ℹ️ 正在运行前端组件与状态驱动单元测试 (Vitest)...${NC}"
     if ! npm test; then
-        echo -e "${RED}❌ 单元测试运行失败！${NC}"
+        echo -e "${RED}❌ 前端单元测试运行失败！${NC}"
+        PLAN_ERROR=1
+    fi
+fi
+
+if [ -f "src-tauri/Cargo.toml" ] && command -v cargo >/dev/null 2>&1; then
+    echo -e "${BLUE}ℹ️ 正在运行 Rust 底层媒体与系统单元测试 (Cargo test)...${NC}"
+    if ! cargo test --manifest-path src-tauri/Cargo.toml --quiet; then
+        echo -e "${RED}❌ Rust 原生单元测试运行失败！${NC}"
         PLAN_ERROR=1
     fi
 fi
