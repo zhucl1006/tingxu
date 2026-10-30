@@ -26,13 +26,16 @@ echo -e "\n${YELLOW}[Gate 1/5] 正在执行敏感凭据与 API Key 防泄漏扫�
 SECRET_PATTERNS="(sk-[a-zA-Z0-9]{24,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|BEGIN[[:space:]]+PRIVATE[[:space:]]+KEY)"
 LEAK_FOUND=0
 
-# 扫描除 .git, docs/guides, AGENTS.md 自身正则说明之外的所有源文件
+# 扫描除 .git, node_modules, target, dist, docs/guides, AGENTS.md 自身正则说明之外的所有源文件
 FILES_TO_SCAN=$(find . -type f \
     ! -path '*/.*/*' \
+    ! -path '*/node_modules/*' \
+    ! -path '*/target/*' \
+    ! -path '*/dist/*' \
     ! -path './scripts/verify-gates.sh' \
     ! -path './docs/guides/AI-DEVELOPMENT-GUIDE.md' \
     ! -path './AGENTS.md' \
-    ! -name '*.png' ! -name '*.jpg' ! -name '*.ico' 2>/dev/null || true)
+    ! -name '*.png' ! -name '*.jpg' ! -name '*.ico' ! -name '*.icns' 2>/dev/null || true)
 
 for file in $FILES_TO_SCAN; do
     if grep -E -n "$SECRET_PATTERNS" "$file" 2>/dev/null; then
@@ -81,7 +84,7 @@ else
 fi
 
 # ------------------------------------------------------------------------------
-# Gate 3: 脚本与配置文件语法检查门禁 (Syntax Check)
+# Gate 3: 脚本与代码语法/类型检查门禁 (Syntax & Typecheck)
 # ------------------------------------------------------------------------------
 echo -e "\n${YELLOW}[Gate 3/5] 正在执行脚本与配置语法校验...${NC}"
 SYNTAX_ERROR=0
@@ -94,17 +97,25 @@ for sh_file in scripts/*.sh; do
     fi
 done
 
+if [ -f "tsconfig.json" ] && command -v npx >/dev/null 2>&1; then
+    echo -e "${BLUE}ℹ️ 正在执行 TypeScript 静态类型与语法检查...${NC}"
+    if ! npx tsc --noEmit; then
+        echo -e "${RED}❌ TypeScript 类型校验失败！${NC}"
+        SYNTAX_ERROR=1
+    fi
+fi
+
 if [ $SYNTAX_ERROR -eq 0 ]; then
-    echo -e "${GREEN}✓ Gate 3 通过：所有脚本文件语法有效。${NC}"
+    echo -e "${GREEN}✓ Gate 3 通过：所有脚本与 TypeScript 代码语法有效。${NC}"
 else
-    echo -e "${RED}❌ Gate 3 失败：检测到语法错误。${NC}"
+    echo -e "${RED}❌ Gate 3 失败：检测到语法或类型错误。${NC}"
     FAILED_GATES=$((FAILED_GATES + 1))
 fi
 
 # ------------------------------------------------------------------------------
-# Gate 4: 计划文件与进度状态规范门禁 (Plan Specification)
+# Gate 4: 计划文件与 TDD 单元测试覆盖门禁 (Plan & Test Coverage)
 # ------------------------------------------------------------------------------
-echo -e "\n${YELLOW}[Gate 4/5] 正在检查 docs/plans/ 计划文件规范...${NC}"
+echo -e "\n${YELLOW}[Gate 4/5] 正在检查 docs/plans/ 规范与执行核心单元测试...${NC}"
 PLAN_FILES=$(find docs/plans -type f -name "*.md" 2>/dev/null || true)
 PLAN_ERROR=0
 
@@ -119,10 +130,18 @@ else
     done
 fi
 
+if [ -f "package.json" ] && grep -q '"test"' package.json; then
+    echo -e "${BLUE}ℹ️ 正在运行前端组件与状态驱动单元测试 (Vitest)...${NC}"
+    if ! npm test; then
+        echo -e "${RED}❌ 单元测试运行失败！${NC}"
+        PLAN_ERROR=1
+    fi
+fi
+
 if [ $PLAN_ERROR -eq 0 ]; then
-    echo -e "${GREEN}✓ Gate 4 通过：计划文件格式与状态管理规范。${NC}"
+    echo -e "${GREEN}✓ Gate 4 通过：计划文件规范且核心单元测试全部通过。${NC}"
 else
-    echo -e "${RED}❌ Gate 4 失败：计划文件未遵守 project-planning 模板规范。${NC}"
+    echo -e "${RED}❌ Gate 4 失败：计划规范或单元测试未通过。${NC}"
     FAILED_GATES=$((FAILED_GATES + 1))
 fi
 

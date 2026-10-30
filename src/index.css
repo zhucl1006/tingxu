@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* 基础表面 */
+  --bg-canvas: #ffffff;
+  --bg-subtle: #f8f9fb;
+  --bg-panel: #f0f3f7;
+  --bg-active: #edf3ff;
+  
+  /* 文本与边框 */
+  --text-primary: #1e2530;
+  --text-secondary: #586376;
+  --text-tertiary: #8a94a6;
+  --border-subtle: #e2e6ed;
+  --border-strong: #c8d0dc;
+  
+  /* 语义品牌与状态 */
+  --brand-blue: #1d58bd;
+  --brand-blue-hover: #15459b;
+  --brand-blue-subtle: #ebf2fe;
+  
+  --status-success: #1b7a4a;
+  --status-success-bg: #eaf6ef;
+  --status-success-border: rgba(27, 122, 74, 0.3);
+  --bg-canvas-backdrop: rgba(255, 255, 255, 0.95);
+  
+  --status-warning: #945318;
+  --status-warning-bg: #fdf5ea;
+  --status-warning-border: #dfb88e;
+  
+  --status-danger: #bd3124;
+  --status-danger-bg: #fdeeee;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-canvas: #151921;
+    --bg-subtle: #1c222c;
+    --bg-panel: #242c38;
+    --bg-active: #203148;
+    
+    --text-primary: #f2f5f9;
+    --text-secondary: #9da8b9;
+    --text-tertiary: #6b7788;
+    --border-subtle: #313c4c;
+    --border-strong: #4a5668;
+    
+    --brand-blue: #88b0f8;
+    --brand-blue-hover: #abc8fb;
+    --brand-blue-subtle: #1e2c42;
+    
+    --status-success: #81cf9f;
+    --status-success-bg: #1c3325;
+    --status-success-border: rgba(129, 207, 159, 0.3);
+    --bg-canvas-backdrop: rgba(21, 25, 33, 0.95);
+    
+    --status-warning: #f0be88;
+    --status-warning-bg: #36291a;
+    --status-warning-border: #6d5437;
+    
+    --status-danger: #f8968c;
+    --status-danger-bg: #381e1c;
+  }
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  background-color: var(--bg-canvas);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
