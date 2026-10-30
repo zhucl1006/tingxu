@@ -30,7 +30,8 @@ docs/
 ├── specs/                             # 核心规格文档（必读）
 │   ├── PRD.md                         # 产品需求文档（v0.2 完整版，含 FR/BR/NFR/AC）
 │   ├── SAD.md                         # 软件架构设计文档（Tauri 2+Rust+React+Local-First+Gateway）
-│   └── BILLING-AND-OPS.md             # 计费规则、运营后台与权益管理规范
+│   ├── BILLING-AND-OPS.md             # 计费规则、运营后台与权益管理规范
+│   └── UIUX-DESIGN-SPEC.md            # UI/UX 设计系统与交互规范（Impeccable 标准）
 ├── guides/                            # 开发指南与工程规范
 │   ├── AI-DEVELOPMENT-GUIDE.md        # AI 辅助开发指南（严格 TDD 流程与编码规范）
 │   └── TESTING-GUIDE.md               # 测试规范与验收用例矩阵

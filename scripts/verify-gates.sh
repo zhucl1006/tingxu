@@ -58,6 +58,7 @@ REQUIRED_DOCS=(
     "docs/specs/PRD.md"
     "docs/specs/SAD.md"
     "docs/specs/BILLING-AND-OPS.md"
+    "docs/specs/UIUX-DESIGN-SPEC.md"
     "docs/guides/AI-DEVELOPMENT-GUIDE.md"
     "docs/guides/TESTING-GUIDE.md"
     "docs/database/SCHEMA.md"

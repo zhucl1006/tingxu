@@ -102,7 +102,28 @@ data-testid="<page>-<section>-<element-type>-<semantic-purpose>[-<item-id>]"
 
 ---
 
-## 7. 门禁验证命令速查
+## 7. 前端 UI/UX 设计与视觉还原铁律（UI/UX Craft Standards）
+
+所有涉及前端界面、原型制作、UI 组件库构建及样式开发的工作，**必须严格强制参考并遵循** [`docs/specs/UIUX-DESIGN-SPEC.md`](docs/specs/UIUX-DESIGN-SPEC.md) 中定义的 Impeccable 工业级设计系统：
+
+1. **统一设计令牌（Design Tokens）**：
+   - 严禁在代码中随意硬编码非系统预设的 HEX 色值；必须严格使用 `--bg-canvas`, `--bg-subtle`, `--brand-blue`, `--status-warning`, `--border-subtle` 等语义化 CSS 变量；
+   - 必须兼顾 `prefers-color-scheme: dark` 深色主题适配。
+2. **Operate 生产力任务模式（The Tool Disappears into the Task）**：
+   - 界面整体风格追求克制、冷静与极高信息扫视效率，严禁添加花哨渐变字、不必要的毛玻璃遮罩或无意义动画；
+   - 所有时间戳、开会秒表与用量数字必须显式声明 `font-variant-numeric: tabular-nums`，杜绝数字跳动引起界面布局抖动。
+3. **会中双栏工作台架构（C-04 Live In-Meeting Workbench）**：
+   - 严格实现“左侧实时洞察/本场问答看板（54%） + 右侧逐字稿/手记/标记（46%）”结构；
+   - 点击洞察卡片“查看依据”必须触发右侧逐字稿平滑居中滚动并呈现短促呼吸高亮焦点（`--bg-active`），且不得拉扯破坏用户的阅读或滚动位置。
+4. **人工编辑保护视觉规约（Human Protection Affordance）**：
+   - 已确认或人工修改卡片必须渲染绿色保护标识（`--status-success`）；
+   - 后续讨论产生事实冲突时，必须在卡片下方渲染暖琥珀色（`--status-warning-bg`）并带对比边框的“待复核新修订”区块，提供明确的“保留当前版本”与“采用新版本”决策操作。
+5. **微型置顶悬浮窗（C-05 Floating Pill）**：
+   - 必须维持高度 `42px` 的原生极简微型胶囊浮条形态，具备红色录音呼吸点、时间跳动与一键展开能力，保障开会贴边不遮挡第三方会议软件。
+
+---
+
+## 8. 门禁验证命令速查
 
 ```bash
 # 运行全套本地质量门禁检查

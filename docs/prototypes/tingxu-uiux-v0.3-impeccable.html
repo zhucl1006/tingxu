@@ -1,0 +1,1313 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>听序 Tingxu · 极简无感 AI 会议助手 UI/UX 设计稿 v0.3 (Impeccable Edition)</title>
+  <style>
+    /* ==========================================================================
+       听序 (Tingxu) — Impeccable Design System v0.3
+       Operate Mode / Precision Desktop Productivity
+       ========================================================================== */
+    :root {
+      /* 基础色彩 */
+      --bg-canvas: #ffffff;
+      --bg-subtle: #f8f9fb;
+      --bg-panel: #f0f3f7;
+      --bg-active: #edf3ff;
+      --bg-card: #ffffff;
+      
+      /* 文本与边线 */
+      --text-primary: #1e2530;
+      --text-secondary: #586376;
+      --text-tertiary: #8a94a6;
+      --border-subtle: #e2e6ed;
+      --border-strong: #c8d0dc;
+      
+      /* 核心品牌蓝 */
+      --brand-blue: #1d58bd;
+      --brand-blue-hover: #15459b;
+      --brand-blue-subtle: #ebf2fe;
+      --brand-blue-border: #b8d0f8;
+
+      /* 语义状态色彩 */
+      --status-success: #1b7a4a;
+      --status-success-bg: #eaf6ef;
+      --status-success-border: #9fd4b7;
+      
+      --status-warning: #945318;
+      --status-warning-bg: #fdf5ea;
+      --status-warning-border: #dfb88e;
+      
+      --status-danger: #bd3124;
+      --status-danger-bg: #fdeeee;
+      --status-danger-border: #f2adad;
+
+      /* 阴影 */
+      --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
+      --shadow-md: 0 4px 16px -2px rgba(16, 24, 40, 0.08), 0 2px 6px -1px rgba(16, 24, 40, 0.04);
+      --shadow-lg: 0 12px 32px -4px rgba(16, 24, 40, 0.12), 0 4px 12px -2px rgba(16, 24, 40, 0.06);
+
+      /* 圆角 */
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 14px;
+      --radius-full: 9999px;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg-canvas: #13171f;
+        --bg-subtle: #1a202a;
+        --bg-panel: #222a36;
+        --bg-active: #1e2c42;
+        --bg-card: #191f29;
+        
+        --text-primary: #f2f5f9;
+        --text-secondary: #9da8b9;
+        --text-tertiary: #6b7788;
+        --border-subtle: #2d3746;
+        --border-strong: #455266;
+        
+        --brand-blue: #7aa5f8;
+        --brand-blue-hover: #9bbcf9;
+        --brand-blue-subtle: #1e2e47;
+        --brand-blue-border: #355078;
+        
+        --status-success: #70cb95;
+        --status-success-bg: #182e21;
+        --status-success-border: #284f37;
+        
+        --status-warning: #f0be88;
+        --status-warning-bg: #352818;
+        --status-warning-border: #5e4629;
+        
+        --status-danger: #f8968c;
+        --status-danger-bg: #361a19;
+        --status-danger-border: #632e2c;
+
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+        --shadow-md: 0 4px 16px -2px rgba(0, 0, 0, 0.4);
+        --shadow-lg: 0 12px 32px -4px rgba(0, 0, 0, 0.6);
+      }
+    }
+
+    /* 基础重置 */
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg-canvas);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, select, textarea { font: inherit; color: inherit; }
+    h1, h2, h3, p { margin: 0; }
+    a { color: var(--brand-blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* 通用控件 */
+    button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      cursor: pointer;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 7px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      transition: background 150ms ease, border-color 150ms ease, color 150ms ease;
+      white-space: nowrap;
+    }
+    button:hover {
+      background: var(--bg-subtle);
+      border-color: var(--border-strong);
+    }
+    button:active { transform: translateY(1px); }
+    button.primary {
+      background: var(--brand-blue);
+      border-color: var(--brand-blue);
+      color: #ffffff;
+    }
+    button.primary:hover {
+      background: var(--brand-blue-hover);
+      border-color: var(--brand-blue-hover);
+    }
+    button.link {
+      background: transparent;
+      border-color: transparent;
+      color: var(--brand-blue);
+      padding: 0;
+    }
+    button.link:hover {
+      text-decoration: underline;
+      background: transparent;
+      border-color: transparent;
+    }
+    button.danger {
+      color: var(--status-danger);
+    }
+    button.danger:hover {
+      background: var(--status-danger-bg);
+      border-color: var(--status-danger-border);
+    }
+
+    input, select, textarea {
+      width: 100%;
+      background: var(--bg-canvas);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      font-size: 14px;
+      color: var(--text-primary);
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--brand-blue);
+      box-shadow: 0 0 0 3px var(--brand-blue-subtle);
+    }
+    label {
+      display: block;
+      margin: 10px 0 4px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    /* 徽章与标签 */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 2px 8px;
+      border-radius: var(--radius-sm);
+      line-height: 1.4;
+      white-space: nowrap;
+    }
+    .badge.blue {
+      background: var(--brand-blue-subtle);
+      color: var(--brand-blue);
+      border: 1px solid var(--brand-blue-border);
+    }
+    .badge.green {
+      background: var(--status-success-bg);
+      color: var(--status-success);
+      border: 1px solid var(--status-success-border);
+    }
+    .badge.warn {
+      background: var(--status-warning-bg);
+      color: var(--status-warning);
+      border: 1px solid var(--status-warning-border);
+    }
+    .badge.danger {
+      background: var(--status-danger-bg);
+      color: var(--status-danger);
+      border: 1px solid var(--status-danger-border);
+    }
+    .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .pulse-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--status-danger);
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(189, 49, 36, 0.4); }
+      70% { box-shadow: 0 0 0 6px rgba(189, 49, 36, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(189, 49, 36, 0); }
+    }
+
+    /* 顶部提示横条 */
+    .top-banner {
+      padding: 7px 20px;
+      background: var(--brand-blue-subtle);
+      border-bottom: 1px solid var(--brand-blue-border);
+      color: var(--brand-blue);
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    /* 页面布局 */
+    .app-shell {
+      display: grid;
+      grid-template-columns: 220px 1fr;
+      min-height: calc(100vh - 35px);
+    }
+    aside {
+      background: var(--bg-subtle);
+      border-right: 1px solid var(--border-subtle);
+      padding: 20px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .brand-box {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 8px;
+    }
+    .brand-logo {
+      width: 32px;
+      height: 32px;
+      background: var(--brand-blue);
+      border-radius: var(--radius-sm);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+    }
+    .brand-title {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .brand-sub {
+      font-size: 11px;
+      color: var(--text-tertiary);
+      letter-spacing: 1px;
+    }
+
+    /* 导航栏 */
+    nav { display: grid; gap: 4px; }
+    nav button {
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border-color: transparent;
+      color: var(--text-secondary);
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 500;
+      justify-content: flex-start;
+      border-radius: var(--radius-sm);
+    }
+    nav button:hover {
+      background: var(--bg-panel);
+      color: var(--text-primary);
+    }
+    nav button.active {
+      background: var(--bg-active);
+      color: var(--brand-blue);
+      font-weight: 600;
+    }
+    .nav-icon { width: 18px; text-align: center; }
+
+    /* 侧栏底部额度与用户信息 */
+    .sidebar-bottom { margin-top: auto; display: grid; gap: 14px; }
+    .quota-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      padding: 12px;
+    }
+    .meter-bar {
+      height: 4px;
+      background: var(--border-subtle);
+      border-radius: var(--radius-full);
+      margin: 8px 0;
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      width: 48%;
+      background: var(--brand-blue);
+      border-radius: var(--radius-full);
+    }
+    .user-profile {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 8px 0;
+      border-top: 1px solid var(--border-subtle);
+    }
+    .user-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: var(--radius-sm);
+      background: var(--brand-blue-subtle);
+      color: var(--brand-blue);
+      display: grid;
+      place-items: center;
+      font-weight: 600;
+    }
+
+    /* 顶栏 Header */
+    header {
+      height: 52px;
+      padding: 0 28px;
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-canvas);
+    }
+    .breadcrumb { font-size: 13px; color: var(--text-secondary); }
+
+    /* 内容区 */
+    main { min-width: 0; background: var(--bg-canvas); }
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px 28px; }
+
+    /* 卡片与网格 */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin: 16px 0;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 20px;
+      box-shadow: var(--shadow-sm);
+    }
+    .card.soft { background: var(--bg-subtle); }
+    .stat-number {
+      font-size: 26px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      margin: 6px 0 2px;
+      color: var(--text-primary);
+    }
+
+    /* ==========================================================================
+       会中双栏工作台 (C-04 Live Dual-Pane Workbench)
+       ========================================================================== */
+    .live-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 18px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .live-header-title {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .live-header h1 {
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+    .live-timer {
+      font-size: 20px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .live-workbench {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr;
+      gap: 18px;
+      height: clamp(520px, calc(100vh - 230px), 820px);
+    }
+    .pane {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .pane-header {
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border-subtle);
+      background: var(--bg-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .segmented-tabs {
+      display: flex;
+      background: var(--bg-panel);
+      padding: 3px;
+      border-radius: var(--radius-sm);
+      gap: 2px;
+    }
+    .segmented-tabs button {
+      background: transparent;
+      border: 0;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+    }
+    .segmented-tabs button.active {
+      background: var(--bg-card);
+      color: var(--text-primary);
+      box-shadow: var(--shadow-sm);
+      font-weight: 600;
+    }
+
+    .pane-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px 18px;
+      scrollbar-gutter: stable;
+    }
+    .pane-footer {
+      padding: 10px 18px;
+      background: var(--bg-subtle);
+      border-top: 1px solid var(--border-subtle);
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* 议题条幅 */
+    .topic-banner {
+      background: var(--bg-panel);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+    }
+
+    /* 洞察卡片 (Insight Card) */
+    .insight-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-left: 3px solid var(--brand-blue);
+      border-radius: var(--radius-sm);
+      padding: 14px;
+      margin-bottom: 12px;
+      transition: border-color 150ms ease, box-shadow 150ms ease;
+    }
+    .insight-card:hover {
+      box-shadow: var(--shadow-sm);
+    }
+    .insight-card.protected {
+      border-left-color: var(--status-success);
+    }
+    .insight-card.suggestion {
+      border-left-color: var(--status-warning);
+    }
+    .insight-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .insight-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 4px 0;
+    }
+    .insight-card-body {
+      font-size: 13px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .evidence-anchor {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: var(--brand-blue);
+      margin-top: 8px;
+      cursor: pointer;
+      font-weight: 500;
+      background: transparent;
+      border: 0;
+      padding: 0;
+    }
+    .evidence-anchor:hover { text-decoration: underline; }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px dashed var(--border-subtle);
+    }
+    .card-actions button {
+      padding: 3px 8px;
+      font-size: 12px;
+      border-color: transparent;
+      background: var(--bg-subtle);
+    }
+    .card-actions button:hover {
+      background: var(--bg-panel);
+      border-color: var(--border-strong);
+    }
+
+    /* 修订待复核对比区块 (Human Protection Proposal) */
+    .proposal-box {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: var(--status-warning-bg);
+      border: 1px solid var(--status-warning-border);
+      border-radius: var(--radius-sm);
+      font-size: 12px;
+      color: var(--status-warning);
+    }
+    .proposal-diff {
+      margin: 6px 0 10px;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+
+    /* 逐字稿行 */
+    .transcript-row {
+      padding: 12px 10px;
+      border-bottom: 1px solid var(--border-subtle);
+      border-radius: var(--radius-sm);
+      transition: background 200ms ease;
+    }
+    .transcript-row:hover {
+      background: var(--bg-subtle);
+    }
+    .transcript-row.highlighted {
+      background: var(--bg-active);
+      box-shadow: 0 0 0 2px var(--brand-blue-border);
+    }
+    .transcript-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin-bottom: 4px;
+    }
+    .transcript-speaker {
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .transcript-time {
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      color: var(--brand-blue);
+    }
+    .transcript-text {
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: var(--text-primary);
+    }
+
+    /* 底部录音控制器 (Sticky Footer Controller) */
+    .live-controller {
+      margin-top: 16px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: var(--shadow-sm);
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    .control-btn-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* 微型悬浮小条 (C-05 Floating Pill) */
+    .floating-pill {
+      position: fixed;
+      bottom: 24px;
+      right: 28px;
+      z-index: 50;
+      background: var(--bg-card);
+      border: 1px solid var(--border-strong);
+      border-radius: var(--radius-full);
+      padding: 6px 14px;
+      box-shadow: var(--shadow-lg);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .floating-pill .time-display {
+      font-size: 14px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 问答聊天框 */
+    .chat-bubble-q {
+      background: var(--bg-active);
+      padding: 10px 14px;
+      border-radius: var(--radius-md);
+      margin: 10px 0 10px 24px;
+      font-size: 13px;
+      border: 1px solid var(--brand-blue-border);
+    }
+    .chat-bubble-a {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    /* 弹窗 Modal */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.45);
+      backdrop-filter: blur(4px);
+      z-index: 99;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+    }
+    .modal-box {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      width: min(540px, 100%);
+      padding: 24px;
+      box-shadow: var(--shadow-lg);
+    }
+    .modal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .modal-header h2 { font-size: 18px; font-weight: 600; }
+    .modal-footer {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      margin-top: 20px;
+    }
+
+    /* 响应式适配 */
+    @media (max-width: 900px) {
+      .app-shell { grid-template-columns: 1fr; }
+      aside { display: none; }
+      .live-workbench { grid-template-columns: 1fr; height: auto; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 顶部演示指引栏 -->
+  <div class="top-banner" data-testid="global-header-div-banner">
+    <span>🎙️ 听序 Tingxu · UI/UX 生产级设计稿 v0.3 (Impeccable Edition) · 会议数据仅存本机</span>
+    <div style="display: flex; gap: 8px;">
+      <button class="small" data-testid="global-header-btn-test-scenarios" onclick="openScenarios()">⚡️ 测试异常状态</button>
+      <button class="small" data-testid="global-header-btn-switch-admin" onclick="switchMode()">切换运营控制台 ↗</button>
+    </div>
+  </div>
+
+  <div class="app-shell" data-testid="app-shell-container">
+    
+    <!-- 侧边栏导航 -->
+    <aside data-testid="app-sidebar-container">
+      <div class="brand-box" data-testid="app-sidebar-div-brand">
+        <div class="brand-logo" data-testid="app-sidebar-div-logo">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 2v20M17 5v14M7 9v6M2 12h2M20 12h2"/></svg>
+        </div>
+        <div>
+          <div class="brand-title">听序</div>
+          <div class="brand-sub">TINGXU · AI</div>
+        </div>
+      </div>
+
+      <nav id="nav-list" data-testid="app-sidebar-nav-list"></nav>
+
+      <div class="sidebar-bottom">
+        <div class="quota-box" data-testid="app-sidebar-card-quota">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="font-size:12px;">专业版 · 个人套餐</strong>
+            <span class="badge blue">Pro</span>
+          </div>
+          <div class="meter-bar"><div class="meter-fill" id="meter-fill-bar"></div></div>
+          <div style="font-size:11px; color:var(--text-secondary);" id="sidebar-quota-text">会议时长剩余 540 分钟</div>
+          <button class="link" style="margin-top:6px; font-size:12px;" onclick="go('billing')" data-testid="app-sidebar-btn-view-billing">管理套餐与用量 →</button>
+        </div>
+
+        <div class="user-profile" data-testid="app-sidebar-div-user">
+          <div class="user-avatar" data-testid="app-sidebar-avatar-user">林</div>
+          <div>
+            <div style="font-size:13px; font-weight:600;">林沐 (产品经理)</div>
+            <div style="font-size:11px; color:var(--text-tertiary);">数据主权存本地</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 主作业区 -->
+    <main data-testid="app-main-viewport">
+      <header data-testid="app-header-container">
+        <div class="breadcrumb" id="crumb-text" data-testid="app-header-text-breadcrumb">个人工作台 / 会中实时记录</div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <span class="badge green" id="cloud-badge" data-testid="app-header-badge-cloud-status">
+            <span class="dot"></span> 云端 ASR / AI 服务就绪
+          </span>
+          <span class="badge blue" data-testid="app-header-badge-mode">双轨物理隔离</span>
+        </div>
+      </header>
+
+      <div class="container" id="app-content-root" data-testid="app-content-root"></div>
+    </main>
+  </div>
+
+  <!-- 浮动悬浮窗与弹窗容器 -->
+  <div id="floating-slot"></div>
+  <div id="modal-slot"></div>
+
+  <!-- 客户端状态管理与渲染逻辑 -->
+  <script>
+    'use strict';
+    const $ = s => document.querySelector(s);
+    const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+    let currentMode = 'desktop';
+    let currentRoute = 'record'; // 默认启动到会中实时记录进行高保真展示
+    let isRecording = true;
+    let isPaused = false;
+    let secondsElapsed = 105;
+    let isFloatPillOn = false;
+    let liveStep = 4; // 示例步数
+    let activeEvidence = null;
+    let leftTab = 'insights';
+    let rightTab = 'transcript';
+
+    // 会中样例逐字稿数据（双轨隔离）
+    const sampleTranscripts = [
+      { id: 0, time: '00:12', track: 'MIC', speaker: '我 (麦克风)', text: '今天先确认听序首发版本范围，重点服务产品经理与项目经理的日常线上会议。' },
+      { id: 1, time: '00:38', track: 'SYSTEM', speaker: '远端参会人 (扬声器)', text: '我们确认首版严格贯彻 Local-First 架构，会议音视频与逐字稿保存在本机，云端不做持久化同步。' },
+      { id: 2, time: '01:05', track: 'MIC', speaker: '我 (麦克风)', text: '我来负责双轨音频采集验证，原定计划安排在本周五前完成。' },
+      { id: 3, time: '01:42', track: 'SYSTEM', speaker: '远端参会人 (扬声器)', text: '更换电脑后历史会议怎么迁移？跨设备恢复尚未完成实测，这个技术问题需保留待澄清。' },
+      { id: 4, time: '02:18', track: 'MIC', speaker: '我 (麦克风)', text: '修正一下：刚才评估了进度，采集验证改到下周一交付，前面的周五不再作为有效承诺。' },
+      { id: 5, time: '02:54', track: 'SYSTEM', speaker: '远端参会人 (扬声器)', text: '好的，首版我们增加手动导出 Markdown/PDF。跨设备恢复验证人待定。' },
+      { id: 6, time: '03:20', track: 'MIC', speaker: '我 (麦克风)', text: '另外开始录音前要弹出数据说明。屏幕截图仅保存在本地，默认不送入大模型。' }
+    ];
+
+    // 会中卡片状态数据（含人工保护状态机）
+    let liveItems = [
+      {
+        id: 'scope',
+        kind: 'DECISION',
+        type: '原文明示决定',
+        title: '聚焦个人办公，Windows 与 macOS 同步规划',
+        body: '首版优先服务产品与项目管理人员；双端遵循同一套标准能力与验收标准。',
+        sources: [0],
+        confirmed: true,
+        proposal: null
+      },
+      {
+        id: 'storage',
+        kind: 'DECISION',
+        type: '原文明示决定',
+        title: '坚持 Local-First 本地存储，不搞云端会议同步',
+        body: '会议资料完整留存在本地 SQLite，云端仅处理瞬态转写与大模型推理，不落正文日志。',
+        sources: [1],
+        confirmed: true,
+        proposal: null
+      },
+      {
+        id: 'capture',
+        kind: 'ACTION',
+        type: '行动待办',
+        title: '完成双轨音频采集验证',
+        body: '交付时间：原计划本周五完成；责任人：麦克风发言者（我）。',
+        sources: [2],
+        confirmed: true,
+        // 关键人工保护对比数据：后文更正产生冲突时的待复核提案
+        proposal: {
+          title: '完成双轨音频采集验证（修订版）',
+          body: '截止时间更正为下周一完成（依据：02:18 发言更正，周五不再作为承诺）。',
+          sources: [2, 4],
+          reason: '后文发言明确修正了此前周五的承诺'
+        }
+      },
+      {
+        id: 'migration',
+        kind: 'SUGGESTION',
+        type: 'AI 提醒 · 待澄清',
+        title: '更换电脑后的会议恢复机制需要跟进',
+        body: '跨设备恢复机制目前尚未确定具体技术方案与负责人，需在后续会议明确。',
+        sources: [3],
+        confirmed: false,
+        proposal: null
+      }
+    ];
+
+    function fmtTime(s) {
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
+    }
+
+    function renderNav() {
+      const desktopNav = [
+        { id: 'record', icon: '◉', label: '会中实时记录' },
+        { id: 'home', icon: '▦', label: '会议工作台' },
+        { id: 'tasks', icon: '☑', label: '我的待办' },
+        { id: 'search', icon: '⌕', label: '历史检索' },
+        { id: 'billing', icon: '◇', label: '套餐与用量' },
+        { id: 'settings', icon: '⚙', label: '系统设置' }
+      ];
+      $('#nav-list').innerHTML = desktopNav.map(item => `
+        <button class="${currentRoute === item.id ? 'active' : ''}" 
+                data-testid="app-sidebar-btn-nav-${item.id}"
+                onclick="go('${item.id}')">
+          <span class="nav-icon">${item.icon}</span>
+          ${item.label}
+        </button>
+      `).join('');
+    }
+
+    function go(route) {
+      currentRoute = route;
+      $('#crumb-text').textContent = `个人工作台 / ${route === 'record' ? '会中实时记录' : route === 'home' ? '会议工作台' : '功能模块'}`;
+      render();
+    }
+
+    function switchMode() {
+      alert('运营管理后台采用独立安全 RBAC 体系，已在 SAD 与架构中设计。此设计稿主要展示桌面端核心会中体验。');
+    }
+
+    // 渲染 C-04 Live Workbench
+    function renderLiveWorkbench() {
+      return `
+        <div class="live-header" data-testid="workbench-page-header">
+          <div class="live-header-title">
+            <h1>产品方案评审会 (第 2 场)</h1>
+            <span class="badge ${isPaused ? 'warn' : 'green'}" data-testid="workbench-page-badge-recording-status">
+              <span class="${isPaused ? 'dot' : 'pulse-dot'}"></span>
+              ${isPaused ? '已暂停记录' : '双轨录音转写中'}
+            </span>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:16px;">
+            <div class="live-timer" data-testid="workbench-page-text-timer">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+              <span id="live-clock-val">${fmtTime(secondsElapsed)}</span>
+            </div>
+            <button class="primary" data-testid="workbench-page-btn-finish" onclick="finishMeeting()">结束并整理</button>
+          </div>
+        </div>
+
+        <div class="live-workbench" data-testid="workbench-page-main-container">
+          
+          <!-- 左栏：实时洞察看板 / AI 问一问 -->
+          <section class="pane" data-testid="workbench-page-insights-pane">
+            <div class="pane-header">
+              <div class="segmented-tabs" data-testid="workbench-page-insights-tabs">
+                <button class="${leftTab === 'insights' ? 'active' : ''}" 
+                        data-testid="workbench-page-insights-tab-board"
+                        onclick="leftTab='insights'; render();">洞察看板</button>
+                <button class="${leftTab === 'chat' ? 'active' : ''}" 
+                        data-testid="workbench-page-insights-tab-qa"
+                        onclick="leftTab='chat'; render();">AI 问一问</button>
+              </div>
+
+              <div style="display:flex; gap:6px;">
+                <button class="small" data-testid="workbench-page-btn-reorganize" onclick="triggerIncremental()">
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>
+                  立即整理
+                </button>
+              </div>
+            </div>
+
+            <div class="pane-scroll" id="insights-scroll" data-testid="workbench-page-insights-scroll">
+              ${leftTab === 'insights' ? renderInsightsList() : renderChatPanel()}
+            </div>
+
+            <div class="pane-footer" data-testid="workbench-page-insights-footer">
+              <span>事实与建议严格分离 · 每条附带原文依据</span>
+              <span>本场 AI：<strong>已包含在套餐中</strong></span>
+            </div>
+          </section>
+
+          <!-- 右栏：实时逐字稿 / 我的手记 / 标记 -->
+          <section class="pane" data-testid="workbench-page-transcript-pane">
+            <div class="pane-header">
+              <div class="segmented-tabs" data-testid="workbench-page-transcript-tabs">
+                <button class="${rightTab === 'transcript' ? 'active' : ''}" 
+                        data-testid="workbench-page-transcript-tab-text"
+                        onclick="rightTab='transcript'; render();">逐字稿</button>
+                <button class="${rightTab === 'notes' ? 'active' : ''}" 
+                        data-testid="workbench-page-transcript-tab-scratch"
+                        onclick="rightTab='notes'; render();">我的手记</button>
+                <button class="${rightTab === 'marks' ? 'active' : ''}" 
+                        data-testid="workbench-page-transcript-tab-marks"
+                        onclick="rightTab='marks'; render();">标记 (2)</button>
+              </div>
+
+              <div style="font-size:12px; color:var(--text-tertiary);">
+                物理双音轨捕获 · 本机落盘
+              </div>
+            </div>
+
+            <div class="pane-scroll" id="transcript-scroll" data-testid="workbench-page-transcript-scroll">
+              ${rightTab === 'transcript' ? renderTranscriptList() : renderNotesOrMarks()}
+            </div>
+
+            <div class="pane-footer" data-testid="workbench-page-transcript-footer">
+              <span>音轨物理隔离不等于远端身份推定 · 截图不自动发模型</span>
+              <button class="link" onclick="openScenarios()">网络异常演练</button>
+            </div>
+          </section>
+        </div>
+
+        <!-- 底部控制栏 -->
+        <div class="live-controller" data-testid="workbench-page-footer-controller">
+          <div class="control-btn-group">
+            <button data-testid="workbench-page-btn-pause" onclick="togglePause()">
+              ${isPaused ? '▶️ 继续录音' : '⏸ 暂停'}
+            </button>
+            <button data-testid="workbench-page-btn-mark-key" onclick="addMark('重点')">
+              ☆ 重点标记
+            </button>
+            <button data-testid="workbench-page-btn-screenshot" onclick="addMark('截图')">
+              📷 本地截图锚点
+            </button>
+            <button data-testid="workbench-page-btn-floating" onclick="toggleFloatPill()">
+              🗗 切换至微型悬浮窗
+            </button>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:12px;">
+            <div style="font-size:12px; color:var(--text-secondary);">
+              演示步骤: <strong>第 ${liveStep} 段</strong> / 共 7 段
+            </div>
+            <button class="primary" data-testid="workbench-page-btn-advance-discussion" onclick="advanceStep()">
+              推进讨论 →
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    // 渲染洞察看板列表
+    function renderInsightsList() {
+      return `
+        <div class="topic-banner" data-testid="workbench-page-div-topic">
+          <span>当前议题：<strong>产品定位与首版交付排期</strong></span>
+          <span class="badge blue">第 1 议题</span>
+        </div>
+
+        ${liveItems.map(item => `
+          <article class="insight-card ${item.confirmed ? 'protected' : ''} ${item.kind === 'SUGGESTION' ? 'suggestion' : ''}" 
+                   id="insight-card-${item.id}"
+                   data-testid="workbench-page-insights-panel-card-${item.id}">
+            
+            <div class="insight-card-head">
+              <span class="badge ${item.kind === 'DECISION' ? 'green' : item.kind === 'ACTION' ? 'blue' : 'warn'}">
+                ${item.type}
+              </span>
+              ${item.confirmed ? '<span class="badge green">✓ 已人工确认保护</span>' : '<span style="font-size:11px; color:var(--text-tertiary);">AI 草稿待确认</span>'}
+            </div>
+
+            <div class="insight-card-title">${esc(item.title)}</div>
+            <div class="insight-card-body">${esc(item.body)}</div>
+
+            <!-- 证据定位按钮 -->
+            <button class="evidence-anchor" 
+                    data-testid="workbench-page-insights-panel-btn-evidence-${item.id}"
+                    onclick="jumpToEvidence(${JSON.stringify(item.sources)})">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+              查看依据 · ${item.sources.map(s => sampleTranscripts[s]?.time).join(' / ')}
+            </button>
+
+            <!-- 核心人工保护机制：后续冲突修订提案 -->
+            ${item.proposal ? `
+              <div class="proposal-box" data-testid="workbench-page-insights-panel-div-proposal-${item.id}">
+                <div style="font-weight:600; display:flex; align-items:center; gap:4px;">
+                  ⚠️ 发现后续讨论存在更新修订 (依据: 02:18)
+                </div>
+                <div class="proposal-diff">
+                  新提议：<strong>${esc(item.proposal.body)}</strong>
+                </div>
+                <div style="display:flex; gap:8px;">
+                  <button class="primary small" 
+                          data-testid="workbench-page-insights-panel-btn-adopt-${item.id}"
+                          onclick="adoptProposal('${item.id}')">采用新修订</button>
+                  <button class="small" 
+                          data-testid="workbench-page-insights-panel-btn-reject-${item.id}"
+                          onclick="rejectProposal('${item.id}')">保留当前人工版本</button>
+                </div>
+              </div>
+            ` : ''}
+
+            <div class="card-actions">
+              <button data-testid="workbench-page-insights-panel-btn-confirm-${item.id}" onclick="confirmItem('${item.id}')">
+                ${item.confirmed ? '已确认' : '确认结论'}
+              </button>
+              <button data-testid="workbench-page-insights-panel-btn-edit-${item.id}" onclick="editItem('${item.id}')">手动编辑</button>
+              <button data-testid="workbench-page-insights-panel-btn-ignore-${item.id}" onclick="ignoreItem('${item.id}')">忽略</button>
+            </div>
+          </article>
+        `).join('')}
+      `;
+    }
+
+    // 渲染逐字稿列表
+    function renderTranscriptList() {
+      return sampleTranscripts.slice(0, liveStep).map(row => `
+        <div class="transcript-row ${activeEvidence && activeEvidence.includes(row.id) ? 'highlighted' : ''}" 
+             id="transcript-row-${row.id}"
+             data-testid="workbench-page-transcript-panel-row-${row.id}">
+          <div class="transcript-meta">
+            <span class="transcript-speaker">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="7" r="4"/><path d="M5.5 21a8.5 8.5 0 0 1 13 0"/></svg>
+              ${row.speaker}
+            </span>
+            <span class="transcript-time">${row.time}</span>
+          </div>
+          <div class="transcript-text">${esc(row.text)}</div>
+        </div>
+      `).join('');
+    }
+
+    // 渲染 AI 问一问
+    function renderChatPanel() {
+      return `
+        <div style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">
+          基于本场已出现的稳定原文进行精准问答。未提及内容拒绝臆造。
+        </div>
+
+        <div class="chat-bubble-q" data-testid="workbench-page-chat-bubble-q">
+          到目前为止，采集验证的排期是如何定的？
+        </div>
+        <div class="chat-bubble-a" data-testid="workbench-page-chat-bubble-a">
+          <strong>会议事实回答：</strong><br>
+          原定于本周五前完成，但随后麦克风发言人在 02:18 更正为<strong>下周一完成</strong>。
+          <button class="evidence-anchor" style="display:block; margin-top:4px;" onclick="jumpToEvidence([2, 4])">
+            查看证据依据 (01:05, 02:18)
+          </button>
+        </div>
+
+        <div style="margin-top:16px;">
+          <label>向本场会议提问 (Ctrl+Enter 发送)</label>
+          <textarea id="live-chat-input" placeholder="输入你想查询的决定、承诺或遗漏项..." data-testid="workbench-page-chat-panel-input-ask"></textarea>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+            <span style="font-size:11px; color:var(--text-tertiary);">标准问答已纳入套餐权益</span>
+            <button class="primary" data-testid="workbench-page-chat-panel-btn-send" onclick="sendChat()">发送提问</button>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderNotesOrMarks() {
+      return `
+        <div style="padding:10px 0;">
+          <label>我的本地手记 (会中随手记，默认绝不上传给大模型)</label>
+          <textarea style="min-height:220px;" placeholder="在此输入个人临时草稿、不便公开的备忘..."></textarea>
+        </div>
+      `;
+    }
+
+    // 证据跳转高亮微交互
+    function jumpToEvidence(sources) {
+      rightTab = 'transcript';
+      activeEvidence = sources;
+      render();
+      setTimeout(() => {
+        const lastId = sources[sources.length - 1];
+        const el = document.getElementById(`transcript-row-${lastId}`);
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 50);
+    }
+
+    function adoptProposal(id) {
+      const item = liveItems.find(x => x.id === id);
+      if (item && item.proposal) {
+        item.title = item.proposal.title;
+        item.body = item.proposal.body;
+        item.sources = item.proposal.sources;
+        item.proposal = null;
+        item.confirmed = true;
+        render();
+        alert('已成功采用新版本修订，并保留历史更正审计！');
+      }
+    }
+
+    function rejectProposal(id) {
+      const item = liveItems.find(x => x.id === id);
+      if (item) {
+        item.proposal = null;
+        render();
+        alert('已保留原人工版本，忽略后续新更正。');
+      }
+    }
+
+    function confirmItem(id) {
+      const item = liveItems.find(x => x.id === id);
+      if (item) {
+        item.confirmed = true;
+        render();
+      }
+    }
+
+    function togglePause() {
+      isPaused = !isPaused;
+      render();
+    }
+
+    function addMark(type) {
+      alert(`已在当前时间点 ${fmtTime(secondsElapsed)} 成功记录【${type}】时间锚！`);
+    }
+
+    function toggleFloatPill() {
+      isFloatPillOn = !isFloatPillOn;
+      renderFloatPill();
+    }
+
+    function renderFloatPill() {
+      if (!isFloatPillOn) {
+        $('#floating-slot').innerHTML = '';
+        return;
+      }
+      $('#floating-slot').innerHTML = `
+        <div class="floating-pill" data-testid="floating-bar-div-container">
+          <span class="pulse-dot"></span>
+          <span class="time-display">${fmtTime(secondsElapsed)}</span>
+          <button class="small" onclick="togglePause()">${isPaused ? '继续' : '暂停'}</button>
+          <button class="small" onclick="addMark('重点')">打点</button>
+          <button class="primary small" data-testid="floating-bar-btn-expand-workbench" onclick="toggleFloatPill()">展开</button>
+        </div>
+      `;
+    }
+
+    function advanceStep() {
+      if (liveStep < sampleTranscripts.length) {
+        liveStep++;
+        secondsElapsed += 35;
+        render();
+      } else {
+        alert('已推进完成全场 7 段示例对话！');
+      }
+    }
+
+    function triggerIncremental() {
+      alert('已触发增量滑动窗口分析，同步当前最新议题！');
+    }
+
+    function sendChat() {
+      const val = $('#live-chat-input')?.value;
+      if (!val) return;
+      alert(`已基于本场稳定原文快照回答问题：“${val}”`);
+    }
+
+    function finishMeeting() {
+      alert('会议记录已完成！所有音频与逐字稿已原子落盘，正在生成全场智能纪要。');
+      go('home');
+    }
+
+    function openScenarios() {
+      alert('【异常测试提示】可在真实系统测试断网、麦克风权限拒绝及长时间断点续跑等容灾能力。');
+    }
+
+    // 简单主页渲染
+    function renderHome() {
+      return `
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+          <div>
+            <h1 style="font-size:24px; font-weight:700;">会议工作台</h1>
+            <p style="color:var(--text-secondary); margin-top:4px;">所有录音、逐字稿与智能纪要均保存在本机。</p>
+          </div>
+          <button class="primary" onclick="go('record')">＋ 开始新会议</button>
+        </div>
+
+        <div class="cards-grid">
+          <div class="card">
+            <span style="font-size:12px; color:var(--text-tertiary);">本机会议记录</span>
+            <div class="stat-number">12 场</div>
+            <span style="font-size:12px; color:var(--status-success);">本地存储安全受控</span>
+          </div>
+          <div class="card">
+            <span style="font-size:12px; color:var(--text-tertiary);">待跟进行动项</span>
+            <div class="stat-number">5 项</div>
+            <button class="link" onclick="go('tasks')">查看我的待办 →</button>
+          </div>
+          <div class="card">
+            <span style="font-size:12px; color:var(--text-tertiary);">本月套餐时长</span>
+            <div class="stat-number">540 分钟</div>
+            <span style="font-size:12px; color:var(--text-tertiary);">标准 AI 功能全包</span>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+          <h2 style="font-size:16px; margin-bottom:12px;">最近会议列表</h2>
+          <div style="padding:12px 0; border-bottom:1px solid var(--border-subtle); display:flex; justify-content:space-between;">
+            <div>
+              <strong>产品方案评审会 (第 2 场)</strong>
+              <div style="font-size:12px; color:var(--text-secondary);">刚刚 · 时长 42 分钟</div>
+            </div>
+            <span class="badge green">已整理</span>
+          </div>
+          <div style="padding:12px 0; display:flex; justify-content:space-between;">
+            <div>
+              <strong>客户需求沟通拉齐会</strong>
+              <div style="font-size:12px; color:var(--text-secondary);">昨天 14:30 · 时长 35 分钟</div>
+            </div>
+            <span class="badge blue">待整理</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function render() {
+      renderNav();
+      if (currentRoute === 'record') {
+        $('#app-content-root').innerHTML = renderLiveWorkbench();
+      } else {
+        $('#app-content-root').innerHTML = renderHome();
+      }
+      renderFloatPill();
+    }
+
+    // 初始化渲染
+    render();
+
+    // 计时器模拟
+    setInterval(() => {
+      if (isRecording && !isPaused && currentRoute === 'record') {
+        secondsElapsed++;
+        const el = $('#live-clock-val');
+        if (el) el.textContent = fmtTime(secondsElapsed);
+        renderFloatPill();
+      }
+    }, 1000);
+  </script>
+</body>
+</html>
