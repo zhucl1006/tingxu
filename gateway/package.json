@@ -1,0 +1,19 @@
+{
+  "name": "tingxu-ai-gateway",
+  "version": "0.2.0",
+  "private": true,
+  "description": "听序 AI Gateway — 高性能多模型熔断中继与脱敏网关",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.1"
+  }
+}
