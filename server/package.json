@@ -1,0 +1,19 @@
+{
+  "name": "tingxu-control-plane",
+  "version": "0.2.0",
+  "private": true,
+  "description": "听序商业控制面 — 账号认证、微信支付与会议时长权益管理",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/main.js",
+    "test": "vitest run"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.1"
+  }
+}
