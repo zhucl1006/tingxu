@@ -1,0 +1,21 @@
+{
+  "name": "tingxu-desktop",
+  "version": "0.2.0",
+  "private": true,
+  "description": "听序 — AI 实时会议记录与智能纪要桌面助手",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "zustand": "^4.5.2"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "typescript": "^5.4.5",
+    "vite": "^5.2.11"
+  }
+}
