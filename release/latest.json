@@ -1,0 +1,19 @@
+{
+  "version": "0.2.0",
+  "notes": "听序 v0.2.0 首发版本：双轨原子录音、流式 ASR 中文转写、AI 增量洞察看板、FTS5 全文秒级检索、微信时长支付与 Zero-Content 本地隐私主权。",
+  "pub_date": "2026-10-30T12:00:00Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "mock_signature_for_aarch64",
+      "url": "https://release.tingxu.cn/desktop/v0.2.0/tingxu_0.2.0_aarch64.dmg"
+    },
+    "darwin-x86_64": {
+      "signature": "mock_signature_for_x64",
+      "url": "https://release.tingxu.cn/desktop/v0.2.0/tingxu_0.2.0_x64.dmg"
+    },
+    "windows-x86_64": {
+      "signature": "mock_signature_for_win_x64",
+      "url": "https://release.tingxu.cn/desktop/v0.2.0/tingxu_0.2.0_x64-setup.exe"
+    }
+  }
+}
