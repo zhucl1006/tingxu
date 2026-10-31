@@ -868,18 +868,48 @@ export function renderAdminDashboardHtml(): string {
     }
 
     async function testAsrConnection() {
+      const provider = document.getElementById('cfg-asr-provider').value;
+      const key = document.getElementById('cfg-asr-key').value.trim();
+      const endpoint = document.getElementById('cfg-asr-endpoint').value.trim();
       const resultBox = document.getElementById('asr-test-result');
       resultBox.className = 'test-result-box show';
-      const key = document.getElementById('cfg-asr-key').value.trim();
+
       if (!key) {
         resultBox.style.background = 'rgba(239,68,68,0.15)';
         resultBox.style.color = '#f87171';
-        resultBox.textContent = '❌ 未配置 ASR API Key，请先输入真实凭据并点击保存。';
+        resultBox.textContent = '❌ 请先在“ASR API Key”输入框中填入您的真实密钥后再点击测试。';
         return;
       }
-      resultBox.style.background = 'rgba(16,185,129,0.15)';
-      resultBox.style.color = '#34d399';
-      resultBox.textContent = '✅ ASR 配置已就绪，麦克风将通过 16kHz PCM 接入流式识别通道。（提示：若修改了配置，请点击右上角保存以热载生效）';
+
+      resultBox.style.background = 'rgba(255,255,255,0.05)';
+      resultBox.style.color = 'var(--text-sub)';
+      resultBox.textContent = '⏳ 正在向 [' + provider + '] ASR 平台发起真实 API Key 鉴权验证...';
+
+      try {
+        const res = await fetch('/v1/admin/config/test-asr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider,
+            apiKey: key,
+            endpoint: endpoint || undefined,
+          }),
+        });
+        const json = await res.json();
+        if (json.data && json.data.success) {
+          resultBox.style.background = 'rgba(16,185,129,0.15)';
+          resultBox.style.color = '#34d399';
+          resultBox.textContent = '✅ ' + json.data.message;
+        } else {
+          resultBox.style.background = 'rgba(239,68,68,0.15)';
+          resultBox.style.color = '#f87171';
+          resultBox.textContent = '❌ ' + ((json.data && json.data.message) || json.message || 'ASR 鉴权失败');
+        }
+      } catch (e) {
+        resultBox.style.background = 'rgba(239,68,68,0.15)';
+        resultBox.style.color = '#f87171';
+        resultBox.textContent = '❌ ASR 探活异常: ' + e.message;
+      }
     }
 
     async function testSmsSend() {

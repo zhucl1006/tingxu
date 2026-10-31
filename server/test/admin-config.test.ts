@@ -188,6 +188,21 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
       // 由于是临时测试 key，探活会收到 DeepSeek 官方 401 鉴权返回，而不是提示“未配置”！
       expect(testWithKeyJson.data.message).not.toContain('未配置大模型 API Key');
 
+      // 3.2 POST /v1/admin/config/test-asr (真实 ASR API Key 鉴权有效性验证)
+      const asrTestRes = await fetch(`http://localhost:${port}/v1/admin/config/test-asr`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          provider: 'dashscope',
+          apiKey: 'sk-invalid-asr-test-key',
+        }),
+      });
+      expect(asrTestRes.status).toBe(200);
+      const asrTestJson = await asrTestRes.json();
+      expect(asrTestJson.code).toBe(0);
+      expect(asrTestJson.data.success).toBe(false);
+      expect(asrTestJson.data.message).toContain('ASR 鉴权失败');
+
       // 4. GET /v1/ops/stats (获取真实指标，初始为 0 且无假数据)
       const statsRes = await fetch(`http://localhost:${port}/v1/ops/stats`, {
         headers: authHeaders,

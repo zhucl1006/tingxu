@@ -313,6 +313,15 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
+      // 16.1 运营后台：ASR 连通性与 Key 有效性测试 (POST /v1/admin/config/test-asr)
+      if (req.method === 'POST' && pathname === '/v1/admin/config/test-asr') {
+        const body = JSON.parse(await readRequestBody(req));
+        const testRes = await configService.testAsrConnection(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: testRes }));
+        return;
+      }
+
       // 17. 运营后台：短信发送通道自测 (POST /v1/admin/config/test-sms)
       if (req.method === 'POST' && pathname === '/v1/admin/config/test-sms') {
         const body = JSON.parse(await readRequestBody(req));
