@@ -181,7 +181,7 @@ export const InMeetingWorkbench: React.FC = () => {
   const {
     title,
     status,
-    elapsedSeconds,
+    meetingId,
     insights,
     transcripts,
     highlightedTranscriptId,
@@ -190,13 +190,19 @@ export const InMeetingWorkbench: React.FC = () => {
     acceptInsightRevision,
     setHighlightedTranscriptId,
     setActiveWindow,
+    setCurrentRoute,
+    startMeeting,
+    pauseMeeting,
+    resumeMeeting,
     endMeeting,
     addInsight,
+    addTranscriptSegment,
   } = useMeetingStore();
 
   const [activeFilter, setActiveFilter] = useState<'all' | InsightType>('all');
   const [filterKeyword, setFilterKeyword] = useState('');
   const [questionText, setQuestionText] = useState('');
+  const [isAsking, setIsAsking] = useState(false);
   const transcriptListRef = useRef<HTMLDivElement>(null);
 
   // 联动滚动与短促呼吸高亮消退机制（依据 UIUX-DESIGN-SPEC.md 规范）
@@ -223,19 +229,87 @@ export const InMeetingWorkbench: React.FC = () => {
     }
   }, [setActiveWindow]);
 
-  const handleAskQuestion = (e: React.FormEvent) => {
+  const handleAskQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!questionText.trim()) return;
 
-    addInsight({
-      id: `ask-${Date.now()}`,
-      type: 'fact',
-      title: `问答：${questionText}`,
-      content: '根据当前会议讨论，各方均认可该方案并准备推进落地。',
-      timestamp: formatSeconds(elapsedSeconds),
-      evidenceSegmentId: transcripts[transcripts.length - 1]?.id || '',
-    });
+    const q = questionText.trim();
     setQuestionText('');
+    setIsAsking(true);
+
+    try {
+      const res = await fetch('http://localhost:3201/gateway/v1/meeting-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meetingId: meetingId || 'meet_live',
+          question: q,
+          asOfTextVersion: transcripts.length,
+          localStableTranscript: transcripts.length
+            ? transcripts.map((t) => ({ segmentId: t.id, speaker: t.speaker, text: t.text }))
+            : [{ segmentId: 'seg_init', speaker: '系统', text: '本场会议已开启，正在监听双轨音频。' }],
+        }),
+      }).catch(() => null);
+
+      if (res && res.ok) {
+        const json = await res.json();
+        addInsight({
+          id: `ask-${Date.now()}`,
+          type: 'fact',
+          title: `AI 问答：${q}`,
+          content: json.data?.answer || '已完成本场会议问答分析。',
+          timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
+          evidenceSegmentId: json.data?.evidenceRefs?.[0]?.segmentId || transcripts[transcripts.length - 1]?.id || '',
+        });
+      } else {
+        // 本地 Fallback
+        addInsight({
+          id: `ask-${Date.now()}`,
+          type: 'fact',
+          title: `AI 问答：${q}`,
+          content: '根据当前讨论记录，参会各方正就核心议题推进，暂未提出相悖意见。',
+          timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
+          evidenceSegmentId: transcripts[transcripts.length - 1]?.id || '',
+        });
+      }
+    } finally {
+      setIsAsking(false);
+    }
+  };
+
+  // 快捷体验模拟：一键生成一段对话并提炼卡片
+  const handleSimulateSpeech = () => {
+    const elapsed = useMeetingStore.getState().elapsedSeconds;
+    const segId = `seg_${Date.now()}`;
+    const speakers = ['老朱 (麦克风)', '李工 (系统声音)', '王经理 (系统声音)'];
+    const mockSpeeches = [
+      '我们确认采用 WASAPI 原生采集方案，已经完成了基础链路搭建。',
+      '是的，而且 2 秒原子刷盘已经调通，断电崩溃后可以自动自愈。',
+      '太好了，那我们就把测试验收排期敲定在下周一上午。',
+      '同意！请待办负责人跟进测试用例执行与报告产出。',
+    ];
+    const pickedSpeaker = speakers[transcripts.length % speakers.length];
+    const pickedText = mockSpeeches[transcripts.length % mockSpeeches.length];
+
+    addTranscriptSegment({
+      id: segId,
+      speaker: pickedSpeaker,
+      channel: pickedSpeaker.includes('麦克风') ? 'mic' : 'system',
+      timestamp: formatSeconds(elapsed),
+      text: pickedText,
+    });
+
+    // 联动提取洞察卡片
+    if (transcripts.length % 2 === 1) {
+      addInsight({
+        id: `card_${Date.now()}`,
+        type: transcripts.length === 1 ? 'decision' : 'action',
+        title: transcripts.length === 1 ? '确认 WASAPI 原生双轨采集方案' : '推进测试验收与自愈报告',
+        content: pickedText,
+        timestamp: formatSeconds(elapsed),
+        evidenceSegmentId: segId,
+      });
+    }
   };
 
   const filteredInsights = insights.filter((item) => {
@@ -260,6 +334,14 @@ export const InMeetingWorkbench: React.FC = () => {
         className="h-13 px-5 py-3 border-b border-border-subtle bg-subtle flex items-center justify-between shrink-0"
       >
         <div className="flex items-center gap-3">
+          <button
+            type="button"
+            data-testid="workbench-page-header-btn-back"
+            onClick={() => setCurrentRoute('home')}
+            className="px-2.5 py-1 text-xs rounded bg-panel border border-border-subtle hover:bg-hover text-text-secondary flex items-center gap-1 font-medium transition-colors"
+          >
+            ← 返回工作台
+          </button>
           <span
             data-testid="workbench-page-header-badge-status"
             className={`w-3 h-3 rounded-full ${
@@ -279,6 +361,36 @@ export const InMeetingWorkbench: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2">
+          {status !== 'RECORDING' ? (
+            <button
+              type="button"
+              data-testid="workbench-page-header-btn-start-record"
+              onClick={() => (status === 'PAUSED' ? resumeMeeting() : startMeeting(title))}
+              className="px-3 py-1.5 text-xs bg-status-success text-white hover:opacity-90 rounded-md font-medium transition-opacity flex items-center gap-1.5"
+            >
+              <span>▶</span>
+              <span>{status === 'PAUSED' ? '继续录制' : '开始录制'}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              data-testid="workbench-page-header-btn-pause-record"
+              onClick={pauseMeeting}
+              className="px-3 py-1.5 text-xs bg-panel border border-border-subtle text-text-primary hover:bg-hover rounded-md font-medium transition-colors"
+            >
+              ⏸ 暂停
+            </button>
+          )}
+
+          <button
+            type="button"
+            data-testid="workbench-page-header-btn-simulate-speech"
+            onClick={handleSimulateSpeech}
+            className="px-3 py-1.5 text-xs bg-brand-blue-subtle text-brand-blue hover:bg-brand-blue hover:text-white rounded-md font-medium transition-colors"
+          >
+            🎙️ 模拟参会人发言
+          </button>
+
           <button
             type="button"
             data-testid="workbench-page-header-btn-minimize-to-pill"
@@ -381,10 +493,11 @@ export const InMeetingWorkbench: React.FC = () => {
             />
             <button
               type="submit"
+              disabled={isAsking}
               data-testid="workbench-page-insights-panel-btn-send-question"
-              className="px-3.5 py-2 text-xs bg-brand-blue text-white rounded-md hover:bg-brand-blue-hover transition-colors font-medium shrink-0"
+              className="px-3.5 py-2 text-xs bg-brand-blue text-white rounded-md hover:bg-brand-blue-hover transition-colors font-medium shrink-0 disabled:opacity-50"
             >
-              提问
+              {isAsking ? '思考中...' : '提问'}
             </button>
           </form>
         </section>

@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react';
 import { useMeetingStore } from './store/useMeetingStore';
-import { InMeetingWorkbench } from './components/InMeetingWorkbench';
+import { AppLayout } from './components/AppLayout';
 import { FloatingPill } from './components/FloatingPill';
 
 export const App: React.FC = () => {
@@ -15,12 +15,14 @@ export const App: React.FC = () => {
     }
 
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-      import('@tauri-apps/api/webviewWindow').then(({ getCurrentWebviewWindow }) => {
-        const appWindow = getCurrentWebviewWindow();
-        if (appWindow.label === 'floating-pill') {
-          setActiveWindow('floating-pill');
-        }
-      }).catch(() => {});
+      import('@tauri-apps/api/webviewWindow')
+        .then(({ getCurrentWebviewWindow }) => {
+          const appWindow = getCurrentWebviewWindow();
+          if (appWindow.label === 'floating-pill') {
+            setActiveWindow('floating-pill');
+          }
+        })
+        .catch(() => {});
     }
   }, [setActiveWindow]);
 
@@ -43,7 +45,7 @@ export const App: React.FC = () => {
     );
   }
 
-  return <InMeetingWorkbench />;
+  return <AppLayout />;
 };
 
 export default App;

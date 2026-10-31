@@ -4,6 +4,7 @@ import { AuthService } from './auth/auth.service.js';
 import { BillingEngine } from './billing/billing.engine.js';
 import { WechatPayService } from './payment/wechat-pay.service.js';
 import { OpsService } from './ops/ops.service.js';
+import { renderAdminDashboardHtml } from './admin.html.js';
 
 export interface ControlPlaneOptions {
   authService?: AuthService;
@@ -35,16 +36,31 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
     const pathname = url.pathname;
 
     try {
+      // 0. Web 运营管理后台页面 (GET/HEAD / 或 /admin 或 /dashboard)
+      if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/' || pathname === '/admin' || pathname === '/dashboard')) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+        if (req.method === 'HEAD') {
+          res.end();
+        } else {
+          res.end(renderAdminDashboardHtml());
+        }
+        return;
+      }
+
       // 1. 健康检查
-      if (req.method === 'GET' && (pathname === '/v1/health' || pathname === '/health')) {
+      if ((req.method === 'GET' || req.method === 'HEAD') && (pathname === '/v1/health' || pathname === '/health')) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            status: 'ok',
-            service: 'tingxu-control-plane',
-            timestamp: new Date().toISOString(),
-          })
-        );
+        if (req.method === 'HEAD') {
+          res.end();
+        } else {
+          res.end(
+            JSON.stringify({
+              status: 'ok',
+              service: 'tingxu-control-plane',
+              timestamp: new Date().toISOString(),
+            })
+          );
+        }
         return;
       }
 
@@ -81,13 +97,74 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 5. 短信验证码登录 (POST /v1/auth/sms/login)
+      // 5. 短信验证码发送 (POST /v1/auth/sms/send)
+      if (req.method === 'POST' && pathname === '/v1/auth/sms/send') {
+        const body = JSON.parse(await readRequestBody(req));
+        const sendResult = await authService.sendSmsCode(body.phone);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, ...sendResult }));
+        return;
+      }
+
+      // 6. 短信验证码登录 (POST /v1/auth/sms/login)
       if (req.method === 'POST' && pathname === '/v1/auth/sms/login') {
         const body = JSON.parse(await readRequestBody(req));
         const session = await authService.loginWithSms(body.phone, body.code);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, data: session }));
+        return;
+      }
+
+      // 7. 运营后台：脱敏用户列表 (GET /v1/ops/users)
+      if (req.method === 'GET' && pathname === '/v1/ops/users') {
+        const desensitized = await opsService.getDesensitizedUsers([
+          { userId: 'usr_8000', phone: '13800138000', createdAt: '2026-10-30' },
+          { userId: 'usr_1234', phone: '13912345678', createdAt: '2026-10-29' },
+          { userId: 'usr_5678', phone: '18688889999', createdAt: '2026-10-28' },
+        ]);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: desensitized }));
+        return;
+      }
+
+      // 8. 运营后台：提交补偿申请 (POST /v1/ops/compensation/submit)
+      if (req.method === 'POST' && pathname === '/v1/ops/compensation/submit') {
+        const body = JSON.parse(await readRequestBody(req));
+        const compReq = await opsService.submitCompensationRequest(
+          { userId: body.operatorId || 'op_anonymous', role: 'OPERATOR' },
+          {
+            targetUserId: body.targetUserId,
+            grantSeconds: Number(body.grantSeconds),
+            reason: body.reason,
+          }
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: compReq }));
+        return;
+      }
+
+      // 9. 运营后台：所有者审批发放 (POST /v1/ops/compensation/approve)
+      if (req.method === 'POST' && pathname === '/v1/ops/compensation/approve') {
+        const body = JSON.parse(await readRequestBody(req));
+        const approved = await opsService.approveCompensation(
+          { userId: body.ownerId || 'owner_01', role: 'OWNER' },
+          body.requestId
+        );
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: approved }));
+        return;
+      }
+
+      // 10. 运营后台：审计日志查询 (GET /v1/ops/audit/logs)
+      if (req.method === 'GET' && pathname === '/v1/ops/audit/logs') {
+        const logs = await opsService.getAuditLogs();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: logs }));
         return;
       }
 

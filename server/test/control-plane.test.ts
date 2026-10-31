@@ -332,6 +332,14 @@ describe('听序商业控制面 (Control Plane) 核心服务测试', () => {
       expect(balJson.code).toBe(0);
       expect(balJson.data.totalAvailableSeconds).toBeDefined();
 
+      // Web 运营管理控制台首页 HTML 响应
+      const htmlRes = await fetch(`http://127.0.0.1:${port}/admin`);
+      expect(htmlRes.status).toBe(200);
+      expect(htmlRes.headers.get('content-type')).toContain('text/html');
+      const htmlText = await htmlRes.text();
+      expect(htmlText).toContain('听序 Tingxu · 商业控制面运营管理系统');
+      expect(htmlText).toContain('时长补偿与赠送审批工单');
+
       await new Promise<void>((resolve) => server.close(() => resolve()));
     });
   });

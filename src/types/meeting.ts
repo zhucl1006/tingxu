@@ -2,6 +2,8 @@ export type MeetingStatus = 'IDLE' | 'RECORDING' | 'PAUSED' | 'ENDED';
 
 export type InsightType = 'decision' | 'action' | 'risk' | 'fact';
 
+export type NavRoute = 'home' | 'record' | 'tasks' | 'search' | 'billing' | 'settings';
+
 export interface RevisionProposal {
   id: string;
   proposedText: string;
@@ -27,8 +29,36 @@ export interface TranscriptSegment {
   speaker: string;
   channel: 'mic' | 'system';
   timestamp: string;
+  timestampSeconds?: number;
   text: string;
   isStreaming?: boolean;
+}
+
+export interface UserProfile {
+  userId: string;
+  phone: string;
+  token: string;
+  role?: 'USER' | 'OPERATOR' | 'OWNER';
+}
+
+export interface TaskItem {
+  id: string;
+  title: string;
+  meetingTitle: string;
+  assignee: string;
+  completed: boolean;
+  createdAt: string;
+  evidenceSegmentId?: string;
+}
+
+export interface HistoryMeeting {
+  id: string;
+  title: string;
+  date: string;
+  durationSeconds: number;
+  summary: string;
+  decisionsCount: number;
+  tasksCount: number;
 }
 
 export interface MeetingState {
@@ -40,6 +70,27 @@ export interface MeetingState {
   insights: InsightCard[];
   highlightedTranscriptId: string | null;
   activeWindow: 'workbench' | 'floating-pill';
+  
+  // 导航与路由
+  currentRoute: NavRoute;
+  setCurrentRoute: (route: NavRoute) => void;
+
+  // 用户与登录
+  currentUser: UserProfile | null;
+  isLoginModalOpen: boolean;
+  setIsLoginModalOpen: (open: boolean) => void;
+  loginUser: (user: UserProfile) => void;
+  logoutUser: () => void;
+
+  // 用量与配额
+  quotaMinutes: number;
+  totalQuotaMinutes: number;
+  setQuotaMinutes: (minutes: number) => void;
+
+  // 待办与历史
+  tasks: TaskItem[];
+  toggleTask: (id: string) => void;
+  historyMeetings: HistoryMeeting[];
   
   // Actions
   startMeeting: (title?: string) => void;
