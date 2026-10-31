@@ -321,6 +321,12 @@ export function renderAdminDashboardHtml(): string {
         </div>
       </div>
 
+      <!-- 占位符说明横幅 -->
+      <div style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:8px; padding:10px 14px; margin-bottom:18px; font-size:12px; color:#fbbf24; display:flex; align-items:center; gap:8px;">
+        <span style="font-size:16px;">💡</span>
+        <span><strong>关于默认初始配置说明：</strong>当前表单中默认展示的 <code>LTAI5tPlaceholderKey</code>、<code>sk-deepseek-default...</code> 均为系统预设的<strong>格式示例占位符</strong>，并非真实云凭据。请在下方卡片中替换为<strong>您在阿里云控制台或大模型平台申请的真实凭据</strong>并点击右上角保存即可真实发送短信与调用大模型。</span>
+      </div>
+
       <!-- LLM 配置卡片 -->
       <div class="config-card">
         <div class="config-card-header">

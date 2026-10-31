@@ -1,3 +1,5 @@
+import { sendAliyunSms } from '../auth/aliyun-sms.js';
+
 export interface LlmConfig {
   provider: 'deepseek' | 'qwen' | 'openai' | 'custom';
   apiKey: string;
@@ -179,22 +181,75 @@ export class SystemConfigService {
   public async testLlmConnection(options?: { provider?: string }): Promise<{ success: boolean; latencyMs: number; message: string }> {
     const start = Date.now();
     const provider = options?.provider || this.config.llm.provider;
-    // 真实/测试连通性探活
-    const latency = Math.max(12, Date.now() - start);
-    return {
-      success: true,
-      latencyMs: latency,
-      message: `[${provider}] 模型服务连通成功，参数校验通过，响应正常`,
-    };
+    const apiKey = this.config.llm.apiKey;
+    const baseUrl = this.config.llm.baseUrl;
+
+    if (!apiKey || apiKey.includes('placeholder') || apiKey.startsWith('sk-deepseek-default')) {
+      return {
+        success: false,
+        latencyMs: 0,
+        message: `当前配置的是系统默认示例占位符 (${apiKey.slice(0, 10)}...)，请填入您在 DeepSeek 或通义千问控制台获取的真实有效 API Key。`,
+      };
+    }
+
+    try {
+      const res = await fetch(`${baseUrl}/models`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const latency = Date.now() - start;
+      if (res.ok) {
+        return {
+          success: true,
+          latencyMs: latency,
+          message: `[${provider}] 真实大模型 API Key 验证通过！接口响应耗时 ${latency}ms。`,
+        };
+      } else {
+        return {
+          success: false,
+          latencyMs: latency,
+          message: `[${provider}] 鉴权未通过 HTTP ${res.status}: ${await res.text()}`,
+        };
+      }
+    } catch (e) {
+      return {
+        success: false,
+        latencyMs: Date.now() - start,
+        message: `[${provider}] 探活连接失败: ${(e as Error).message}`,
+      };
+    }
   }
 
   public async testSmsConnection(phone: string): Promise<{ success: boolean; message: string }> {
     if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
       throw new Error('请输入有效的 11 位国内手机号');
     }
+
+    const smsConfig = this.config.sms;
+    if (smsConfig.provider === 'sandbox') {
+      return {
+        success: true,
+        message: `[开发沙箱模式] 已模拟下发验证码至手机 ${phone.slice(0, 3)}****${phone.slice(-4)}，控制台已记录`,
+      };
+    }
+
+    // 真实调用阿里云短信网关
+    const testCode = String(Math.floor(100000 + Math.random() * 900000));
+    const result = await sendAliyunSms({
+      accessKeyId: smsConfig.accessKeyId,
+      accessKeySecret: smsConfig.accessKeySecret,
+      phoneNumbers: phone,
+      signName: smsConfig.signName,
+      templateCode: smsConfig.templateCode,
+      templateParam: { code: testCode },
+    });
+
+    if (!result.success) {
+      throw new Error(result.message);
+    }
+
     return {
       success: true,
-      message: `已向手机 ${phone.slice(0, 3)}****${phone.slice(-4)} 触发测试短信下发指令`,
+      message: result.message,
     };
   }
 }

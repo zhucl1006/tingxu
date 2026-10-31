@@ -125,7 +125,7 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
       const postJson = await postRes.json();
       expect(postJson.code).toBe(0);
 
-      // 3. POST /v1/admin/config/test-llm (连通性自测)
+      // 3. POST /v1/admin/config/test-llm (占位符时明确提示未配置真实凭据)
       const testRes = await fetch(`http://localhost:${port}/v1/admin/config/test-llm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -134,7 +134,8 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
       expect(testRes.status).toBe(200);
       const testJson = await testRes.json();
       expect(testJson.code).toBe(0);
-      expect(testJson.data.success).toBe(true);
+      expect(testJson.data.success).toBe(false);
+      expect(testJson.data.message).toContain('示例占位符');
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
