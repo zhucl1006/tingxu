@@ -8,6 +8,7 @@ import { SearchView } from './views/SearchView';
 import { BillingView } from './views/BillingView';
 import { SettingsView } from './views/SettingsView';
 import { LoginModal } from './LoginModal';
+import { GatewayConnectionGuard } from './guards/GatewayConnectionGuard';
 
 export const AppLayout: React.FC = () => {
   const { currentRoute } = useMeetingStore();
@@ -32,20 +33,22 @@ export const AppLayout: React.FC = () => {
   };
 
   return (
-    <div
-      data-testid="app-layout-root"
-      className="flex h-screen w-screen bg-canvas text-text-primary overflow-hidden font-sans"
-    >
-      {/* 左侧统一侧边栏导航 */}
-      <Sidebar />
+    <GatewayConnectionGuard>
+      <div
+        data-testid="app-layout-root"
+        className="flex h-screen w-screen bg-canvas text-text-primary overflow-hidden font-sans"
+      >
+        {/* 左侧统一侧边栏导航 */}
+        <Sidebar />
 
-      {/* 右侧主业务工作区 */}
-      <main data-testid="app-layout-main-viewport" className="flex-1 h-screen overflow-hidden flex flex-col">
-        {renderActiveView()}
-      </main>
+        {/* 右侧主业务工作区 */}
+        <main data-testid="app-layout-main-viewport" className="flex-1 h-screen overflow-hidden flex flex-col">
+          {renderActiveView()}
+        </main>
 
-      {/* 全局登录弹窗 */}
-      <LoginModal />
-    </div>
+        {/* 全局登录弹窗 */}
+        <LoginModal />
+      </div>
+    </GatewayConnectionGuard>
   );
 };

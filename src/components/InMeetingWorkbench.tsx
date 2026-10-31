@@ -2,6 +2,8 @@ import React, { useState, useRef, useEffect, memo, useCallback } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
+import { RealAudioCapture } from '../audio/realAudioCapture';
+import { RealStreamingAsrClient } from '../audio/realStreamingAsrClient';
 
 // 独立抽离秒表组件：仅订阅 elapsedSeconds，避免每秒重渲庞大整树（对齐 AGENTS.md 5.2 性能规范）
 const HeaderTimer: React.FC = () => {
@@ -203,7 +205,68 @@ export const InMeetingWorkbench: React.FC = () => {
   const [filterKeyword, setFilterKeyword] = useState('');
   const [questionText, setQuestionText] = useState('');
   const [isAsking, setIsAsking] = useState(false);
+  const [rmsLevel, setRmsLevel] = useState(0);
+  const [interimText, setInterimText] = useState('');
   const transcriptListRef = useRef<HTMLDivElement>(null);
+  const audioCaptureRef = useRef<RealAudioCapture | null>(null);
+  const asrClientRef = useRef<RealStreamingAsrClient | null>(null);
+
+  // 监听 status 切换，真实驱动物理麦克风采集与流式 ASR 传输
+  useEffect(() => {
+    if (status === 'RECORDING') {
+      const asrClient = new RealStreamingAsrClient({
+        wsUrl: 'ws://localhost:3201/gateway/v1/asr/stream',
+        onInterimText: (text) => setInterimText(text),
+        onFinalSentence: (sentence) => {
+          setInterimText('');
+          addTranscriptSegment({
+            id: `seg_${Date.now()}`,
+            channel: 'mic',
+            speaker: sentence.speaker || '我',
+            text: sentence.text,
+            timestamp: sentence.timestamp || formatSeconds(useMeetingStore.getState().elapsedSeconds),
+          });
+        },
+      });
+
+      const audioCapture = new RealAudioCapture({
+        sampleRate: 16000,
+        onRmsLevel: (rms) => setRmsLevel(rms),
+        onAudioChunk: (chunk) => {
+          asrClient.sendPcmChunk(chunk);
+        },
+      });
+
+      asrClientRef.current = asrClient;
+      audioCaptureRef.current = audioCapture;
+
+      // 启动 WebSocket 与麦克风物理采集
+      asrClient.connect().catch(() => {});
+      audioCapture.start().catch((err) => {
+        console.warn('物理麦克风拾取启动提示:', err.message);
+      });
+    } else {
+      if (audioCaptureRef.current) {
+        audioCaptureRef.current.stop().catch(() => {});
+        audioCaptureRef.current = null;
+      }
+      if (asrClientRef.current) {
+        asrClientRef.current.disconnect();
+        asrClientRef.current = null;
+      }
+      setRmsLevel(0);
+      setInterimText('');
+    }
+
+    return () => {
+      if (audioCaptureRef.current) {
+        audioCaptureRef.current.stop().catch(() => {});
+      }
+      if (asrClientRef.current) {
+        asrClientRef.current.disconnect();
+      }
+    };
+  }, [status, addTranscriptSegment]);
 
   // 联动滚动与短促呼吸高亮消退机制（依据 UIUX-DESIGN-SPEC.md 规范）
   useEffect(() => {
@@ -518,9 +581,10 @@ export const InMeetingWorkbench: React.FC = () => {
               </span>
               <span
                 data-testid="workbench-page-transcript-panel-badge-channel-source"
-                className="px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue text-[10px] font-mono"
+                className="px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue text-[10px] font-mono flex items-center gap-1"
               >
-                双轨采集: 麦克风 + 声卡
+                <span className={`w-1.5 h-1.5 rounded-full ${rmsLevel > 0.05 ? 'bg-emerald-400 animate-ping' : 'bg-brand-blue'}`} />
+                真实麦克风拾取中
               </span>
             </div>
 
@@ -540,7 +604,7 @@ export const InMeetingWorkbench: React.FC = () => {
             data-testid="workbench-page-transcript-panel-list-segments"
             className="flex-1 overflow-y-auto p-4 space-y-3"
           >
-            {filteredTranscripts.length === 0 ? (
+            {filteredTranscripts.length === 0 && !interimText ? (
               <div
                 data-testid="workbench-page-transcript-panel-empty-state"
                 className="h-full flex items-center justify-center text-text-tertiary text-xs"
@@ -548,13 +612,25 @@ export const InMeetingWorkbench: React.FC = () => {
                 等待麦克风与系统音频输入...
               </div>
             ) : (
-              filteredTranscripts.map((segment) => (
-                <TranscriptRow
-                  key={segment.id}
-                  segment={segment}
-                  isHighlighted={highlightedTranscriptId === segment.id}
-                />
-              ))
+              <>
+                {filteredTranscripts.map((segment) => (
+                  <TranscriptRow
+                    key={segment.id}
+                    segment={segment}
+                    isHighlighted={highlightedTranscriptId === segment.id}
+                  />
+                ))}
+                {interimText && (
+                  <div
+                    data-testid="workbench-page-transcript-interim-box"
+                    className="p-3 rounded-lg border border-brand-blue/30 bg-brand-blue/5 text-xs text-text-primary flex items-center gap-2 animate-pulse"
+                  >
+                    <span className="w-2 h-2 rounded-full bg-brand-blue animate-ping" />
+                    <span className="text-text-secondary font-mono text-[11px]">正在转写:</span>
+                    <span className="font-medium text-brand-blue">{interimText}</span>
+                  </div>
+                )}
+              </>
             )}
           </div>
 

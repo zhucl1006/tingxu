@@ -104,10 +104,15 @@ const initialMeetingState = {
   totalQuotaMinutes: 600,
   tasks: initialTasks,
   historyMeetings: initialHistoryMeetings,
+  gatewayUrl: 'http://localhost:3201',
 };
 
 export const useMeetingStore = create<MeetingState>((set, get) => ({
   ...initialMeetingState,
+
+  setGatewayUrl: (url: string) => {
+    set({ gatewayUrl: url });
+  },
 
   setCurrentRoute: (route: NavRoute) => {
     set({ currentRoute: route });

@@ -18,6 +18,14 @@ export function createGatewayServer(options?: GatewayServerOptions) {
       fallbackAdapter: new QwenAdapter(),
     });
 
+  let activeConfig = {
+    llmProvider: 'deepseek',
+    primaryModel: 'deepseek-chat',
+    fallbackModel: 'qwen-plus',
+    asrProvider: 'dashscope',
+    lastReloadedAt: new Date().toISOString(),
+  };
+
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // 跨域设置
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -33,7 +41,14 @@ export function createGatewayServer(options?: GatewayServerOptions) {
     const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
     const pathname = url.pathname;
 
-    // 1. 健康检查
+    // 0. 前端极速探活接口 (GET /gateway/v1/ping)
+    if (req.method === 'GET' && (pathname === '/gateway/v1/ping' || pathname === '/ping')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ pong: true, time: Date.now() }));
+      return;
+    }
+
+    // 1. 健康检查与配置状态
     if (req.method === 'GET' && (pathname === '/gateway/v1/health' || pathname === '/v1/health' || pathname === '/health')) {
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(
@@ -41,9 +56,47 @@ export function createGatewayServer(options?: GatewayServerOptions) {
           status: 'ok',
           service: 'tingxu-ai-gateway',
           timestamp: new Date().toISOString(),
+          activeConfig,
           circuitBreakers: router.getBreakerStats(),
         })
       );
+      return;
+    }
+
+    // 1.5 配置热重载接口 (POST /internal/config/reload)
+    if (req.method === 'POST' && pathname === '/internal/config/reload') {
+      try {
+        const bodyText = await readRequestBody(req);
+        const config = JSON.parse(bodyText);
+
+        if (config.llm) {
+          activeConfig = {
+            ...activeConfig,
+            llmProvider: config.llm.provider || activeConfig.llmProvider,
+            primaryModel: config.llm.model || activeConfig.primaryModel,
+            fallbackModel: config.llm.fallbackModel || activeConfig.fallbackModel,
+            lastReloadedAt: new Date().toISOString(),
+          };
+
+          // 重新根据最新凭据配置适配器
+          const primaryAdapter = new DeepSeekAdapter({
+            apiKey: config.llm.apiKey,
+            baseUrl: config.llm.baseUrl,
+          });
+          const fallbackAdapter = new QwenAdapter();
+          router.updateAdapters({ primaryAdapter, fallbackAdapter });
+        }
+
+        if (config.asr) {
+          activeConfig.asrProvider = config.asr.provider || activeConfig.asrProvider;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, reloaded: true, activeConfig }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 400, message: (err as Error).message }));
+      }
       return;
     }
 
@@ -52,7 +105,19 @@ export function createGatewayServer(options?: GatewayServerOptions) {
       const startTime = Date.now();
       try {
         const bodyText = await readRequestBody(req);
-        const payload: MeetingChatRequest = JSON.parse(bodyText);
+        const rawPayload = JSON.parse(bodyText);
+
+        const segments = rawPayload.localStableTranscript || rawPayload.transcriptWindow || [];
+        const payload: MeetingChatRequest = {
+          meetingId: rawPayload.meetingId || 'mtg_current',
+          question: rawPayload.question,
+          asOfTextVersion: rawPayload.asOfTextVersion || 1,
+          localStableTranscript: segments.map((s: any, idx: number) => ({
+            segmentId: s.segmentId || `seg_${idx}`,
+            speaker: s.speaker || '发言人',
+            text: s.text || '',
+          })),
+        };
 
         const result = await router.chat(payload);
 
@@ -73,7 +138,11 @@ export function createGatewayServer(options?: GatewayServerOptions) {
         res.end(
           JSON.stringify({
             code: 0,
-            data: result.data,
+            data: {
+              answer: result.data.answer,
+              evidenceRefs: result.data.evidenceRefs,
+              citations: result.data.evidenceRefs || [],
+            },
             meta: {
               modelVersion: result.modelVersion,
               tokensUsed: result.usage.totalTokens,

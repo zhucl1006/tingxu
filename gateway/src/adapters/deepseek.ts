@@ -117,9 +117,10 @@ export class DeepSeekAdapter implements ModelAdapter {
     }
 
     if (this.mockMode) {
-      const matchSegment = req.localStableTranscript[0] || {
-        segmentId: 'seg_0',
-        text: '暂无发言内容',
+      const transcript = req.localStableTranscript || [];
+      const matchSegment = transcript[0] || {
+        segmentId: 'seg_default',
+        text: '全量讨论已记录并在本地安全存储',
       };
       const answer = `根据现场讨论，关于问题“${req.question}”，参会人员指出：${matchSegment.text}`;
       const evidenceRefs = [

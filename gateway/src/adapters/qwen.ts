@@ -119,8 +119,9 @@ export class QwenAdapter implements ModelAdapter {
     }
 
     if (this.mockMode) {
-      const matchSegment = req.localStableTranscript[0] || {
-        segmentId: 'seg_0',
+      const transcript = req.localStableTranscript || [];
+      const matchSegment = transcript[0] || {
+        segmentId: 'seg_default',
         text: '现场讨论内容',
       };
       const answer = `根据当前讨论（备用通道保障），关于“${req.question}”，发言表明：${matchSegment.text}`;

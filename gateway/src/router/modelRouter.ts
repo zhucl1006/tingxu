@@ -24,8 +24,8 @@ export interface ModelRouterOptions {
 }
 
 export class ModelRouter {
-  public readonly primaryAdapter: ModelAdapter;
-  public readonly fallbackAdapter: ModelAdapter;
+  public primaryAdapter: ModelAdapter;
+  public fallbackAdapter: ModelAdapter;
   public readonly primaryBreaker: CircuitBreaker;
   public readonly fallbackBreaker: CircuitBreaker;
 
@@ -34,6 +34,13 @@ export class ModelRouter {
     this.fallbackAdapter = options.fallbackAdapter;
     this.primaryBreaker = new CircuitBreaker(options.primaryBreakerOptions);
     this.fallbackBreaker = new CircuitBreaker(options.fallbackBreakerOptions);
+  }
+
+  public updateAdapters(options: { primaryAdapter: ModelAdapter; fallbackAdapter?: ModelAdapter }) {
+    this.primaryAdapter = options.primaryAdapter;
+    if (options.fallbackAdapter) {
+      this.fallbackAdapter = options.fallbackAdapter;
+    }
   }
 
   public async generateInsightStream(

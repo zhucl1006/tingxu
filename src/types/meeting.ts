@@ -92,6 +92,10 @@ export interface MeetingState {
   toggleTask: (id: string) => void;
   historyMeetings: HistoryMeeting[];
   
+  // 网关地址
+  gatewayUrl: string;
+  setGatewayUrl: (url: string) => void;
+
   // Actions
   startMeeting: (title?: string) => void;
   pauseMeeting: () => void;

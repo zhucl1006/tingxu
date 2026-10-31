@@ -4,6 +4,7 @@ import { AuthService } from './auth/auth.service.js';
 import { BillingEngine } from './billing/billing.engine.js';
 import { WechatPayService } from './payment/wechat-pay.service.js';
 import { OpsService } from './ops/ops.service.js';
+import { SystemConfigService } from './config/system-config.service.js';
 import { renderAdminDashboardHtml } from './admin.html.js';
 
 export interface ControlPlaneOptions {
@@ -11,6 +12,7 @@ export interface ControlPlaneOptions {
   billingEngine?: BillingEngine;
   wechatPayService?: WechatPayService;
   opsService?: OpsService;
+  configService?: SystemConfigService;
 }
 
 export function createControlPlaneServer(options?: ControlPlaneOptions) {
@@ -19,6 +21,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
   const wechatPayService =
     options?.wechatPayService || new WechatPayService({ billingEngine });
   const opsService = options?.opsService || new OpsService({ billingEngine });
+  const configService = options?.configService || new SystemConfigService();
 
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // 跨域设置
@@ -168,6 +171,41 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
+      // 11. 运营后台：系统集成与密钥配置读取 (GET /v1/admin/config)
+      if (req.method === 'GET' && pathname === '/v1/admin/config') {
+        const maskedConfig = await configService.getConfig({ masked: true });
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: maskedConfig }));
+        return;
+      }
+
+      // 12. 运营后台：系统集成配置更新并热载 (POST /v1/admin/config)
+      if (req.method === 'POST' && pathname === '/v1/admin/config') {
+        const body = JSON.parse(await readRequestBody(req));
+        const updated = await configService.updateConfig(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: updated, message: '配置已更新并已通知 AI Gateway 热重载' }));
+        return;
+      }
+
+      // 13. 运营后台：LLM 连通性测试 (POST /v1/admin/config/test-llm)
+      if (req.method === 'POST' && pathname === '/v1/admin/config/test-llm') {
+        const body = JSON.parse(await readRequestBody(req));
+        const testRes = await configService.testLlmConnection(body);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: testRes }));
+        return;
+      }
+
+      // 14. 运营后台：短信发送通道自测 (POST /v1/admin/config/test-sms)
+      if (req.method === 'POST' && pathname === '/v1/admin/config/test-sms') {
+        const body = JSON.parse(await readRequestBody(req));
+        const testRes = await configService.testSmsConnection(body.phone);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: testRes }));
+        return;
+      }
+
       // 404
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ code: 404, message: `Route not found: ${pathname}` }));
@@ -177,7 +215,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
     }
   });
 
-  return { server, authService, billingEngine, wechatPayService, opsService };
+  return { server, authService, billingEngine, wechatPayService, opsService, configService };
 }
 
 function readRequestBody(req: IncomingMessage): Promise<string> {

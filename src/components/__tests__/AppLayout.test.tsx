@@ -1,18 +1,38 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { AppLayout } from '../AppLayout';
 import { useMeetingStore } from '../../store/useMeetingStore';
 
 describe('AppLayout 整体桌面端容器与导航测试', () => {
   beforeEach(() => {
+    vi.restoreAllMocks();
+    // 默认 mock 网关健康探活返回成功
+    vi.spyOn(global, 'fetch').mockImplementation(async (url: any) => {
+      if (typeof url === 'string' && url.includes('/gateway/v1/health')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ status: 'ok', service: 'tingxu-ai-gateway' }),
+        } as any;
+      }
+      return { ok: true, status: 200, json: async () => ({ code: 0 }) } as any;
+    });
+
     useMeetingStore.getState().resetMeeting();
     useMeetingStore.getState().logoutUser();
   });
 
-  it('应正确渲染侧边栏品牌、导航菜单与底部用量', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('应正确渲染侧边栏品牌、导航菜单与底部用量', async () => {
     render(<AppLayout />);
 
-    expect(screen.getByTestId('app-sidebar-container')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByTestId('app-sidebar-container')).toBeInTheDocument();
+    });
+
     expect(screen.getByTestId('app-sidebar-div-brand')).toBeInTheDocument();
     expect(screen.getByTestId('app-sidebar-card-quota')).toBeInTheDocument();
     expect(screen.getByTestId('app-sidebar-btn-nav-home')).toBeInTheDocument();
@@ -22,8 +42,12 @@ describe('AppLayout 整体桌面端容器与导航测试', () => {
     expect(screen.getByTestId('app-sidebar-btn-nav-settings')).toBeInTheDocument();
   });
 
-  it('点击未登录状态的登录按钮应弹出登录弹窗，并支持一键免密登录', () => {
+  it('点击未登录状态的登录按钮应弹出登录弹窗，并支持一键免密登录', async () => {
     render(<AppLayout />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-sidebar-container')).toBeInTheDocument();
+    });
 
     const triggerLoginBtn = screen.getByTestId('app-sidebar-btn-trigger-login');
     fireEvent.click(triggerLoginBtn);
@@ -40,8 +64,12 @@ describe('AppLayout 整体桌面端容器与导航测试', () => {
     expect(screen.getByTestId('app-sidebar-div-user')).toHaveTextContent('138****8000');
   });
 
-  it('点击各导航项应平滑切换至对应视图', () => {
+  it('点击各导航项应平滑切换至对应视图', async () => {
     render(<AppLayout />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-sidebar-container')).toBeInTheDocument();
+    });
 
     // 切换至我的待办
     fireEvent.click(screen.getByTestId('app-sidebar-btn-nav-tasks'));
