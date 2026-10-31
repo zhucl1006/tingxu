@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { WebSocket } from 'ws';
 import { createGatewayServer } from '../src/server.js';
 import { ModelRouter } from '../src/router/modelRouter.js';
 import { DeepSeekAdapter } from '../src/adapters/deepseek.js';
@@ -88,6 +89,37 @@ describe('AI Gateway 热重载与真实模型调用测试 (T04, T05, T06)', () =
       expect(chatJson.data.citations).toBeInstanceOf(Array);
       expect(chatJson.meta.tokensUsed).toBeGreaterThan(0);
     } finally {
+      await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('应支持通过 WebSocket /gateway/v1/asr/stream 接收 PCM 音频二进制帧并回传转写文本', async () => {
+    const { server, wss } = serverInstance;
+    await new Promise<void>((resolve) => server.listen(0, resolve));
+    const port = (server.address() as any).port;
+
+    try {
+      const client = new WebSocket(`ws://127.0.0.1:${port}/gateway/v1/asr/stream`);
+      await new Promise((resolve) => client.on('open', resolve));
+
+      const receivedMessages: any[] = [];
+      client.on('message', (msg) => {
+        receivedMessages.push(JSON.parse(msg.toString()));
+      });
+
+      // 发送 32000 字节的 16kHz PCM 音频二进制帧
+      const pcmPayload = Buffer.alloc(32000);
+      client.send(pcmPayload);
+
+      // 等待 WebSocket 消息回传
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(receivedMessages.length).toBeGreaterThan(0);
+      expect(receivedMessages.some((m) => m.type === 'INTERIM' || m.type === 'FINAL')).toBe(true);
+
+      client.close();
+    } finally {
+      wss.close();
       await new Promise((resolve) => server.close(resolve));
     }
   });

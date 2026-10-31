@@ -29,7 +29,7 @@ describe('GatewayConnectionGuard 前端强探活阻断守卫测试 (T08)', () =>
       expect(screen.getByTestId('protected-workspace-content')).toBeInTheDocument();
     });
 
-    expect(screen.queryByTestId('gateway-guard-modal-blocked')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('app-layout-gateway-guard-modal-blocked')).not.toBeInTheDocument();
   });
 
   it('当 AI Gateway 断开连接或报错时，必须全屏阻断并显示不可用提示遮罩', async () => {
@@ -43,11 +43,12 @@ describe('GatewayConnectionGuard 前端强探活阻断守卫测试 (T08)', () =>
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId('gateway-guard-modal-blocked')).toBeInTheDocument();
+      expect(screen.getByTestId('app-layout-gateway-guard-modal-blocked')).toBeInTheDocument();
     });
 
     expect(screen.getByTestId('gateway-guard-text-warning')).toHaveTextContent(/无法连接至听序 AI 网关/);
-    expect(screen.getByTestId('gateway-guard-btn-retry')).toBeInTheDocument();
+    expect(screen.getByTestId('app-layout-gateway-guard-btn-retry')).toBeInTheDocument();
+    expect(screen.getByTestId('app-layout-gateway-guard-btn-offline')).toBeInTheDocument();
     // 核心内容被阻断/隐藏
     expect(screen.queryByTestId('protected-workspace-content')).not.toBeInTheDocument();
   });
@@ -70,16 +71,16 @@ describe('GatewayConnectionGuard 前端强探活阻断守卫测试 (T08)', () =>
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId('gateway-guard-modal-blocked')).toBeInTheDocument();
+      expect(screen.getByTestId('app-layout-gateway-guard-modal-blocked')).toBeInTheDocument();
     });
 
     // 点击重试
-    fireEvent.click(screen.getByTestId('gateway-guard-btn-retry'));
+    fireEvent.click(screen.getByTestId('app-layout-gateway-guard-btn-retry'));
 
     await waitFor(() => {
       expect(screen.getByTestId('protected-workspace-content')).toBeInTheDocument();
     });
 
-    expect(screen.queryByTestId('gateway-guard-modal-blocked')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('app-layout-gateway-guard-modal-blocked')).not.toBeInTheDocument();
   });
 });

@@ -57,42 +57,56 @@ export class RealAudioCapture {
       throw new Error('当前运行环境不支持 Web Audio API / 麦克风录音权限');
     }
 
-    // 1. 请求物理麦克风权限与音频流
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: this.options.sampleRate,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
+    try {
+      // 1. 请求物理麦克风权限与音频流
+      this.stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          sampleRate: this.options.sampleRate,
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
 
-    // 2. 初始化 AudioContext
-    const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    this.audioContext = new AudioCtx({ sampleRate: this.options.sampleRate });
+      // 2. 初始化 AudioContext
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      this.audioContext = new AudioCtx({ sampleRate: this.options.sampleRate });
 
-    // 3. 构建节点图
-    this.source = this.audioContext.createMediaStreamSource(this.stream);
-    this.processor = this.audioContext.createScriptProcessor(this.options.bufferSize, 1, 1);
+      // 3. 构建节点图
+      this.source = this.audioContext.createMediaStreamSource(this.stream);
+      this.processor = this.audioContext.createScriptProcessor(this.options.bufferSize, 1, 1);
 
-    this.processor.onaudioprocess = (e) => {
-      if (!this.capturing) return;
-      const inputData = e.inputBuffer.getChannelData(0);
+      this.processor.onaudioprocess = (e) => {
+        if (!this.capturing) return;
+        const inputData = e.inputBuffer.getChannelData(0);
 
-      // 计算真实电平并回调通知
-      const rms = calculateRms(inputData);
-      this.options.onRmsLevel(rms);
+        // 静音输出缓冲区，防止输入音频串扰至扬声器产生环境回环啸叫
+        if (e.outputBuffer && typeof e.outputBuffer.getChannelData === 'function') {
+          e.outputBuffer.getChannelData(0).fill(0);
+        }
 
-      // 转换为 16-bit 线性 PCM 并分片推流
-      const pcmBuffer = floatTo16BitPCM(inputData);
-      this.options.onAudioChunk(pcmBuffer);
-    };
+        // 计算真实电平并回调通知
+        const rms = calculateRms(inputData);
+        this.options.onRmsLevel(rms);
 
-    this.source.connect(this.processor);
-    this.processor.connect(this.audioContext.destination);
+        // 转换为 16-bit 线性 PCM 并分片推流
+        const pcmBuffer = floatTo16BitPCM(inputData);
+        this.options.onAudioChunk(pcmBuffer);
+      };
 
-    this.capturing = true;
+      this.source.connect(this.processor);
+      this.processor.connect(this.audioContext.destination);
+
+      this.capturing = true;
+    } catch (err) {
+      // 发生异常时，立即释放已获取的系统麦克风音轨，防止设备指示灯常驻
+      if (this.stream) {
+        this.stream.getTracks().forEach((track) => track.stop());
+        this.stream = null;
+      }
+      throw err;
+    }
   }
 
   public async stop(): Promise<void> {

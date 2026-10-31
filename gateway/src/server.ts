@@ -5,6 +5,7 @@ import { DeepSeekAdapter } from './adapters/deepseek.js';
 import { QwenAdapter } from './adapters/qwen.js';
 import { createAuditRecord } from './middleware/zeroContentAudit.js';
 import type { LiveInsightRequest, MeetingChatRequest } from './adapters/types.js';
+import { attachStreamingAsrServer } from './asr/streamingAsrServer.js';
 
 export interface GatewayServerOptions {
   router?: ModelRouter;
@@ -79,10 +80,10 @@ export function createGatewayServer(options?: GatewayServerOptions) {
           };
 
           // 重新根据最新凭据配置适配器
-          const primaryAdapter = new DeepSeekAdapter({
-            apiKey: config.llm.apiKey,
-            baseUrl: config.llm.baseUrl,
-          });
+          const primaryAdapter =
+            config.llm.provider === 'qwen'
+              ? new QwenAdapter({ apiKey: config.llm.apiKey, baseUrl: config.llm.baseUrl })
+              : new DeepSeekAdapter({ apiKey: config.llm.apiKey, baseUrl: config.llm.baseUrl });
           const fallbackAdapter = new QwenAdapter();
           router.updateAdapters({ primaryAdapter, fallbackAdapter });
         }
@@ -106,6 +107,12 @@ export function createGatewayServer(options?: GatewayServerOptions) {
       try {
         const bodyText = await readRequestBody(req);
         const rawPayload = JSON.parse(bodyText);
+
+        if (!rawPayload.question || typeof rawPayload.question !== 'string') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 400, message: '问题内容 (question) 不能为空' }));
+          return;
+        }
 
         const segments = rawPayload.localStableTranscript || rawPayload.transcriptWindow || [];
         const payload: MeetingChatRequest = {
@@ -223,7 +230,13 @@ export function createGatewayServer(options?: GatewayServerOptions) {
     res.end(JSON.stringify({ code: 404, message: `Route not found: ${pathname}` }));
   });
 
-  return { server, router };
+  const wss = attachStreamingAsrServer({
+    server,
+    path: '/gateway/v1/asr/stream',
+    getAsrConfig: () => ({ provider: activeConfig.asrProvider }),
+  });
+
+  return { server, router, wss };
 }
 
 function readRequestBody(req: IncomingMessage): Promise<string> {

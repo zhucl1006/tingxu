@@ -10,9 +10,12 @@
     "start": "node dist/main.js",
     "test": "vitest run"
   },
-  "dependencies": {},
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@types/ws": "^8.5.10",
     "typescript": "^5.4.5",
     "vitest": "^1.6.1"
   }

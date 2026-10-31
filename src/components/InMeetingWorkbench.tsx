@@ -325,15 +325,8 @@ export const InMeetingWorkbench: React.FC = () => {
           evidenceSegmentId: json.data?.evidenceRefs?.[0]?.segmentId || transcripts[transcripts.length - 1]?.id || '',
         });
       } else {
-        // 本地 Fallback
-        addInsight({
-          id: `ask-${Date.now()}`,
-          type: 'fact',
-          title: `AI 问答：${q}`,
-          content: '根据当前讨论记录，参会各方正就核心议题推进，暂未提出相悖意见。',
-          timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
-          evidenceSegmentId: transcripts[transcripts.length - 1]?.id || '',
-        });
+        // 彻底废除假数据生成：网关异常时明确提示真实错误，绝不臆造会议内容 (对齐 AGENTS.md 铁律)
+        alert('⚠️ AI 网关处理请求失败或网络不可达。根据安全防臆造铁律，系统已拒绝生成离线假数据，请确保网关运行正常后重试。');
       }
     } finally {
       setIsAsking(false);
@@ -622,7 +615,7 @@ export const InMeetingWorkbench: React.FC = () => {
                 ))}
                 {interimText && (
                   <div
-                    data-testid="workbench-page-transcript-interim-box"
+                    data-testid="workbench-page-transcript-panel-div-interim"
                     className="p-3 rounded-lg border border-brand-blue/30 bg-brand-blue/5 text-xs text-text-primary flex items-center gap-2 animate-pulse"
                   >
                     <span className="w-2 h-2 rounded-full bg-brand-blue animate-ping" />
