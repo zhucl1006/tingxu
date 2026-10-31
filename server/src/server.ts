@@ -1,5 +1,6 @@
 import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import crypto from 'node:crypto';
 import { AuthService } from './auth/auth.service.js';
 import { BillingEngine } from './billing/billing.engine.js';
 import { WechatPayService } from './payment/wechat-pay.service.js';
@@ -13,6 +14,7 @@ export interface ControlPlaneOptions {
   wechatPayService?: WechatPayService;
   opsService?: OpsService;
   configService?: SystemConfigService;
+  superPassword?: string;
 }
 
 export function createControlPlaneServer(options?: ControlPlaneOptions) {
@@ -22,6 +24,35 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
     options?.wechatPayService || new WechatPayService({ billingEngine });
   const opsService = options?.opsService || new OpsService({ billingEngine });
   const configService = options?.configService || new SystemConfigService();
+  const superPassword = options?.superPassword || process.env.ADMIN_SUPER_PASSWORD || 'tingxu2026';
+  const adminSessions = new Set<string>();
+
+  function parseCookies(req: IncomingMessage): Record<string, string> {
+    const list: Record<string, string> = {};
+    const cookieHeader = req.headers.cookie;
+    if (!cookieHeader) return list;
+    cookieHeader.split(';').forEach((cookie) => {
+      const parts = cookie.split('=');
+      const key = parts.shift()?.trim();
+      if (key) {
+        list[key] = decodeURIComponent(parts.join('=').trim());
+      }
+    });
+    return list;
+  }
+
+  function isAdminAuthenticated(req: IncomingMessage): boolean {
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      const token = authHeader.slice(7).trim();
+      if (adminSessions.has(token) || token === superPassword) return true;
+    }
+    const cookies = parseCookies(req);
+    if (cookies['tingxu_admin_token'] && adminSessions.has(cookies['tingxu_admin_token'])) {
+      return true;
+    }
+    return false;
+  }
 
   const server = http.createServer(async (req: IncomingMessage, res: ServerResponse) => {
     // 跨域设置
@@ -46,6 +77,50 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
           res.end();
         } else {
           res.end(renderAdminDashboardHtml());
+        }
+        return;
+      }
+
+      // 0.1 Admin 超级密码登录 (POST /v1/admin/login)
+      if (req.method === 'POST' && pathname === '/v1/admin/login') {
+        const body = JSON.parse(await readRequestBody(req));
+        if (body.password === superPassword) {
+          const token = `adm_${crypto.randomBytes(24).toString('hex')}`;
+          adminSessions.add(token);
+          res.writeHead(200, {
+            'Content-Type': 'application/json',
+            'Set-Cookie': `tingxu_admin_token=${token}; Path=/; HttpOnly; SameSite=Lax`,
+          });
+          res.end(JSON.stringify({ code: 0, data: { token, role: 'OWNER' }, message: '超级密码登录成功' }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 401, message: '超级密码错误，请核对后重试' }));
+        }
+        return;
+      }
+
+      // 0.2 Admin 安全登出 (POST /v1/admin/logout)
+      if (req.method === 'POST' && pathname === '/v1/admin/logout') {
+        const cookies = parseCookies(req);
+        if (cookies['tingxu_admin_token']) {
+          adminSessions.delete(cookies['tingxu_admin_token']);
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Set-Cookie': 'tingxu_admin_token=; Path=/; Expires=Thu, 01 Jan 1970 00:00:00 GMT',
+        });
+        res.end(JSON.stringify({ code: 0, message: '已安全退出登录' }));
+        return;
+      }
+
+      // 0.3 Admin 会话校验 (GET /v1/admin/session)
+      if (req.method === 'GET' && pathname === '/v1/admin/session') {
+        if (isAdminAuthenticated(req)) {
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 0, data: { authenticated: true, role: 'OWNER' } }));
+        } else {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 401, message: '未登录' }));
         }
         return;
       }
@@ -120,20 +195,61 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 7. 运营后台：脱敏用户列表 (GET /v1/ops/users)
+      // === 以下管理与运营后台接口必须通过超级密码鉴权 ===
+      if (pathname.startsWith('/v1/admin/') || pathname.startsWith('/v1/ops/')) {
+        if (!isAdminAuthenticated(req)) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 401, message: '未授权：请先输入超级密码登录' }));
+          return;
+        }
+      }
+
+      // 7. 运营后台：真实统计数据 (GET /v1/ops/stats)
+      if (req.method === 'GET' && pathname === '/v1/ops/stats') {
+        const userCount = authService.getUserCount();
+        const totalPaid = await wechatPayService.getTotalPaidAmount();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(
+          JSON.stringify({
+            code: 0,
+            data: {
+              userCount,
+              todayMeetingMinutes: 0,
+              totalPaidAmount: totalPaid,
+              gatewayStatus: '● CLOSED (正常运行)',
+            },
+          })
+        );
+        return;
+      }
+
+      // 8. 运营后台：真实脱敏用户列表 (GET /v1/ops/users)
       if (req.method === 'GET' && pathname === '/v1/ops/users') {
-        const desensitized = await opsService.getDesensitizedUsers([
-          { userId: 'usr_8000', phone: '13800138000', createdAt: '2026-10-30' },
-          { userId: 'usr_1234', phone: '13912345678', createdAt: '2026-10-29' },
-          { userId: 'usr_5678', phone: '18688889999', createdAt: '2026-10-28' },
-        ]);
+        const users = authService.getUsers();
+        const desensitized = await opsService.getDesensitizedUsers(users);
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, data: desensitized }));
         return;
       }
 
-      // 8. 运营后台：提交补偿申请 (POST /v1/ops/compensation/submit)
+      // 9. 运营后台：真实审批工单列表 (GET /v1/ops/compensations)
+      if (req.method === 'GET' && pathname === '/v1/ops/compensations') {
+        const list = await opsService.getAllCompensationRequests();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: list }));
+        return;
+      }
+
+      // 10. 运营后台：真实微信支付订单流水 (GET /v1/ops/orders)
+      if (req.method === 'GET' && pathname === '/v1/ops/orders') {
+        const orders = await wechatPayService.getAllOrders();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: orders }));
+        return;
+      }
+
+      // 11. 运营后台：提交补偿申请 (POST /v1/ops/compensation/submit)
       if (req.method === 'POST' && pathname === '/v1/ops/compensation/submit') {
         const body = JSON.parse(await readRequestBody(req));
         const compReq = await opsService.submitCompensationRequest(
@@ -150,7 +266,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 9. 运营后台：所有者审批发放 (POST /v1/ops/compensation/approve)
+      // 12. 运营后台：所有者审批发放 (POST /v1/ops/compensation/approve)
       if (req.method === 'POST' && pathname === '/v1/ops/compensation/approve') {
         const body = JSON.parse(await readRequestBody(req));
         const approved = await opsService.approveCompensation(
@@ -163,7 +279,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 10. 运营后台：审计日志查询 (GET /v1/ops/audit/logs)
+      // 13. 运营后台：审计日志查询 (GET /v1/ops/audit/logs)
       if (req.method === 'GET' && pathname === '/v1/ops/audit/logs') {
         const logs = await opsService.getAuditLogs();
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -171,7 +287,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 11. 运营后台：系统集成与密钥配置读取 (GET /v1/admin/config)
+      // 14. 运营后台：系统集成与密钥配置读取 (GET /v1/admin/config)
       if (req.method === 'GET' && pathname === '/v1/admin/config') {
         const maskedConfig = await configService.getConfig({ masked: true });
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -179,7 +295,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 12. 运营后台：系统集成配置更新并热载 (POST /v1/admin/config)
+      // 15. 运营后台：系统集成配置更新并热载 (POST /v1/admin/config)
       if (req.method === 'POST' && pathname === '/v1/admin/config') {
         const body = JSON.parse(await readRequestBody(req));
         const updated = await configService.updateConfig(body);
@@ -188,7 +304,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 13. 运营后台：LLM 连通性测试 (POST /v1/admin/config/test-llm)
+      // 16. 运营后台：LLM 连通性测试 (POST /v1/admin/config/test-llm)
       if (req.method === 'POST' && pathname === '/v1/admin/config/test-llm') {
         const body = JSON.parse(await readRequestBody(req));
         const testRes = await configService.testLlmConnection(body);
@@ -197,7 +313,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
-      // 14. 运营后台：短信发送通道自测 (POST /v1/admin/config/test-sms)
+      // 17. 运营后台：短信发送通道自测 (POST /v1/admin/config/test-sms)
       if (req.method === 'POST' && pathname === '/v1/admin/config/test-sms') {
         const body = JSON.parse(await readRequestBody(req));
         const testRes = await configService.testSmsConnection(body.phone);

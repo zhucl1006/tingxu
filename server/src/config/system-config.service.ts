@@ -56,32 +56,32 @@ export class SystemConfigService {
   constructor(options?: { gatewayReloadUrl?: string }) {
     this.gatewayReloadUrl = options?.gatewayReloadUrl || process.env.GATEWAY_RELOAD_URL || 'http://localhost:3201/internal/config/reload';
 
-    // 默认内置开箱可用标准预设
+    // 默认内置开箱配置项（未配置凭据保持为空栏位，绝不使用模拟假数据）
     this.config = {
       llm: {
         provider: 'deepseek',
-        apiKey: process.env.DEEPSEEK_API_KEY || 'sk-deepseek-default-placeholder-key',
-        baseUrl: 'https://api.deepseek.com/v1',
+        apiKey: process.env.DEEPSEEK_API_KEY || '',
+        baseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1',
         model: 'deepseek-chat',
         fallbackModel: 'qwen-plus',
         temperature: 0.3,
       },
       asr: {
         provider: 'dashscope',
-        apiKey: process.env.DASHSCOPE_API_KEY || 'sk-dashscope-asr-default-key',
-        endpoint: 'wss://dashscope.aliyuncs.com/api-v1/tasks',
+        apiKey: process.env.DASHSCOPE_API_KEY || '',
+        endpoint: process.env.DASHSCOPE_ASR_ENDPOINT || 'wss://dashscope.aliyuncs.com/api-v1/tasks',
         sampleRate: 16000,
       },
       sms: {
         provider: 'aliyun',
-        accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID || 'LTAI5tPlaceholderKey',
-        accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET || 'SecretPlaceholder12345678',
-        signName: '听序',
-        templateCode: 'SMS_TINGXU_CODE',
+        accessKeyId: process.env.ALIYUN_ACCESS_KEY_ID || '',
+        accessKeySecret: process.env.ALIYUN_ACCESS_KEY_SECRET || '',
+        signName: process.env.ALIYUN_SMS_SIGN_NAME || '听序',
+        templateCode: process.env.ALIYUN_SMS_TEMPLATE_CODE || 'SMS_TINGXU_CODE',
       },
       payment: {
-        mchId: process.env.WECHAT_MCHID || '1900000109',
-        apiV3Key: process.env.WECHAT_APIV3_KEY || 'SecretApiV3Key1234567890abcdef',
+        mchId: process.env.WECHAT_MCHID || '',
+        apiV3Key: process.env.WECHAT_APIV3_KEY || '',
       },
     };
   }
@@ -184,11 +184,19 @@ export class SystemConfigService {
     const apiKey = this.config.llm.apiKey;
     const baseUrl = this.config.llm.baseUrl;
 
-    if (!apiKey || apiKey.includes('placeholder') || apiKey.startsWith('sk-deepseek-default')) {
+    if (!apiKey) {
       return {
         success: false,
         latencyMs: 0,
-        message: `当前配置的是系统默认示例占位符 (${apiKey.slice(0, 10)}...)，请填入您在 DeepSeek 或通义千问控制台获取的真实有效 API Key。`,
+        message: '未配置大模型 API Key。请在上方输入框中填入您在大模型平台申请的真实 API Key 并点击保存。',
+      };
+    }
+
+    if (apiKey.includes('placeholder') || apiKey.startsWith('sk-deepseek-default')) {
+      return {
+        success: false,
+        latencyMs: 0,
+        message: `当前填入的是示例占位符 (${apiKey.slice(0, 10)}...)，请填入您在 DeepSeek 或通义千问控制台获取的真实有效 API Key。`,
       };
     }
 
@@ -225,6 +233,15 @@ export class SystemConfigService {
     }
 
     const smsConfig = this.config.sms;
+    if (smsConfig.provider !== 'sandbox') {
+      if (!smsConfig.accessKeyId || !smsConfig.accessKeySecret) {
+        throw new Error('未配置阿里云 AccessKey ID 或 AccessKey Secret，请在上方输入框中填写后保存再测试。');
+      }
+      if (smsConfig.accessKeyId.includes('Placeholder') || smsConfig.accessKeySecret.includes('Placeholder')) {
+        throw new Error('当前填入的是示例占位符，请填入您在阿里云申请的真实 AccessKey 凭据。');
+      }
+    }
+
     if (smsConfig.provider === 'sandbox') {
       return {
         success: true,

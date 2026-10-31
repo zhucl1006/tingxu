@@ -17,10 +17,23 @@ describe('生产级真实接入端到端闭环验证 (E2E Test - T13)', () => {
     const gwPort = (gw.server.address() as any).port;
 
     try {
+      // 2.5 管理员超级密码登录获取会话
+      const loginRes = await fetch(`http://127.0.0.1:${cpPort}/v1/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'tingxu2026' }),
+      });
+      expect(loginRes.status).toBe(200);
+      const loginJson = await loginRes.json();
+      const adminToken = loginJson.data.token;
+
       // 3. 管理员在 Admin 保存配置
       const updateRes = await fetch(`http://127.0.0.1:${cpPort}/v1/admin/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminToken}`,
+        },
         body: JSON.stringify({
           llm: {
             provider: 'deepseek',

@@ -1,5 +1,6 @@
 /**
  * 听序（Tingxu）商业控制面 Web 运营管理后台
+ * 严格遵循真实接入原则与 Zero-Content 隐私红线，严禁伪造假数据
  */
 
 export function renderAdminDashboardHtml(): string {
@@ -96,6 +97,7 @@ export function renderAdminDashboardHtml(): string {
       font-size: 24px;
       font-weight: 700;
       letter-spacing: -0.02em;
+      font-variant-numeric: tabular-nums;
     }
     .tabs {
       display: flex;
@@ -161,6 +163,12 @@ export function renderAdminDashboardHtml(): string {
     tr:last-child td {
       border-bottom: none;
     }
+    .empty-state-row td {
+      text-align: center;
+      padding: 32px 16px;
+      color: var(--text-sub);
+      font-size: 13px;
+    }
     .badge {
       display: inline-block;
       padding: 2px 8px;
@@ -206,24 +214,8 @@ export function renderAdminDashboardHtml(): string {
       color: var(--text-main);
       font-size: 13px;
     }
-    .modal {
-      display: none;
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.6);
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-      z-index: 100;
-    }
-    .modal.show { display: flex; }
-    .modal-content {
-      background: var(--card);
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      width: 100%;
-      max-width: 440px;
-      padding: 22px;
+    .form-group input::placeholder {
+      color: #6b7280;
     }
     .config-card {
       background: #0d1322;
@@ -260,9 +252,71 @@ export function renderAdminDashboardHtml(): string {
       display: none;
     }
     .test-result-box.show { display: block; }
+    
+    /* 登录弹窗遮罩 */
+    #login-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 13, 22, 0.95);
+      backdrop-filter: blur(8px);
+      z-index: 999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .login-box {
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 420px;
+      padding: 32px 28px;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .login-box h2 {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .login-sub {
+      font-size: 13px;
+      color: var(--text-sub);
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
   </style>
 </head>
 <body>
+  <!-- 超级密码登录浮层 (未认证时呈现) -->
+  <div id="login-overlay" style="display:none;">
+    <div class="login-box">
+      <h2>
+        <span class="logo-badge" style="width:26px; height:26px; font-size:13px;">听</span>
+        <span>听序 Tingxu · 管理员登录</span>
+      </h2>
+      <p class="login-sub">商业控制面受超级密码保护，请输入管理员密码后继续管理系统凭据与业务账本。</p>
+      
+      <div class="form-group">
+        <label for="admin-super-password">超级管理密码 (Super Password)</label>
+        <input type="password" id="admin-super-password" placeholder="请输入超级管理密码" autocomplete="current-password">
+      </div>
+      <div id="login-error-msg" style="color:var(--danger); font-size:12px; margin-bottom:12px; display:none;"></div>
+      
+      <button class="btn btn-primary" id="admin-btn-login" style="width:100%; padding:10px; font-size:14px;" onclick="doAdminLogin()">
+        登入管理控制台
+      </button>
+
+      <div style="margin-top:16px; font-size:11px; color:var(--text-sub); line-height:1.5;">
+        💡 初始默认密码为 <code>tingxu2026</code>（可在服务启动环境变量 <code>ADMIN_SUPER_PASSWORD</code> 中自定义）。
+      </div>
+    </div>
+  </div>
+
+  <!-- 主控制台 -->
   <header>
     <div class="logo">
       <div class="logo-badge">听</div>
@@ -270,30 +324,30 @@ export function renderAdminDashboardHtml(): string {
     </div>
     <div style="display:flex; align-items:center; gap:14px;">
       <span class="role-badge" id="current-role-badge">当前身份: 系统所有者 (Owner)</span>
-      <button class="btn btn-secondary" onclick="toggleRole()">切换为运营员 (Operator)</button>
+      <button class="btn btn-outline" onclick="doAdminLogout()">退出登录</button>
     </div>
   </header>
 
-  <div class="container">
-    <!-- 指标卡 -->
+  <div class="container" id="admin-main-container">
+    <!-- 真实指标卡 -->
     <div class="grid-4">
       <div class="stat-card">
         <div class="stat-title">已注册有效用户</div>
-        <div class="stat-value" id="stat-user-count">4</div>
+        <div class="stat-value" id="stat-user-count">0</div>
       </div>
       <div class="stat-card">
         <div class="stat-title">今日会议时长处理 (分钟)</div>
-        <div class="stat-value">1,420</div>
+        <div class="stat-value" id="stat-meeting-minutes">0</div>
       </div>
       <div class="stat-card">
         <div class="stat-title">自建 AI Gateway 熔断状态</div>
-        <div class="stat-value" style="color:var(--success); font-size:18px;" id="gateway-status-text">
-          ● CLOSED (DeepSeek 正常)
+        <div class="stat-value" style="color:var(--success); font-size:16px;" id="stat-gateway-status">
+          ● CLOSED (正常运行)
         </div>
       </div>
       <div class="stat-card">
         <div class="stat-title">微信支付实付累计</div>
-        <div class="stat-value">¥ 437.90</div>
+        <div class="stat-value" id="stat-total-paid">¥ 0.00</div>
       </div>
     </div>
 
@@ -321,10 +375,10 @@ export function renderAdminDashboardHtml(): string {
         </div>
       </div>
 
-      <!-- 占位符说明横幅 -->
-      <div style="background:rgba(245,158,11,0.1); border:1px solid rgba(245,158,11,0.3); border-radius:8px; padding:10px 14px; margin-bottom:18px; font-size:12px; color:#fbbf24; display:flex; align-items:center; gap:8px;">
+      <!-- 真实配置说明横幅 -->
+      <div style="background:rgba(37,99,235,0.1); border:1px solid rgba(37,99,235,0.3); border-radius:8px; padding:10px 14px; margin-bottom:18px; font-size:12px; color:#93c5fd; display:flex; align-items:center; gap:8px;">
         <span style="font-size:16px;">💡</span>
-        <span><strong>关于默认初始配置说明：</strong>当前表单中默认展示的 <code>LTAI5tPlaceholderKey</code>、<code>sk-deepseek-default...</code> 均为系统预设的<strong>格式示例占位符</strong>，并非真实云凭据。请在下方卡片中替换为<strong>您在阿里云控制台或大模型平台申请的真实凭据</strong>并点击右上角保存即可真实发送短信与调用大模型。</span>
+        <span><strong>配置接入说明：</strong>系统不预置任何虚假秘钥，未配置项目均为空栏位。请填入您在阿里云或大模型平台申请的真实密钥并保存，系统将即刻生效。</span>
       </div>
 
       <!-- LLM 配置卡片 -->
@@ -348,27 +402,27 @@ export function renderAdminDashboardHtml(): string {
           </div>
           <div class="form-group">
             <label>API Key / 访问令牌 (密文脱敏保存)</label>
-            <input type="text" id="cfg-llm-key" data-testid="admin-config-input-llm-key" placeholder="sk-...">
+            <input type="text" id="cfg-llm-key" data-testid="admin-config-input-llm-key" placeholder="例如 sk-...">
           </div>
         </div>
         <div class="grid-2">
           <div class="form-group">
             <label>API Base URL (接口基址)</label>
-            <input type="text" id="cfg-llm-baseurl" value="https://api.deepseek.com/v1">
+            <input type="text" id="cfg-llm-baseurl" placeholder="https://api.deepseek.com/v1">
           </div>
           <div class="form-group">
             <label>主模型名称 (Primary Model)</label>
-            <input type="text" id="cfg-llm-model" value="deepseek-chat">
+            <input type="text" id="cfg-llm-model" placeholder="deepseek-chat">
           </div>
         </div>
         <div class="grid-2">
           <div class="form-group">
-            <label>备用降级模型 (Fallback Model - 熔断或超时自动切换)</label>
-            <input type="text" id="cfg-llm-fallback" value="qwen-plus">
+            <label>备用降级模型 (Fallback Model)</label>
+            <input type="text" id="cfg-llm-fallback" placeholder="qwen-plus">
           </div>
           <div class="form-group">
             <label>模型采样温度 (Temperature)</label>
-            <input type="number" id="cfg-llm-temp" step="0.1" value="0.3">
+            <input type="number" id="cfg-llm-temp" step="0.1" placeholder="0.3">
           </div>
         </div>
         <div id="llm-test-result" class="test-result-box"></div>
@@ -394,13 +448,13 @@ export function renderAdminDashboardHtml(): string {
           </div>
           <div class="form-group">
             <label>ASR API Key / AppId</label>
-            <input type="text" id="cfg-asr-key" data-testid="admin-config-input-asr-key" placeholder="sk-asr-...">
+            <input type="text" id="cfg-asr-key" data-testid="admin-config-input-asr-key" placeholder="例如 sk-asr-...">
           </div>
         </div>
         <div class="grid-2">
           <div class="form-group">
             <label>WebSocket 流式推流地址</label>
-            <input type="text" id="cfg-asr-endpoint" value="wss://dashscope.aliyuncs.com/api-v1/tasks">
+            <input type="text" id="cfg-asr-endpoint" placeholder="wss://dashscope.aliyuncs.com/api-v1/tasks">
           </div>
           <div class="form-group">
             <label>音频采样率 (Hz)</label>
@@ -433,22 +487,22 @@ export function renderAdminDashboardHtml(): string {
           </div>
           <div class="form-group">
             <label>AccessKey ID</label>
-            <input type="text" id="cfg-sms-ak" placeholder="LTAI...">
+            <input type="text" id="cfg-sms-ak" placeholder="例如 LTAI5t...">
           </div>
         </div>
         <div class="grid-2">
           <div class="form-group">
             <label>AccessKey Secret (密文保存)</label>
-            <input type="text" id="cfg-sms-sk" placeholder="SecretKey...">
+            <input type="text" id="cfg-sms-sk" placeholder="例如 SecretKey...">
           </div>
           <div class="form-group">
             <label>短信签名 (SignName)</label>
-            <input type="text" id="cfg-sms-sign" value="听序">
+            <input type="text" id="cfg-sms-sign" placeholder="例如 听序">
           </div>
         </div>
         <div class="form-group">
           <label>验证码模板代码 (TemplateCode)</label>
-          <input type="text" id="cfg-sms-tpl" value="SMS_TINGXU_CODE">
+          <input type="text" id="cfg-sms-tpl" placeholder="例如 SMS_123456789">
         </div>
         <div id="sms-test-result" class="test-result-box"></div>
       </div>
@@ -464,11 +518,11 @@ export function renderAdminDashboardHtml(): string {
         <div class="grid-2">
           <div class="form-group">
             <label>微信支付商户号 (MCHID)</label>
-            <input type="text" id="cfg-pay-mch" value="1900000109">
+            <input type="text" id="cfg-pay-mch" placeholder="例如 1900000109">
           </div>
           <div class="form-group">
             <label>APIv3 密钥 (密文保存)</label>
-            <input type="text" id="cfg-pay-key" placeholder="SecretApiV3Key...">
+            <input type="text" id="cfg-pay-key" placeholder="例如 32位APIv3密钥">
           </div>
         </div>
       </div>
@@ -483,7 +537,6 @@ export function renderAdminDashboardHtml(): string {
             严格遵循 Zero-Content 隐私红线：手机号脱敏掩码，绝无会议正文与录音文件
           </div>
         </div>
-        <button class="btn btn-primary" onclick="openCompModal()">+ 发起时长补偿申请</button>
       </div>
 
       <table>
@@ -491,35 +544,12 @@ export function renderAdminDashboardHtml(): string {
           <tr>
             <th>用户标识</th>
             <th>脱敏手机号</th>
-            <th>可用时长余额</th>
-            <th>冻结中预占</th>
-            <th>套餐类型</th>
             <th>注册时间</th>
-            <th>操作</th>
           </tr>
         </thead>
         <tbody id="user-table-body">
-          <tr>
-            <td><code>usr_8000</code></td>
-            <td>138****8000</td>
-            <td><strong>540 分钟</strong> (9.0 小时)</td>
-            <td>0 分钟</td>
-            <td><span class="badge badge-green">专业版 Pro</span></td>
-            <td>2026-10-30</td>
-            <td>
-              <button class="btn btn-secondary" onclick="openCompModal('usr_8000')">赠送补偿</button>
-            </td>
-          </tr>
-          <tr>
-            <td><code>usr_1234</code></td>
-            <td>139****1234</td>
-            <td><strong>120 分钟</strong> (2.0 小时)</td>
-            <td>0 分钟</td>
-            <td><span class="badge badge-yellow">基础体验包</span></td>
-            <td>2026-10-29</td>
-            <td>
-              <button class="btn btn-secondary" onclick="openCompModal('usr_1234')">赠送补偿</button>
-            </td>
+          <tr class="empty-state-row">
+            <td colspan="3">暂无注册用户，客户端用户首次手机短信登录后将在此展示（已脱敏）。</td>
           </tr>
         </tbody>
       </table>
@@ -545,18 +575,12 @@ export function renderAdminDashboardHtml(): string {
             <th>申请人</th>
             <th>业务理由</th>
             <th>工单状态</th>
-            <th>审批决策</th>
+            <th>创建时间</th>
           </tr>
         </thead>
         <tbody id="comp-table-body">
-          <tr>
-            <td><code>comp_1001</code></td>
-            <td>usr_8000</td>
-            <td><strong>3600 秒</strong> (60 分钟)</td>
-            <td>op_staff</td>
-            <td>客户端录音断网补发</td>
-            <td><span class="badge badge-green">APPROVED 已发放</span></td>
-            <td><span style="font-size:12px; color:var(--text-sub);">已入账</span></td>
+          <tr class="empty-state-row">
+            <td colspan="7">暂无时长补偿审批工单。</td>
           </tr>
         </tbody>
       </table>
@@ -568,10 +592,9 @@ export function renderAdminDashboardHtml(): string {
         <div>
           <div class="panel-title">微信支付交易明细与充值流水</div>
           <div style="font-size:12px; color:var(--text-sub); margin-top:2px;">
-            单据 Append-only 不可物理删除，防重复消费幂等校验
+            真实交易单据 Append-only 不可物理删除，防重复消费幂等校验
           </div>
         </div>
-        <button class="btn btn-primary" onclick="simulateNewOrder()">+ 模拟收到支付通知</button>
       </div>
 
       <table>
@@ -586,21 +609,8 @@ export function renderAdminDashboardHtml(): string {
           </tr>
         </thead>
         <tbody id="orders-table-body">
-          <tr>
-            <td><code>TX202610300001</code></td>
-            <td>usr_8000</td>
-            <td>轻量体验包 (10小时)</td>
-            <td>¥ 19.90</td>
-            <td><span class="badge badge-green">PAID 已支付</span></td>
-            <td>2026-10-30 14:22</td>
-          </tr>
-          <tr>
-            <td><code>TX202610290002</code></td>
-            <td>usr_1234</td>
-            <td>专业月度套餐 (50小时)</td>
-            <td>¥ 69.00</td>
-            <td><span class="badge badge-green">PAID 已支付</span></td>
-            <td>2026-10-29 18:40</td>
+          <tr class="empty-state-row">
+            <td colspan="6">暂无微信支付订单流水。用户在客户端发起充值后将实时入账。</td>
           </tr>
         </tbody>
       </table>
@@ -624,70 +634,74 @@ export function renderAdminDashboardHtml(): string {
             <th>操作人员</th>
             <th>动作类型</th>
             <th>脱敏目标与内容</th>
-            <th>结果</th>
           </tr>
         </thead>
         <tbody id="audit-table-body">
-          <tr>
-            <td>2026-10-30 16:10:02</td>
-            <td>owner_01</td>
-            <td><span class="badge badge-blue">COMPENSATION_APPROVE</span></td>
-            <td>发放 3600 秒至 usr_8000 (工单: comp_1001)</td>
-            <td><span class="badge badge-green">SUCCESS</span></td>
-          </tr>
-          <tr>
-            <td>2026-10-30 15:45:12</td>
-            <td>op_staff</td>
-            <td><span class="badge badge-yellow">COMPENSATION_SUBMIT</span></td>
-            <td>为 usr_8000 申请 3600 秒补偿</td>
-            <td><span class="badge badge-green">SUCCESS</span></td>
+          <tr class="empty-state-row">
+            <td colspan="4">暂无安全审计日志。所有敏感权限操作将自动留痕。</td>
           </tr>
         </tbody>
       </table>
     </div>
   </div>
 
-  <!-- 申请弹窗 -->
-  <div id="comp-modal" class="modal">
-    <div class="modal-content">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <h3 style="font-size:16px;">发起时长补偿申请</h3>
-        <button onclick="closeCompModal()" style="background:none; border:none; color:var(--text-sub); cursor:pointer; font-size:18px;">✕</button>
-      </div>
-
-      <div class="form-group">
-        <label>目标用户 ID</label>
-        <input type="text" id="comp-user-id" value="usr_8000" placeholder="例如 usr_8000">
-      </div>
-      <div class="form-group">
-        <label>补偿会议时长 (分钟)</label>
-        <input type="number" id="comp-minutes" value="60">
-      </div>
-      <div class="form-group">
-        <label>补偿原因与依据</label>
-        <input type="text" id="comp-reason" value="客户端异常网络抖动工单补偿">
-      </div>
-
-      <div style="display:flex; gap:10px; margin-top:20px;">
-        <button class="btn btn-secondary" style="flex:1;" onclick="closeCompModal()">取消</button>
-        <button class="btn btn-primary" style="flex:1;" onclick="submitComp()">提交审批工单</button>
-      </div>
-    </div>
-  </div>
-
   <script>
-    let currentRole = 'OWNER';
+    // 页面初始化时检查认证状态
+    async function checkAuthAndInit() {
+      try {
+        const res = await fetch('/v1/admin/session');
+        if (res.ok) {
+          document.getElementById('login-overlay').style.display = 'none';
+          loadRemoteConfig();
+          loadDashboardStats();
+          loadUsers();
+          loadCompensations();
+          loadOrders();
+          loadAuditLogs();
+        } else {
+          document.getElementById('login-overlay').style.display = 'flex';
+        }
+      } catch (err) {
+        document.getElementById('login-overlay').style.display = 'flex';
+      }
+    }
 
-    function toggleRole() {
-      currentRole = currentRole === 'OWNER' ? 'OPERATOR' : 'OWNER';
-      const badge = document.getElementById('current-role-badge');
-      const btn = event.target;
-      if (currentRole === 'OWNER') {
-        badge.textContent = '当前身份: 系统所有者 (Owner)';
-        btn.textContent = '切换为运营员 (Operator)';
-      } else {
-        badge.textContent = '当前身份: 普通运营员 (Operator)';
-        btn.textContent = '切换为所有者 (Owner)';
+    async function doAdminLogin() {
+      const pwd = document.getElementById('admin-super-password').value;
+      const errMsg = document.getElementById('login-error-msg');
+      errMsg.style.display = 'none';
+      if (!pwd) {
+        errMsg.textContent = '请输入超级管理密码';
+        errMsg.style.display = 'block';
+        return;
+      }
+
+      try {
+        const res = await fetch('/v1/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pwd })
+        });
+        const json = await res.json();
+        if (res.ok && json.code === 0) {
+          document.getElementById('login-overlay').style.display = 'none';
+          loadRemoteConfig();
+          loadDashboardStats();
+        } else {
+          errMsg.textContent = json.message || '超级密码错误，请核对后重试';
+          errMsg.style.display = 'block';
+        }
+      } catch (e) {
+        errMsg.textContent = '登录网络异常: ' + e.message;
+        errMsg.style.display = 'block';
+      }
+    }
+
+    async function doAdminLogout() {
+      try {
+        await fetch('/v1/admin/logout', { method: 'POST' });
+      } finally {
+        window.location.reload();
       }
     }
 
@@ -699,6 +713,29 @@ export function renderAdminDashboardHtml(): string {
         const el = document.getElementById('tab-' + t);
         if (el) el.style.display = t === tabId ? 'block' : 'none';
       });
+
+      if (tabId === 'users') loadUsers();
+      if (tabId === 'compensations') loadCompensations();
+      if (tabId === 'orders') loadOrders();
+      if (tabId === 'audit') loadAuditLogs();
+    }
+
+    async function loadDashboardStats() {
+      try {
+        const res = await fetch('/v1/ops/stats');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.code === 0 && json.data) {
+          document.getElementById('stat-user-count').textContent = json.data.userCount ?? 0;
+          document.getElementById('stat-meeting-minutes').textContent = json.data.todayMeetingMinutes ?? 0;
+          document.getElementById('stat-total-paid').textContent = '¥ ' + (Number(json.data.totalPaidAmount) || 0).toFixed(2);
+          if (json.data.gatewayStatus) {
+            document.getElementById('stat-gateway-status').textContent = json.data.gatewayStatus;
+          }
+        }
+      } catch (err) {
+        console.warn('获取真实指标失败:', err);
+      }
     }
 
     async function loadRemoteConfig() {
@@ -714,7 +751,7 @@ export function renderAdminDashboardHtml(): string {
             document.getElementById('cfg-llm-baseurl').value = d.llm.baseUrl || '';
             document.getElementById('cfg-llm-model').value = d.llm.model || '';
             document.getElementById('cfg-llm-fallback').value = d.llm.fallbackModel || '';
-            document.getElementById('cfg-llm-temp').value = d.llm.temperature ?? 0.3;
+            document.getElementById('cfg-llm-temp').value = d.llm.temperature ?? '';
           }
           if (d.asr) {
             document.getElementById('cfg-asr-provider').value = d.asr.provider || 'dashscope';
@@ -742,29 +779,29 @@ export function renderAdminDashboardHtml(): string {
       const payload = {
         llm: {
           provider: document.getElementById('cfg-llm-provider').value,
-          apiKey: document.getElementById('cfg-llm-key').value,
-          baseUrl: document.getElementById('cfg-llm-baseurl').value,
-          model: document.getElementById('cfg-llm-model').value,
-          fallbackModel: document.getElementById('cfg-llm-fallback').value,
-          temperature: parseFloat(document.getElementById('cfg-llm-temp').value),
+          apiKey: document.getElementById('cfg-llm-key').value.trim(),
+          baseUrl: document.getElementById('cfg-llm-baseurl').value.trim() || undefined,
+          model: document.getElementById('cfg-llm-model').value.trim() || undefined,
+          fallbackModel: document.getElementById('cfg-llm-fallback').value.trim() || undefined,
+          temperature: document.getElementById('cfg-llm-temp').value ? parseFloat(document.getElementById('cfg-llm-temp').value) : undefined,
         },
         asr: {
           provider: document.getElementById('cfg-asr-provider').value,
-          apiKey: document.getElementById('cfg-asr-key').value,
-          endpoint: document.getElementById('cfg-asr-endpoint').value,
+          apiKey: document.getElementById('cfg-asr-key').value.trim(),
+          endpoint: document.getElementById('cfg-asr-endpoint').value.trim() || undefined,
           sampleRate: 16000,
         },
         sms: {
           provider: document.getElementById('cfg-sms-provider').value,
-          accessKeyId: document.getElementById('cfg-sms-ak').value,
-          accessKeySecret: document.getElementById('cfg-sms-sk').value,
-          signName: document.getElementById('cfg-sms-sign').value,
-          templateCode: document.getElementById('cfg-sms-tpl').value,
+          accessKeyId: document.getElementById('cfg-sms-ak').value.trim(),
+          accessKeySecret: document.getElementById('cfg-sms-sk').value.trim(),
+          signName: document.getElementById('cfg-sms-sign').value.trim() || undefined,
+          templateCode: document.getElementById('cfg-sms-tpl').value.trim() || undefined,
         },
         payment: {
-          mchId: document.getElementById('cfg-pay-mch').value,
-          apiV3Key: document.getElementById('cfg-pay-key').value,
-        }
+          mchId: document.getElementById('cfg-pay-mch').value.trim(),
+          apiV3Key: document.getElementById('cfg-pay-key').value.trim(),
+        },
       };
 
       try {
@@ -774,179 +811,199 @@ export function renderAdminDashboardHtml(): string {
           body: JSON.stringify(payload),
         });
         const json = await res.json();
-        if (json.code === 0) {
-          alert('✅ 配置保存成功！已通知 AI Gateway 热重载生效。');
+        if (res.ok && json.code === 0) {
+          alert('✅ 密钥配置已安全脱敏保存，并已通知 AI Gateway 热重载！');
           loadRemoteConfig();
         } else {
-          alert('❌ 保存失败: ' + (json.message || '未知错误'));
+          alert('❌ 保存配置失败: ' + (json.message || '未知错误'));
         }
       } catch (e) {
-        alert('❌ 请求异常: ' + e.message);
+        alert('❌ 网络请求失败: ' + e.message);
       }
     }
 
     async function testLlmConnection() {
-      const box = document.getElementById('llm-test-result');
-      box.className = 'test-result-box show';
-      box.style.background = 'rgba(37,99,235,0.2)';
-      box.style.color = '#93c5fd';
-      box.textContent = '⏳ 正在向 AI 网关与大模型发起探活请求...';
+      const resultBox = document.getElementById('llm-test-result');
+      resultBox.className = 'test-result-box show';
+      resultBox.style.background = 'rgba(255,255,255,0.05)';
+      resultBox.style.color = 'var(--text-sub)';
+      resultBox.textContent = '⏳ 正在向所选大模型提供商发起真实网络鉴权测试...';
 
       try {
-        const provider = document.getElementById('cfg-llm-provider').value;
         const res = await fetch('/v1/admin/config/test-llm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider })
+          body: JSON.stringify({ provider: document.getElementById('cfg-llm-provider').value }),
         });
         const json = await res.json();
-        if (json.code === 0 && json.data.success) {
-          box.style.background = 'rgba(16,185,129,0.2)';
-          box.style.color = '#34d399';
-          box.textContent = '✓ 连通成功！耗时 ' + json.data.latencyMs + 'ms · ' + json.data.message;
+        if (json.data && json.data.success) {
+          resultBox.style.background = 'rgba(16,185,129,0.15)';
+          resultBox.style.color = '#34d399';
+          resultBox.textContent = '✅ ' + json.data.message;
         } else {
-          box.style.background = 'rgba(239,68,68,0.2)';
-          box.style.color = '#f87171';
-          box.textContent = '✗ 连通失败: ' + (json.message || '服务无响应');
+          resultBox.style.background = 'rgba(239,68,68,0.15)';
+          resultBox.style.color = '#f87171';
+          resultBox.textContent = '❌ ' + ((json.data && json.data.message) || json.message || '连通失败');
         }
       } catch (e) {
-        box.style.background = 'rgba(239,68,68,0.2)';
-        box.style.color = '#f87171';
-        box.textContent = '✗ 请求异常: ' + e.message;
+        resultBox.style.background = 'rgba(239,68,68,0.15)';
+        resultBox.style.color = '#f87171';
+        resultBox.textContent = '❌ 探活失败: ' + e.message;
       }
     }
 
     async function testAsrConnection() {
-      const box = document.getElementById('asr-test-result');
-      box.className = 'test-result-box show';
-      box.style.background = 'rgba(16,185,129,0.2)';
-      box.style.color = '#34d399';
-      box.textContent = '✓ ASR WebSocket 握手协议与 16kHz PCM 格式检测通过！可接收客户端音频推流。';
+      const resultBox = document.getElementById('asr-test-result');
+      resultBox.className = 'test-result-box show';
+      const key = document.getElementById('cfg-asr-key').value.trim();
+      if (!key) {
+        resultBox.style.background = 'rgba(239,68,68,0.15)';
+        resultBox.style.color = '#f87171';
+        resultBox.textContent = '❌ 未配置 ASR API Key，请先输入真实凭据并点击保存。';
+        return;
+      }
+      resultBox.style.background = 'rgba(16,185,129,0.15)';
+      resultBox.style.color = '#34d399';
+      resultBox.textContent = '✅ ASR 配置已就绪，麦克风将通过 16kHz PCM 接入流式识别通道。';
     }
 
     async function testSmsSend() {
       const phone = document.getElementById('cfg-test-sms-phone').value.trim();
-      const box = document.getElementById('sms-test-result');
-      box.className = 'test-result-box show';
-      if (!phone) {
-        box.style.background = 'rgba(239,68,68,0.2)';
-        box.style.color = '#f87171';
-        box.textContent = '✗ 请先输入用于测试接收验证码的 11 位国内手机号';
+      const resultBox = document.getElementById('sms-test-result');
+      resultBox.className = 'test-result-box show';
+
+      if (!phone || !/^1[3-9]\\d{9}$/.test(phone)) {
+        resultBox.style.background = 'rgba(239,68,68,0.15)';
+        resultBox.style.color = '#f87171';
+        resultBox.textContent = '❌ 请先在输入框中填写真实的 11 位国内手机号';
         return;
       }
 
-      box.style.background = 'rgba(37,99,235,0.2)';
-      box.style.color = '#93c5fd';
-      box.textContent = '⏳ 正在调用短信网关发送测试短信至 ' + phone + '...';
+      resultBox.style.background = 'rgba(255,255,255,0.05)';
+      resultBox.style.color = 'var(--text-sub)';
+      resultBox.textContent = '⏳ 正在通过阿里云短信真实 POP 协议签名并下发验证码...';
 
       try {
         const res = await fetch('/v1/admin/config/test-sms', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone })
+          body: JSON.stringify({ phone }),
         });
         const json = await res.json();
-        if (json.code === 0) {
-          box.style.background = 'rgba(16,185,129,0.2)';
-          box.style.color = '#34d399';
-          box.textContent = '✓ ' + json.data.message;
+        if (json.data && json.data.success) {
+          resultBox.style.background = 'rgba(16,185,129,0.15)';
+          resultBox.style.color = '#34d399';
+          resultBox.textContent = '✅ ' + json.data.message;
         } else {
-          box.style.background = 'rgba(239,68,68,0.2)';
-          box.style.color = '#f87171';
-          box.textContent = '✗ 发送失败: ' + json.message;
+          resultBox.style.background = 'rgba(239,68,68,0.15)';
+          resultBox.style.color = '#f87171';
+          resultBox.textContent = '❌ 发送失败: ' + (json.message || (json.data && json.data.message) || '未知错误');
         }
       } catch (e) {
-        box.style.background = 'rgba(239,68,68,0.2)';
-        box.style.color = '#f87171';
-        box.textContent = '✗ 异常: ' + e.message;
+        resultBox.style.background = 'rgba(239,68,68,0.15)';
+        resultBox.style.color = '#f87171';
+        resultBox.textContent = '❌ 短信网关调用失败: ' + e.message;
       }
     }
 
-    function openCompModal(userId) {
-      if (userId) document.getElementById('comp-user-id').value = userId;
-      document.getElementById('comp-modal').classList.add('show');
-    }
-
-    function closeCompModal() {
-      document.getElementById('comp-modal').classList.remove('show');
-    }
-
-    function submitComp() {
-      const userId = document.getElementById('comp-user-id').value;
-      const minutes = parseInt(document.getElementById('comp-minutes').value, 10);
-      const reason = document.getElementById('comp-reason').value;
-
-      const compId = 'comp_' + Date.now().toString().slice(-4);
-      const tbody = document.getElementById('comp-table-body');
-      const tr = document.createElement('tr');
-      tr.innerHTML = \`
-        <td><code>\${compId}</code></td>
-        <td>\${userId}</td>
-        <td><strong>\${minutes * 60} 秒</strong> (\${minutes} 分钟)</td>
-        <td>\${currentRole === 'OWNER' ? 'owner_01' : 'op_staff'}</td>
-        <td>\${reason}</td>
-        <td><span class="badge badge-yellow" id="badge-\${compId}">PENDING 待审</span></td>
-        <td id="actions-\${compId}">
-          <button class="btn btn-success" onclick="approveComp('\${compId}', '\${userId}', \${minutes * 60})">同意批准</button>
-          <button class="btn btn-danger" onclick="rejectComp('\${compId}')">驳回</button>
-        </td>
-      \`;
-      tbody.prepend(tr);
-      closeCompModal();
-      alert('已成功创建补偿申请单：' + compId + '，请等待系统所有者审批。');
-    }
-
-    async function approveComp(compId, userId, grantSeconds) {
-      if (currentRole !== 'OWNER') {
-        alert('权限拦截：普通运营人员无权直接审批发放！请先切换为系统所有者 (Owner) 身份。');
-        return;
-      }
-
+    async function loadUsers() {
       try {
-        await fetch('/v1/ops/compensation/approve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ownerId: 'owner_01', requestId: compId })
-        });
-
-        document.getElementById('badge-' + compId).className = 'badge badge-green';
-        document.getElementById('badge-' + compId).textContent = 'APPROVED 已发放';
-        document.getElementById('actions-' + compId).innerHTML = '<span style="font-size:12px; color:var(--text-sub);">已入账并记录审计</span>';
-
-        alert('审批成功！已为用户 ' + userId + ' 强事务发放 ' + grantSeconds + ' 秒时长。');
-      } catch (e) {
-        alert('审批异常: ' + e.message);
+        const res = await fetch('/v1/ops/users');
+        if (!res.ok) return;
+        const json = await res.json();
+        const tbody = document.getElementById('user-table-body');
+        if (json.code === 0 && Array.isArray(json.data) && json.data.length > 0) {
+          tbody.innerHTML = json.data.map(u => \`
+            <tr>
+              <td><code>\${u.userId}</code></td>
+              <td>\${u.maskedPhone}</td>
+              <td>\${u.createdAt || '-'}</td>
+            </tr>
+          \`).join('');
+        } else {
+          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="3">暂无注册用户，客户端用户首次手机短信登录后将在此展示（已脱敏）。</td></tr>';
+        }
+      } catch (err) {
+        console.warn('获取用户列表失败:', err);
       }
     }
 
-    function rejectComp(compId) {
-      if (currentRole !== 'OWNER') {
-        alert('权限拦截：仅所有者可驳回申请。');
-        return;
+    async function loadCompensations() {
+      try {
+        const res = await fetch('/v1/ops/compensations');
+        if (!res.ok) return;
+        const json = await res.json();
+        const tbody = document.getElementById('comp-table-body');
+        if (json.code === 0 && Array.isArray(json.data) && json.data.length > 0) {
+          tbody.innerHTML = json.data.map(c => \`
+            <tr>
+              <td><code>\${c.requestId}</code></td>
+              <td>\${c.targetUserId}</td>
+              <td><strong>\${c.grantSeconds} 秒</strong></td>
+              <td>\${c.submittedBy}</td>
+              <td>\${c.reason}</td>
+              <td><span class="badge badge-yellow">\${c.status}</span></td>
+              <td>\${c.createdAt}</td>
+            </tr>
+          \`).join('');
+        } else {
+          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="7">暂无时长补偿审批工单。</td></tr>';
+        }
+      } catch (err) {
+        console.warn('获取补偿工单失败:', err);
       }
-      document.getElementById('badge-' + compId).className = 'badge badge-red';
-      document.getElementById('badge-' + compId).textContent = 'REJECTED 已驳回';
-      document.getElementById('actions-' + compId).innerHTML = '<span style="font-size:12px; color:var(--danger);">已驳回</span>';
     }
 
-    function simulateNewOrder() {
-      const orderNo = 'TX' + Date.now().toString().slice(-6);
-      const tbody = document.getElementById('orders-table-body');
-      const tr = document.createElement('tr');
-      tr.innerHTML = \`
-        <td><code>\${orderNo}</code></td>
-        <td>usr_8000</td>
-        <td>专业月度套餐 (30小时)</td>
-        <td>¥ 39.00</td>
-        <td><span class="badge badge-green">PAID 已支付</span></td>
-        <td>刚刚</td>
-      \`;
-      tbody.prepend(tr);
-      alert('已模拟记录新订单：' + orderNo);
+    async function loadOrders() {
+      try {
+        const res = await fetch('/v1/ops/orders');
+        if (!res.ok) return;
+        const json = await res.json();
+        const tbody = document.getElementById('orders-table-body');
+        if (json.code === 0 && Array.isArray(json.data) && json.data.length > 0) {
+          tbody.innerHTML = json.data.map(o => \`
+            <tr>
+              <td><code>\${o.orderNo}</code></td>
+              <td>\${o.userId}</td>
+              <td>\${o.planName}</td>
+              <td>¥ \${(o.actualPriceCents / 100).toFixed(2)}</td>
+              <td><span class="badge badge-green">\${o.status}</span></td>
+              <td>\${o.createdAt}</td>
+            </tr>
+          \`).join('');
+        } else {
+          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="6">暂无微信支付订单流水。用户在客户端发起充值后将实时入账。</td></tr>';
+        }
+      } catch (err) {
+        console.warn('获取订单列表失败:', err);
+      }
     }
 
-    // 页面启动自动拉取远端配置
-    window.addEventListener('DOMContentLoaded', loadRemoteConfig);
+    async function loadAuditLogs() {
+      try {
+        const res = await fetch('/v1/ops/audit/logs');
+        if (!res.ok) return;
+        const json = await res.json();
+        const tbody = document.getElementById('audit-table-body');
+        if (json.code === 0 && Array.isArray(json.data) && json.data.length > 0) {
+          tbody.innerHTML = json.data.map(a => \`
+            <tr>
+              <td>\${a.timestamp}</td>
+              <td>\${a.operatorId}</td>
+              <td><span class="badge badge-blue">\${a.action}</span></td>
+              <td>\${JSON.stringify(a.details)}</td>
+            </tr>
+          \`).join('');
+        } else {
+          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="4">暂无安全审计日志。所有敏感权限操作将自动留痕。</td></tr>';
+        }
+      } catch (err) {
+        console.warn('获取审计日志失败:', err);
+      }
+    }
+
+    // 页面启动
+    window.addEventListener('DOMContentLoaded', checkAuthAndInit);
   </script>
 </body>
 </html>`;

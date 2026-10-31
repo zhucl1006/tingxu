@@ -56,6 +56,20 @@ export class WechatPayService {
     this.billingEngine = options.billingEngine;
   }
 
+  public async getAllOrders(): Promise<OrderRecord[]> {
+    return Array.from(this.orders.values());
+  }
+
+  public async getTotalPaidAmount(): Promise<number> {
+    let totalCents = 0;
+    for (const order of this.orders.values()) {
+      if (order.status === 'PAID') {
+        totalCents += order.actualPriceCents;
+      }
+    }
+    return totalCents / 100;
+  }
+
   public async createOrder(params: { userId: string; planId: string }): Promise<OrderRecord> {
     const plan = SUPPORTED_PLANS[params.planId];
     if (!plan) {

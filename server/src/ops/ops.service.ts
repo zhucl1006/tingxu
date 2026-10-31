@@ -148,6 +148,10 @@ export class OpsService {
     return this.auditLogs;
   }
 
+  public async getAllCompensationRequests(): Promise<CompensationRequest[]> {
+    return Array.from(this.requests.values());
+  }
+
   private recordAudit(event: Omit<AuditEvent, 'eventId' | 'timestamp'>): void {
     this.auditLogs.push({
       eventId: `aud_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`,

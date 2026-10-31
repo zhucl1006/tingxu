@@ -20,9 +20,18 @@ export class AuthService {
       lastSentAt: number;
     }
   >();
+  private readonly usersMap = new Map<string, { userId: string; phone: string; createdAt: string }>();
 
   constructor(options?: AuthServiceOptions) {
     this.jwtSecret = options?.jwtSecret || process.env.JWT_SECRET || 'tingxu_default_jwt_secret';
+  }
+
+  public getUsers(): Array<{ userId: string; phone: string; createdAt: string }> {
+    return Array.from(this.usersMap.values());
+  }
+
+  public getUserCount(): number {
+    return this.usersMap.size;
   }
 
   public async sendSmsCode(phone: string): Promise<{ success: boolean; debugCode?: string }> {
@@ -71,6 +80,14 @@ export class AuthService {
       phone,
       role: 'USER',
     };
+
+    if (!this.usersMap.has(userId)) {
+      this.usersMap.set(userId, {
+        userId,
+        phone,
+        createdAt: new Date().toISOString().split('T')[0],
+      });
+    }
 
     const token = this.signJwt({ userId, phone, role: 'USER' });
 

@@ -11,70 +11,9 @@ import {
   HistoryMeeting,
 } from '../types/meeting';
 
-const initialHistoryMeetings: HistoryMeeting[] = [
-  {
-    id: 'mtg_hist_01',
-    title: 'M1 双轨音频架构与断电自愈技术评审',
-    date: '2026-10-30 14:30',
-    durationSeconds: 2700, // 45分钟
-    summary: '确认音频环形缓冲区零堆分配方案，落实 2 秒原子刷盘与断电崩溃扫描自愈机制。',
-    decisionsCount: 3,
-    tasksCount: 2,
-  },
-  {
-    id: 'mtg_hist_02',
-    title: '听序商用计费与微信支付架构对齐会',
-    date: '2026-10-29 10:00',
-    durationSeconds: 3600, // 60分钟
-    summary: '确定按会议时长统一度量衡，大模型全包入套餐，微信支付 5 次并发回调严格幂等。',
-    decisionsCount: 4,
-    tasksCount: 3,
-  },
-  {
-    id: 'mtg_hist_03',
-    title: 'UI/UX 工业级 Impeccable 设计系统交付',
-    date: '2026-10-28 16:00',
-    durationSeconds: 1800, // 30分钟
-    summary: '落实 Operate 生产力模式，等宽 tabular-nums 秒表与 42px 原生极简悬浮小药丸。',
-    decisionsCount: 2,
-    tasksCount: 1,
-  },
-];
+const initialHistoryMeetings: HistoryMeeting[] = [];
 
-const initialTasks: TaskItem[] = [
-  {
-    id: 'task_01',
-    title: '攻关 WASAPI / CoreAudio 双轨音频原子刷盘',
-    meetingTitle: 'M1 双轨音频架构与断电自愈技术评审',
-    assignee: '研发组-老朱',
-    completed: true,
-    createdAt: '2026-10-30',
-  },
-  {
-    id: 'task_02',
-    title: '搭建自建 AI Gateway 并支持 DeepSeek 到 Qwen 1秒内熔断降级',
-    meetingTitle: '听序商用计费与微信支付架构对齐会',
-    assignee: '网关组',
-    completed: true,
-    createdAt: '2026-10-30',
-  },
-  {
-    id: 'task_03',
-    title: '完成微信商户 APIv3 平台公钥验签与防重放幂等测试',
-    meetingTitle: '听序商用计费与微信支付架构对齐会',
-    assignee: '待确认',
-    completed: false,
-    createdAt: '2026-10-30',
-  },
-  {
-    id: 'task_04',
-    title: '全面覆盖前端所有交互控件 QA data-testid',
-    meetingTitle: 'UI/UX 工业级 Impeccable 设计系统交付',
-    assignee: '前端组',
-    completed: true,
-    createdAt: '2026-10-29',
-  },
-];
+const initialTasks: TaskItem[] = [];
 
 // 本地存储的用户会话恢复
 function loadStoredUser(): UserProfile | null {

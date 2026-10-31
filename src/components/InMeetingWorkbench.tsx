@@ -333,41 +333,6 @@ export const InMeetingWorkbench: React.FC = () => {
     }
   };
 
-  // 快捷体验模拟：一键生成一段对话并提炼卡片
-  const handleSimulateSpeech = () => {
-    const elapsed = useMeetingStore.getState().elapsedSeconds;
-    const segId = `seg_${Date.now()}`;
-    const speakers = ['老朱 (麦克风)', '李工 (系统声音)', '王经理 (系统声音)'];
-    const mockSpeeches = [
-      '我们确认采用 WASAPI 原生采集方案，已经完成了基础链路搭建。',
-      '是的，而且 2 秒原子刷盘已经调通，断电崩溃后可以自动自愈。',
-      '太好了，那我们就把测试验收排期敲定在下周一上午。',
-      '同意！请待办负责人跟进测试用例执行与报告产出。',
-    ];
-    const pickedSpeaker = speakers[transcripts.length % speakers.length];
-    const pickedText = mockSpeeches[transcripts.length % mockSpeeches.length];
-
-    addTranscriptSegment({
-      id: segId,
-      speaker: pickedSpeaker,
-      channel: pickedSpeaker.includes('麦克风') ? 'mic' : 'system',
-      timestamp: formatSeconds(elapsed),
-      text: pickedText,
-    });
-
-    // 联动提取洞察卡片
-    if (transcripts.length % 2 === 1) {
-      addInsight({
-        id: `card_${Date.now()}`,
-        type: transcripts.length === 1 ? 'decision' : 'action',
-        title: transcripts.length === 1 ? '确认 WASAPI 原生双轨采集方案' : '推进测试验收与自愈报告',
-        content: pickedText,
-        timestamp: formatSeconds(elapsed),
-        evidenceSegmentId: segId,
-      });
-    }
-  };
-
   const filteredInsights = insights.filter((item) => {
     if (activeFilter !== 'all' && item.type !== activeFilter) return false;
     return true;
@@ -437,15 +402,6 @@ export const InMeetingWorkbench: React.FC = () => {
               ⏸ 暂停
             </button>
           )}
-
-          <button
-            type="button"
-            data-testid="workbench-page-header-btn-simulate-speech"
-            onClick={handleSimulateSpeech}
-            className="px-3 py-1.5 text-xs bg-brand-blue-subtle text-brand-blue hover:bg-brand-blue hover:text-white rounded-md font-medium transition-colors"
-          >
-            🎙️ 模拟参会人发言
-          </button>
 
           <button
             type="button"

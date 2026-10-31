@@ -89,7 +89,7 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
     expect(current.llm.apiKey).toBe('sk-original-secret-key-123456');
   });
 
-  it('HTTP 路由应支持 GET/POST /v1/admin/config 与连通性自检', async () => {
+  it('HTTP 路由应支持超级密码登录鉴权、GET/POST /v1/admin/config 与连通性自检', async () => {
     const authService = new AuthService({ jwtSecret: 'test_secret' });
     const billingEngine = new BillingEngine();
     const wechatPayService = new WechatPayService({ billingEngine });
@@ -100,23 +100,58 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
       wechatPayService,
       opsService,
       configService,
+      superPassword: 'test_super_pwd_2026',
     });
 
     const port = 3456;
     await new Promise<void>((resolve) => server.listen(port, resolve));
 
     try {
-      // 1. GET /v1/admin/config
-      const getRes = await fetch(`http://localhost:${port}/v1/admin/config`);
+      // 0. 未登录直接请求，必须被拦截并返回 401
+      const unauthRes = await fetch(`http://localhost:${port}/v1/admin/config`);
+      expect(unauthRes.status).toBe(401);
+      const unauthJson = await unauthRes.json();
+      expect(unauthJson.code).toBe(401);
+      expect(unauthJson.message).toContain('超级密码');
+
+      // 0.1 错误密码登录失败
+      const badLoginRes = await fetch(`http://localhost:${port}/v1/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'wrong_password' }),
+      });
+      expect(badLoginRes.status).toBe(401);
+
+      // 0.2 正确超级密码成功登录，并获取 token
+      const loginRes = await fetch(`http://localhost:${port}/v1/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: 'test_super_pwd_2026' }),
+      });
+      expect(loginRes.status).toBe(200);
+      const loginJson = await loginRes.json();
+      expect(loginJson.code).toBe(0);
+      const token = loginJson.data.token;
+      expect(token).toBeTruthy();
+
+      const authHeaders = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      };
+
+      // 1. GET /v1/admin/config (已认证)
+      const getRes = await fetch(`http://localhost:${port}/v1/admin/config`, {
+        headers: authHeaders,
+      });
       expect(getRes.status).toBe(200);
       const getJson = await getRes.json();
       expect(getJson.code).toBe(0);
       expect(getJson.data.llm).toBeDefined();
 
-      // 2. POST /v1/admin/config
+      // 2. POST /v1/admin/config (已认证)
       const postRes = await fetch(`http://localhost:${port}/v1/admin/config`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           llm: { provider: 'qwen', model: 'qwen-max' },
         }),
@@ -125,17 +160,28 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
       const postJson = await postRes.json();
       expect(postJson.code).toBe(0);
 
-      // 3. POST /v1/admin/config/test-llm (占位符时明确提示未配置真实凭据)
+      // 3. POST /v1/admin/config/test-llm (未配置 API Key 时明确拦截并友好提示)
       const testRes = await fetch(`http://localhost:${port}/v1/admin/config/test-llm`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({ provider: 'deepseek' }),
       });
       expect(testRes.status).toBe(200);
       const testJson = await testRes.json();
       expect(testJson.code).toBe(0);
       expect(testJson.data.success).toBe(false);
-      expect(testJson.data.message).toContain('示例占位符');
+      expect(testJson.data.message).toContain('未配置大模型 API Key');
+
+      // 4. GET /v1/ops/stats (获取真实指标，初始为 0 且无假数据)
+      const statsRes = await fetch(`http://localhost:${port}/v1/ops/stats`, {
+        headers: authHeaders,
+      });
+      expect(statsRes.status).toBe(200);
+      const statsJson = await statsRes.json();
+      expect(statsJson.code).toBe(0);
+      expect(statsJson.data.userCount).toBe(0);
+      expect(statsJson.data.totalPaidAmount).toBe(0);
+      expect(statsJson.data.todayMeetingMinutes).toBe(0);
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
