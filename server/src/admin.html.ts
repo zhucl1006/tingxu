@@ -823,17 +823,32 @@ export function renderAdminDashboardHtml(): string {
     }
 
     async function testLlmConnection() {
+      const provider = document.getElementById('cfg-llm-provider').value;
+      const apiKey = document.getElementById('cfg-llm-key').value.trim();
+      const baseUrl = document.getElementById('cfg-llm-baseurl').value.trim();
       const resultBox = document.getElementById('llm-test-result');
       resultBox.className = 'test-result-box show';
+
+      if (!apiKey) {
+        resultBox.style.background = 'rgba(239,68,68,0.15)';
+        resultBox.style.color = '#f87171';
+        resultBox.textContent = '❌ 请先在上方“API Key / 访问令牌”输入框中填入您的真实密钥后再点击测试。';
+        return;
+      }
+
       resultBox.style.background = 'rgba(255,255,255,0.05)';
       resultBox.style.color = 'var(--text-sub)';
-      resultBox.textContent = '⏳ 正在向所选大模型提供商发起真实网络鉴权测试...';
+      resultBox.textContent = '⏳ 正在向 [' + provider + '] 发起真实网络鉴权测试...';
 
       try {
         const res = await fetch('/v1/admin/config/test-llm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ provider: document.getElementById('cfg-llm-provider').value }),
+          body: JSON.stringify({
+            provider,
+            apiKey,
+            baseUrl: baseUrl || undefined,
+          }),
         });
         const json = await res.json();
         if (json.data && json.data.success) {
@@ -864,7 +879,7 @@ export function renderAdminDashboardHtml(): string {
       }
       resultBox.style.background = 'rgba(16,185,129,0.15)';
       resultBox.style.color = '#34d399';
-      resultBox.textContent = '✅ ASR 配置已就绪，麦克风将通过 16kHz PCM 接入流式识别通道。';
+      resultBox.textContent = '✅ ASR 配置已就绪，麦克风将通过 16kHz PCM 接入流式识别通道。（提示：若修改了配置，请点击右上角保存以热载生效）';
     }
 
     async function testSmsSend() {
@@ -879,6 +894,15 @@ export function renderAdminDashboardHtml(): string {
         return;
       }
 
+      const payload = {
+        phone,
+        provider: document.getElementById('cfg-sms-provider').value,
+        accessKeyId: document.getElementById('cfg-sms-ak').value.trim(),
+        accessKeySecret: document.getElementById('cfg-sms-sk').value.trim(),
+        signName: document.getElementById('cfg-sms-sign').value.trim(),
+        templateCode: document.getElementById('cfg-sms-tpl').value.trim(),
+      };
+
       resultBox.style.background = 'rgba(255,255,255,0.05)';
       resultBox.style.color = 'var(--text-sub)';
       resultBox.textContent = '⏳ 正在通过阿里云短信真实 POP 协议签名并下发验证码...';
@@ -887,7 +911,7 @@ export function renderAdminDashboardHtml(): string {
         const res = await fetch('/v1/admin/config/test-sms', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ phone }),
+          body: JSON.stringify(payload),
         });
         const json = await res.json();
         if (json.data && json.data.success) {

@@ -316,7 +316,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
       // 17. 运营后台：短信发送通道自测 (POST /v1/admin/config/test-sms)
       if (req.method === 'POST' && pathname === '/v1/admin/config/test-sms') {
         const body = JSON.parse(await readRequestBody(req));
-        const testRes = await configService.testSmsConnection(body.phone);
+        const testRes = await configService.testSmsConnection(body);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, data: testRes }));
         return;

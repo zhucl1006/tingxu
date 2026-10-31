@@ -178,11 +178,18 @@ export class SystemConfigService {
     }
   }
 
-  public async testLlmConnection(options?: { provider?: string }): Promise<{ success: boolean; latencyMs: number; message: string }> {
+  public async testLlmConnection(options?: {
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    model?: string;
+  }): Promise<{ success: boolean; latencyMs: number; message: string }> {
     const start = Date.now();
     const provider = options?.provider || this.config.llm.provider;
-    const apiKey = this.config.llm.apiKey;
-    const baseUrl = this.config.llm.baseUrl;
+    // 优先使用传入的 apiKey（非掩码），否则使用已保存的
+    const apiKey = options?.apiKey && !isMasked(options.apiKey) ? options.apiKey : this.config.llm.apiKey;
+    const rawBaseUrl = options?.baseUrl || this.config.llm.baseUrl || 'https://api.deepseek.com/v1';
+    const baseUrl = rawBaseUrl.replace(/\/+$/, '');
 
     if (!apiKey) {
       return {
@@ -201,7 +208,12 @@ export class SystemConfigService {
     }
 
     try {
-      const res = await fetch(`${baseUrl}/models`, {
+      let testUrl = `${baseUrl}/models`;
+      if (provider === 'qwen' && !baseUrl.includes('compatible-mode')) {
+        testUrl = baseUrl.endsWith('/v1') ? `${baseUrl}/models` : `${baseUrl}/v1/models`;
+      }
+
+      const res = await fetch(testUrl, {
         headers: { Authorization: `Bearer ${apiKey}` },
       });
       const latency = Date.now() - start;
@@ -209,13 +221,14 @@ export class SystemConfigService {
         return {
           success: true,
           latencyMs: latency,
-          message: `[${provider}] 真实大模型 API Key 验证通过！接口响应耗时 ${latency}ms。`,
+          message: `[${provider}] 真实大模型 API Key 验证通过！接口响应耗时 ${latency}ms。（提示：若修改了配置，请点击右上角保存以热载生效）`,
         };
       } else {
+        const errText = await res.text();
         return {
           success: false,
           latencyMs: latency,
-          message: `[${provider}] 鉴权未通过 HTTP ${res.status}: ${await res.text()}`,
+          message: `[${provider}] 鉴权未通过 HTTP ${res.status}: ${errText}`,
         };
       }
     } catch (e) {
@@ -227,22 +240,39 @@ export class SystemConfigService {
     }
   }
 
-  public async testSmsConnection(phone: string): Promise<{ success: boolean; message: string }> {
+  public async testSmsConnection(params: string | {
+    phone: string;
+    provider?: string;
+    accessKeyId?: string;
+    accessKeySecret?: string;
+    signName?: string;
+    templateCode?: string;
+  }): Promise<{ success: boolean; message: string }> {
+    const phone = typeof params === 'string' ? params : params.phone;
     if (!phone || !/^1[3-9]\d{9}$/.test(phone)) {
       throw new Error('请输入有效的 11 位国内手机号');
     }
 
-    const smsConfig = this.config.sms;
-    if (smsConfig.provider !== 'sandbox') {
-      if (!smsConfig.accessKeyId || !smsConfig.accessKeySecret) {
+    const provider = typeof params === 'object' && params.provider ? params.provider : this.config.sms.provider;
+    const accessKeyId = typeof params === 'object' && params.accessKeyId && !isMasked(params.accessKeyId)
+      ? params.accessKeyId
+      : this.config.sms.accessKeyId;
+    const accessKeySecret = typeof params === 'object' && params.accessKeySecret && !isMasked(params.accessKeySecret)
+      ? params.accessKeySecret
+      : this.config.sms.accessKeySecret;
+    const signName = typeof params === 'object' && params.signName ? params.signName : this.config.sms.signName;
+    const templateCode = typeof params === 'object' && params.templateCode ? params.templateCode : this.config.sms.templateCode;
+
+    if (provider !== 'sandbox') {
+      if (!accessKeyId || !accessKeySecret) {
         throw new Error('未配置阿里云 AccessKey ID 或 AccessKey Secret，请在上方输入框中填写后保存再测试。');
       }
-      if (smsConfig.accessKeyId.includes('Placeholder') || smsConfig.accessKeySecret.includes('Placeholder')) {
+      if (accessKeyId.includes('Placeholder') || accessKeySecret.includes('Placeholder')) {
         throw new Error('当前填入的是示例占位符，请填入您在阿里云申请的真实 AccessKey 凭据。');
       }
     }
 
-    if (smsConfig.provider === 'sandbox') {
+    if (provider === 'sandbox') {
       return {
         success: true,
         message: `[开发沙箱模式] 已模拟下发验证码至手机 ${phone.slice(0, 3)}****${phone.slice(-4)}，控制台已记录`,
@@ -252,11 +282,11 @@ export class SystemConfigService {
     // 真实调用阿里云短信网关
     const testCode = String(Math.floor(100000 + Math.random() * 900000));
     const result = await sendAliyunSms({
-      accessKeyId: smsConfig.accessKeyId,
-      accessKeySecret: smsConfig.accessKeySecret,
+      accessKeyId,
+      accessKeySecret,
       phoneNumbers: phone,
-      signName: smsConfig.signName,
-      templateCode: smsConfig.templateCode,
+      signName,
+      templateCode,
       templateParam: { code: testCode },
     });
 
