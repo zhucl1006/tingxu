@@ -110,9 +110,12 @@ deploy_docker() {
         echo -e "${CYAN}正在调用 Docker Compose 进行构建编排...${NC}"
         docker compose up -d --build
         echo -e "${GREEN}✓ Docker 容器启动成功！${NC}"
-        echo -e "  - PostgreSQL 数据库:  localhost:5432"
-        echo -e "  - 控制面 Server:       http://localhost:3000"
-        echo -e "  - 自建 AI Gateway:     http://localhost:3001"
+        SERVER_PORT="${SERVER_PORT:-3200}"
+        GATEWAY_PORT="${GATEWAY_PORT:-3201}"
+        POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+        echo -e "  - PostgreSQL 数据库:  localhost:${POSTGRES_PORT}"
+        echo -e "  - 控制面 Server:       http://localhost:${SERVER_PORT}"
+        echo -e "  - 自建 AI Gateway:     http://localhost:${GATEWAY_PORT}"
     else
         echo -e "${YELLOW}⚠️ 跳过真实容器启动（Docker 未处于运行状态）。配置文件与编排语法已校验就绪。${NC}"
     fi
