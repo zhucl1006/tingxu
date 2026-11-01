@@ -292,6 +292,7 @@ export const MeetingSummaryView: React.FC = () => {
             <div className="flex justify-end gap-2 pt-1">
               <button
                 type="button"
+                data-testid="summary-page-btn-cancel-rename"
                 onClick={() => setEditingSpeaker(null)}
                 className="px-2.5 py-1 text-xs rounded bg-subtle text-text-secondary hover:bg-hover"
               >
@@ -547,8 +548,9 @@ export const MeetingSummaryView: React.FC = () => {
                 >
                   <div className="flex items-center justify-between text-xs">
                     <span
+                      data-testid={`summary-page-btn-speaker-${t.id}`}
                       onClick={() => {
-                        setEditingSpeaker(t.speaker);
+                        setEditingSpeaker(t.speakerId || t.speaker);
                         setNewSpeakerName(t.speaker);
                       }}
                       className="font-semibold text-text-primary hover:text-brand-blue cursor-pointer transition-colors"

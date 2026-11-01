@@ -226,6 +226,58 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     }
   });
 
+  it('支持按稳定 speakerId 精准重命名说话人，避免误改其他同名或不同 ID 的发言人 (T07)', () => {
+    const store = useMeetingStore.getState();
+    store.startMeeting('多说话人重命名测试');
+
+    store.addTranscriptSegment({
+      id: 'seg_spk1_a',
+      speaker: '发言人 1',
+      speakerId: 'spk_1',
+      speakerConfidence: 0.94,
+      speakerColorIndex: 0,
+      channel: 'mic',
+      timestamp: '00:00:05',
+      text: '大家好，我是第一位说话人。',
+    });
+
+    store.addTranscriptSegment({
+      id: 'seg_spk2_a',
+      speaker: '发言人 2',
+      speakerId: 'spk_2',
+      speakerConfidence: 0.91,
+      speakerColorIndex: 1,
+      channel: 'mic',
+      timestamp: '00:00:12',
+      text: '我是第二位说话人。',
+    });
+
+    store.addTranscriptSegment({
+      id: 'seg_spk2_b',
+      speaker: '发言人 2',
+      speakerId: 'spk_2',
+      speakerConfidence: 0.93,
+      speakerColorIndex: 1,
+      channel: 'mic',
+      timestamp: '00:00:20',
+      text: '我补充一下架构细节。',
+    });
+
+    // 按 speakerId 将 spk_2 重命名为 "张总"
+    store.renameSpeaker('spk_2', '张总');
+
+    const updated = useMeetingStore.getState().transcripts;
+    expect(updated[0].speaker).toBe('发言人 1');
+    expect(updated[0].speakerId).toBe('spk_1');
+    expect(updated[1].speaker).toBe('张总');
+    expect(updated[1].speakerId).toBe('spk_2');
+    expect(updated[2].speaker).toBe('张总');
+    expect(updated[2].speakerId).toBe('spk_2');
+
+    const speakerMap = useMeetingStore.getState().speakerNames;
+    expect(speakerMap['spk_2']).toBe('张总');
+  });
+
   it('Local-First 历史会议与待办持久化落盘，页面刷新后完整恢复不丢失 (TDD)', async () => {
     const store = useMeetingStore.getState();
     store.clearAllHistory();
@@ -279,5 +331,47 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     const afterDelete = JSON.parse(localStorage.getItem('tingxu_history_meetings')!);
     expect(afterDelete).toHaveLength(1);
     expect(afterDelete[0].title).toContain('数据持久化保证会议');
+  });
+
+  it('支持本地声纹档案显式授权注册、持久化恢复、重命名、单条删除与全部清空 (T09)', () => {
+    const store = useMeetingStore.getState();
+    store.clearSpeakerProfiles();
+
+    const dummyEmbedding = new Array(192).fill(0);
+    dummyEmbedding[0] = 1.0;
+
+    // 1. 未显式授权 (consented = false) 严禁写入声纹档案 (AC-05)
+    const unconsented = store.registerSpeakerProfile({
+      displayName: '未授权用户',
+      embedding: dummyEmbedding,
+      sampleDurationMs: 5000,
+      consented: false,
+    });
+    expect(unconsented).toBeNull();
+    expect(useMeetingStore.getState().speakerProfiles).toHaveLength(0);
+
+    // 2. 显式授权 (consented = true) 成功保存声纹档案并落盘至 localStorage
+    const profile1 = store.registerSpeakerProfile({
+      displayName: '张总',
+      embedding: dummyEmbedding,
+      sampleDurationMs: 8600,
+      consented: true,
+    });
+    expect(profile1).not.toBeNull();
+    expect(profile1?.displayName).toBe('张总');
+    expect(useMeetingStore.getState().speakerProfiles).toHaveLength(1);
+    expect(useMeetingStore.getState().voiceprintConsentAt).toBeGreaterThan(0);
+
+    const savedRaw = localStorage.getItem('tingxu_speaker_profiles');
+    expect(savedRaw).not.toBeNull();
+    expect(JSON.parse(savedRaw!)).toHaveLength(1);
+
+    // 3. 支持重命名已保存的声纹档案
+    store.renameSpeakerProfile(profile1!.profileId, '张董事长');
+    expect(useMeetingStore.getState().speakerProfiles[0].displayName).toBe('张董事长');
+
+    // 4. 支持单条删除与全部清空
+    store.deleteSpeakerProfile(profile1!.profileId);
+    expect(useMeetingStore.getState().speakerProfiles).toHaveLength(0);
   });
 });

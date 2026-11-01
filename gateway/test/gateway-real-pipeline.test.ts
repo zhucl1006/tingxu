@@ -1,9 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { WebSocket } from 'ws';
+import { WebSocket, WebSocketServer } from 'ws';
+import http from 'node:http';
 import { createGatewayServer } from '../src/server.js';
 import { ModelRouter } from '../src/router/modelRouter.js';
 import { DeepSeekAdapter } from '../src/adapters/deepseek.js';
 import { QwenAdapter } from '../src/adapters/qwen.js';
+import { attachStreamingAsrServer } from '../src/asr/streamingAsrServer.js';
 
 describe('AI Gateway 热重载与真实模型调用测试 (T04, T05, T06)', () => {
   let router: ModelRouter;
@@ -116,11 +118,91 @@ describe('AI Gateway 热重载与真实模型调用测试 (T04, T05, T06)', () =
 
       expect(receivedMessages.length).toBeGreaterThan(0);
       expect(receivedMessages.some((m) => m.type === 'INTERIM' || m.type === 'FINAL')).toBe(true);
+      const finalMsg = receivedMessages.find((m) => m.type === 'FINAL');
+      expect(finalMsg).toBeDefined();
+      expect(typeof finalMsg.sentence.beginTimeMs).toBe('number');
+      expect(typeof finalMsg.sentence.endTimeMs).toBe('number');
+      expect('speakerId' in finalMsg.sentence).toBe(true);
 
       client.close();
     } finally {
       wss.close();
       await new Promise((resolve) => server.close(resolve));
+    }
+  });
+
+  it('当上游 ASR 返回 sentence.begin_time / end_time / speaker_id 时应透传 beginTimeMs / endTimeMs / speakerId', async () => {
+    const upstreamServer = http.createServer();
+    const upstreamWss = new WebSocketServer({ server: upstreamServer });
+    await new Promise<void>((resolve) => upstreamServer.listen(0, resolve));
+    const upstreamPort = (upstreamServer.address() as any).port;
+
+    upstreamWss.on('connection', (upWs) => {
+      upWs.on('message', (data, isBinary) => {
+        if (!isBinary) {
+          const msg = JSON.parse(data.toString());
+          if (msg.header?.action === 'run-task') {
+            upWs.send(JSON.stringify({ header: { event: 'task-started' } }));
+          }
+        } else {
+          upWs.send(
+            JSON.stringify({
+              header: { event: 'result-generated' },
+              payload: {
+                output: {
+                  sentence: {
+                    text: '这是第一位发言人的话。',
+                    sentence_end: true,
+                    begin_time: 1200,
+                    end_time: 3600,
+                    speaker_id: 0,
+                  },
+                },
+              },
+            })
+          );
+        }
+      });
+    });
+
+    const gatewayHttp = http.createServer();
+    const gatewayWss = attachStreamingAsrServer({
+      server: gatewayHttp,
+      getAsrConfig: () => ({
+        provider: 'dashscope',
+        apiKey: 'sk-real-test-key-123456',
+        endpoint: `ws://127.0.0.1:${upstreamPort}`,
+      }),
+    });
+    await new Promise<void>((resolve) => gatewayHttp.listen(0, resolve));
+    const gatewayPort = (gatewayHttp.address() as any).port;
+
+    try {
+      const client = new WebSocket(`ws://127.0.0.1:${gatewayPort}/gateway/v1/asr/stream`);
+      const messages: any[] = [];
+      client.on('message', (raw) => {
+        messages.push(JSON.parse(raw.toString()));
+      });
+      await new Promise((resolve) => client.on('open', resolve));
+      // Wait for READY status
+      await new Promise((r) => setTimeout(r, 80));
+      client.send(Buffer.alloc(3200));
+      await new Promise((r) => setTimeout(r, 80));
+
+      const finalMsg = messages.find((m) => m.type === 'FINAL');
+      expect(finalMsg).toBeDefined();
+      expect(finalMsg.sentence.text).toBe('这是第一位发言人的话。');
+      expect(finalMsg.sentence.beginTimeMs).toBe(1200);
+      expect(finalMsg.sentence.endTimeMs).toBe(3600);
+      expect(finalMsg.sentence.speakerId).toBe('spk_1');
+      client.close();
+    } finally {
+      gatewayWss.clients.forEach((c) => c.terminate());
+      upstreamWss.clients.forEach((c) => c.terminate());
+      gatewayWss.close();
+      upstreamWss.close();
+      gatewayHttp.close();
+      upstreamServer.close();
     }
   });
 });

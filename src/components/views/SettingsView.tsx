@@ -2,10 +2,41 @@ import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
 
 export const SettingsView: React.FC = () => {
-  const { currentUser, setIsLoginModalOpen, logoutUser } = useMeetingStore();
+  const {
+    currentUser,
+    setIsLoginModalOpen,
+    logoutUser,
+    speakerProfiles,
+    renameSpeakerProfile,
+    deleteSpeakerProfile,
+    clearSpeakerProfiles,
+  } = useMeetingStore();
   const [gatewayUrl, setGatewayUrl] = useState('http://localhost:3201');
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editingProfileName, setEditingProfileName] = useState('');
+  const [exportedHint, setExportedHint] = useState<string | null>(null);
+
+  const handleExportVoiceprints = () => {
+    const safeMetadata = speakerProfiles.map((p) => ({
+      profileId: p.profileId,
+      displayName: p.displayName,
+      embeddingDim: p.embeddingDim,
+      modelId: p.modelId,
+      modelVersion: p.modelVersion,
+      sampleDurationMs: p.sampleDurationMs,
+      consentAt: p.consentAt,
+      createdAt: p.createdAt,
+      lastMatchedAt: p.lastMatchedAt || null,
+    }));
+    const jsonText = JSON.stringify(safeMetadata, null, 2);
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(jsonText).catch(() => {});
+    }
+    setExportedHint(`✓ 已导出 ${safeMetadata.length} 条本地声纹档案元数据（不含原始音频）`);
+    setTimeout(() => setExportedHint(null), 3000);
+  };
 
   const handleTestGateway = async () => {
     setTesting(true);
@@ -116,6 +147,134 @@ export const SettingsView: React.FC = () => {
             </div>
           )}
         </div>
+      </div>
+
+      {/* 本地声纹与参会人档案管理 (T09) */}
+      <div
+        data-testid="settings-page-section-voiceprints"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <span>🗣️ 声纹与参会人档案（仅保存在本机）</span>
+            </h2>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              已授权记住的说话人 192 维声纹特征将在后续会议中自动比对匹配（连续 2 句命中自动署名，单句命中提示确认）
+            </p>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              data-testid="settings-page-btn-export-voiceprints"
+              disabled={speakerProfiles.length === 0}
+              onClick={handleExportVoiceprints}
+              className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-secondary hover:text-text-primary disabled:opacity-50 transition-colors"
+            >
+              导出元数据 JSON
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-btn-clear-all-voiceprints"
+              disabled={speakerProfiles.length === 0}
+              onClick={() => clearSpeakerProfiles()}
+              className="px-3 py-1.5 rounded-lg border border-border-subtle text-status-danger hover:bg-status-danger/10 text-xs font-medium disabled:opacity-50 transition-colors"
+            >
+              全部清空
+            </button>
+          </div>
+        </div>
+
+        {exportedHint && (
+          <div
+            data-testid="settings-page-text-voiceprint-export-hint"
+            className="text-xs p-2 rounded bg-status-success-bg text-status-success"
+          >
+            {exportedHint}
+          </div>
+        )}
+
+        {speakerProfiles.length === 0 ? (
+          <div
+            data-testid="settings-page-voiceprint-empty"
+            className="p-4 rounded-lg bg-subtle border border-border-subtle text-center text-xs text-text-tertiary"
+          >
+            暂无已保存的本地声纹档案。可在会中点击「👥 参会人」重命名并勾选“记住此人的声音”后创建。
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {speakerProfiles.map((prof) => (
+              <div
+                key={prof.profileId}
+                data-testid={`settings-page-voiceprint-row-${prof.profileId}`}
+                className="p-3 rounded-lg bg-subtle border border-border-subtle flex items-center justify-between text-xs"
+              >
+                <div className="flex items-center gap-3">
+                  {editingProfileId === prof.profileId ? (
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="text"
+                        data-testid={`settings-page-input-rename-voiceprint-${prof.profileId}`}
+                        value={editingProfileName}
+                        onChange={(e) => setEditingProfileName(e.target.value)}
+                        className="px-2 py-1 text-xs rounded bg-canvas border border-brand-blue text-text-primary focus:outline-none w-32"
+                      />
+                      <button
+                        type="button"
+                        data-testid={`settings-page-btn-save-voiceprint-${prof.profileId}`}
+                        onClick={() => {
+                          if (editingProfileName.trim()) {
+                            renameSpeakerProfile(prof.profileId, editingProfileName.trim());
+                          }
+                          setEditingProfileId(null);
+                        }}
+                        className="px-2 py-1 text-[11px] rounded bg-brand-blue text-white"
+                      >
+                        保存
+                      </button>
+                      <button
+                        type="button"
+                        data-testid={`settings-page-btn-cancel-voiceprint-${prof.profileId}`}
+                        onClick={() => setEditingProfileId(null)}
+                        className="px-2 py-1 text-[11px] rounded bg-panel text-text-secondary"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  ) : (
+                    <span className="font-semibold text-text-primary">{prof.displayName}</span>
+                  )}
+                  <span className="text-[11px] text-text-tertiary font-mono tabular-nums">
+                    {prof.embeddingDim} 维 · 样本 {(prof.sampleDurationMs / 1000).toFixed(1)}s
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    data-testid={`settings-page-btn-rename-voiceprint-${prof.profileId}`}
+                    onClick={() => {
+                      setEditingProfileId(prof.profileId);
+                      setEditingProfileName(prof.displayName);
+                    }}
+                    className="px-2.5 py-1 rounded bg-canvas border border-border-subtle text-text-secondary hover:text-brand-blue text-[11px]"
+                  >
+                    重命名
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`settings-page-btn-delete-voiceprint-${prof.profileId}`}
+                    onClick={() => deleteSpeakerProfile(prof.profileId)}
+                    className="px-2.5 py-1 rounded bg-canvas border border-border-subtle text-status-danger hover:bg-status-danger/10 text-[11px]"
+                  >
+                    删除
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 账号与隐私数据主权 */}

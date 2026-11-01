@@ -4,7 +4,24 @@ import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
 import { RealAudioCapture } from '../audio/realAudioCapture';
 import { RealStreamingAsrClient } from '../audio/realStreamingAsrClient';
+import { SentenceAudioBuffer } from '../audio/sentenceAudioBuffer';
+import { LocalSpeakerEmbeddingEngine } from '../audio/speakerEmbeddingEngine';
+import { OnlineSpeakerClusterer } from '../engine/speakerClusterer';
 import { SlidingWindowAccumulator, WindowPayload } from '../engine/slidingWindow';
+
+const SPEAKER_DOT_CLASSES = [
+  'bg-brand-blue',
+  'bg-status-success',
+  'bg-status-warning',
+  'bg-status-danger',
+  'bg-text-secondary',
+  'bg-brand-blue-hover',
+];
+
+function getSpeakerDotClass(colorIndex?: number): string {
+  const idx = typeof colorIndex === 'number' && colorIndex >= 0 ? colorIndex : 0;
+  return SPEAKER_DOT_CLASSES[idx % SPEAKER_DOT_CLASSES.length];
+}
 
 // 独立抽离秒表组件：仅订阅 elapsedSeconds，避免每秒重渲庞大整树（对齐 AGENTS.md 5.2 性能规范）
 const HeaderTimer: React.FC = () => {
@@ -211,15 +228,23 @@ interface TranscriptRowProps {
   segment: TranscriptSegment;
   isHighlighted: boolean;
   onRenameSpeaker: (oldName: string, newName: string) => void;
+  onConfirmTentative?: (speakerId: string, profileId: string, profileName: string) => void;
+  onRejectTentative?: (speakerId: string, profileId: string) => void;
 }
 
-const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted, onRenameSpeaker }) => {
+const TranscriptRow = memo<TranscriptRowProps>(({
+  segment,
+  isHighlighted,
+  onRenameSpeaker,
+  onConfirmTentative,
+  onRejectTentative,
+}) => {
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState(segment.speaker);
 
   const handleSaveRename = () => {
     if (editName.trim() && editName.trim() !== segment.speaker) {
-      onRenameSpeaker(segment.speaker, editName.trim());
+      onRenameSpeaker(segment.speakerId || segment.speaker, editName.trim());
     }
     setIsEditing(false);
   };
@@ -236,6 +261,12 @@ const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted, onRena
     >
       <div className="flex items-center justify-between mb-1.5 text-xs">
         <div className="flex items-center gap-2">
+          <span
+            data-testid={`workbench-page-transcript-panel-badge-speaker-dot-${segment.id}`}
+            className={`w-2 h-2 rounded-full shrink-0 ${getSpeakerDotClass(segment.speakerColorIndex)}`}
+            title={segment.speakerId ? `声纹聚类 ID: ${segment.speakerId}` : '说话人标识'}
+          />
+
           {isEditing ? (
             <div className="flex items-center gap-1">
               <input
@@ -260,6 +291,7 @@ const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted, onRena
               </button>
               <button
                 type="button"
+                data-testid={`workbench-page-transcript-panel-btn-cancel-speaker-${segment.id}`}
                 onClick={() => setIsEditing(false)}
                 className="text-[11px] text-text-tertiary hover:text-text-primary"
               >
@@ -275,10 +307,57 @@ const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted, onRena
                   setIsEditing(true);
                 }}
                 className="font-semibold text-text-primary hover:text-brand-blue cursor-pointer transition-colors"
-                title="点击修改发言人真实姓名"
+                title="点击修改发言人真实姓名（同声纹发言将同步更新）"
               >
                 {segment.speaker}
               </span>
+              {typeof segment.speakerConfidence === 'number' && (
+                <span
+                  data-testid={`workbench-page-transcript-panel-badge-speaker-confidence-${segment.id}`}
+                  className="text-[10px] px-1 py-0.2 rounded bg-brand-blue-subtle text-brand-blue font-mono tabular-nums"
+                  title="端侧声纹聚类置信度"
+                >
+                  声纹 {Math.round(segment.speakerConfidence * 100)}%
+                </span>
+              )}
+              {segment.tentativeProfileId && segment.tentativeProfileName && (
+                <div
+                  data-testid={`workbench-page-transcript-panel-div-tentative-match-${segment.id}`}
+                  className="flex items-center gap-1 px-1.5 py-0.2 rounded bg-status-warning-bg border border-status-warning-border text-status-warning text-[10px]"
+                  title="本地声纹库单句首次命中候选，连续 2 句或手动点击确认后绑定"
+                >
+                  <span>可能是 {segment.tentativeProfileName}</span>
+                  <button
+                    type="button"
+                    data-testid={`workbench-page-transcript-panel-btn-confirm-tentative-${segment.id}`}
+                    onClick={() =>
+                      onConfirmTentative &&
+                      onConfirmTentative(
+                        segment.speakerId || segment.speaker,
+                        segment.tentativeProfileId!,
+                        segment.tentativeProfileName!
+                      )
+                    }
+                    className="px-1 rounded bg-brand-blue text-white hover:bg-brand-blue-hover font-medium"
+                  >
+                    确认
+                  </button>
+                  <button
+                    type="button"
+                    data-testid={`workbench-page-transcript-panel-btn-reject-tentative-${segment.id}`}
+                    onClick={() =>
+                      onRejectTentative &&
+                      onRejectTentative(
+                        segment.speakerId || segment.speaker,
+                        segment.tentativeProfileId!
+                      )
+                    }
+                    className="px-1 rounded bg-canvas text-text-secondary hover:text-status-danger border border-border-subtle"
+                  >
+                    不是
+                  </button>
+                </div>
+              )}
               <button
                 type="button"
                 data-testid={`workbench-page-transcript-panel-btn-rename-speaker-${segment.id}`}
@@ -354,6 +433,10 @@ export const InMeetingWorkbench: React.FC = () => {
     addTranscriptSegment,
     isGeneratingSummary,
     renameSpeaker,
+    voiceprintConsentAt,
+    registerSpeakerProfile,
+    markProfileMatched,
+    dismissTentativeMatch,
   } = useMeetingStore();
 
   const [activeFilter, setActiveFilter] = useState<'all' | InsightType>('all');
@@ -370,6 +453,16 @@ export const InMeetingWorkbench: React.FC = () => {
   const [isExtractingInsights, setIsExtractingInsights] = useState(false);
   const [availableMics, setAvailableMics] = useState<Array<{ deviceId: string; label: string }>>([]);
   const [selectedMicId, setSelectedMicId] = useState<string>('');
+  const [editingHeaderSpeaker, setEditingHeaderSpeaker] = useState<{
+    key: string;
+    name: string;
+  } | null>(null);
+  const [headerSpeakerDraft, setHeaderSpeakerDraft] = useState('');
+  const [rememberSpeakerVoice, setRememberSpeakerVoice] = useState(false);
+  const [pendingVoiceprintConsent, setPendingVoiceprintConsent] = useState<{
+    speakerKey: string;
+    displayName: string;
+  } | null>(null);
 
   // 初始化加载音频输入设备列表
   useEffect(() => {
@@ -378,17 +471,86 @@ export const InMeetingWorkbench: React.FC = () => {
       .catch(() => {});
   }, []);
 
-  // 提取本场所有参会人名单
-  const uniqueSpeakers = useMemo(() => {
-    const list = Array.from(new Set(transcripts.map((t) => t.speaker).filter(Boolean)));
-    return list.length > 0 ? list : ['本人麦克风'];
+  // 提取本场所有参会人实体（保留稳定 speakerId 与颜色圆点，支持一键改名）
+  const speakerRoster = useMemo(() => {
+    const map = new Map<string, { key: string; name: string; colorIndex: number; count: number }>();
+    transcripts.forEach((t, idx) => {
+      if (!t.speaker) return;
+      const key = t.speakerId || t.speaker;
+      const existing = map.get(key);
+      if (existing) {
+        existing.name = t.speaker;
+        existing.count += 1;
+      } else {
+        map.set(key, {
+          key,
+          name: t.speaker,
+          colorIndex: typeof t.speakerColorIndex === 'number' ? t.speakerColorIndex : idx % 6,
+          count: 1,
+        });
+      }
+    });
+    const list = Array.from(map.values());
+    return list.length > 0
+      ? list
+      : [{ key: 'spk_1', name: '发言人 1', colorIndex: 0, count: 0 }];
   }, [transcripts]);
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
   const audioCaptureRef = useRef<RealAudioCapture | null>(null);
   const asrClientRef = useRef<RealStreamingAsrClient | null>(null);
+  const sentenceBufferRef = useRef<SentenceAudioBuffer>(
+    new SentenceAudioBuffer({ sampleRate: 16000, maxDurationSeconds: 60 })
+  );
+  const embeddingEngineRef = useRef<LocalSpeakerEmbeddingEngine>(new LocalSpeakerEmbeddingEngine());
+  const speakerClustererRef = useRef<OnlineSpeakerClusterer>(new OnlineSpeakerClusterer());
   const slidingWindowRef = useRef<SlidingWindowAccumulator>(
     new SlidingWindowAccumulator({ minCharsThreshold: 60, maxSilenceSeconds: 12 })
+  );
+
+  const handleRenameSpeakerUnified = useCallback(
+    (speakerIdOrOldName: string, newName: string) => {
+      speakerClustererRef.current.renameSpeaker(speakerIdOrOldName, newName);
+      renameSpeaker(speakerIdOrOldName, newName);
+    },
+    [renameSpeaker]
+  );
+
+  const commitVoiceprintEnrollment = useCallback(
+    (speakerKey: string, displayName: string, explicitConsent: boolean) => {
+      const clusterVp = speakerClustererRef.current.getClusterVoiceprint(speakerKey);
+      const fallbackEmbedding = new Array<number>(192).fill(0);
+      const hashSeed = Array.from(speakerKey + displayName).reduce(
+        (acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 192,
+        0
+      );
+      fallbackEmbedding[hashSeed] = 1.0;
+
+      registerSpeakerProfile({
+        displayName,
+        embedding: clusterVp && clusterVp.centroid.length > 0 ? clusterVp.centroid : fallbackEmbedding,
+        sampleDurationMs: clusterVp?.totalDurationMs ?? 8000,
+        consented: explicitConsent,
+      });
+    },
+    [registerSpeakerProfile]
+  );
+
+  const handleConfirmTentativeMatch = useCallback(
+    (speakerId: string, profileId: string, profileName: string) => {
+      speakerClustererRef.current.confirmProfileMatch(speakerId, profileId, profileName);
+      markProfileMatched(profileId);
+      renameSpeaker(speakerId, profileName);
+    },
+    [markProfileMatched, renameSpeaker]
+  );
+
+  const handleRejectTentativeMatch = useCallback(
+    (speakerId: string, profileId: string) => {
+      speakerClustererRef.current.rejectProfileMatch(speakerId, profileId);
+      dismissTentativeMatch(speakerId, profileId);
+    },
+    [dismissTentativeMatch]
   );
 
   // 处理增量洞察补丁（严格遵循不可覆盖的人工编辑保护）
@@ -584,23 +746,69 @@ export const InMeetingWorkbench: React.FC = () => {
           setInterimText('');
           setAsrError('');
           setAsrStatus('connected');
-          const newSeg: TranscriptSegment = {
-            id: `seg_${Date.now()}`,
-            channel: 'mic',
-            speaker: sentence.speaker || '我',
-            text: sentence.text,
-            timestamp: sentence.timestamp || formatSeconds(useMeetingStore.getState().elapsedSeconds),
-          };
-          addTranscriptSegment(newSeg);
 
-          // 传入滑动窗口触发切片
-          const windowPayload = slidingWindowRef.current.appendSegment(
-            newSeg,
-            useMeetingStore.getState().elapsedSeconds
-          );
-          if (windowPayload) {
-            triggerLiveInsightExtraction(windowPayload);
-          }
+          const estimatedDurationMs =
+            typeof sentence.beginTimeMs === 'number' &&
+            typeof sentence.endTimeMs === 'number' &&
+            sentence.endTimeMs > sentence.beginTimeMs
+              ? sentence.endTimeMs - sentence.beginTimeMs
+              : Math.min(6000, Math.max(1200, sentence.text.length * 180));
+
+          const audioSamples =
+            typeof sentence.beginTimeMs === 'number' &&
+            typeof sentence.endTimeMs === 'number' &&
+            sentence.endTimeMs > sentence.beginTimeMs
+              ? sentenceBufferRef.current.sliceByTimeMs(sentence.beginTimeMs, sentence.endTimeMs)
+              : sentenceBufferRef.current.getRecentSamples(estimatedDurationMs);
+
+          void (async () => {
+            const embedding = await embeddingEngineRef.current.embedSamples(audioSamples, 16000);
+            const currentProfiles = useMeetingStore.getState().speakerProfiles;
+            const assigned = speakerClustererRef.current.assign({
+              embedding,
+              durationMs: estimatedDurationMs,
+              upstreamSpeakerId: sentence.speakerId,
+              knownProfiles: currentProfiles.map((p) => ({
+                profileId: p.profileId,
+                displayName: p.displayName,
+                embedding: p.embedding,
+              })),
+            });
+
+            if (assigned.autoMatchedJustNow && assigned.matchedProfileId) {
+              useMeetingStore.getState().markProfileMatched(assigned.matchedProfileId);
+              useMeetingStore.getState().renameSpeaker(assigned.speakerId, assigned.displayName);
+            }
+
+            const storedName =
+              useMeetingStore.getState().speakerNames[assigned.speakerId] || assigned.displayName;
+
+            const newSeg: TranscriptSegment = {
+              id: `seg_${Date.now()}`,
+              channel: 'mic',
+              speaker: storedName,
+              speakerId: assigned.speakerId,
+              speakerConfidence: assigned.confidence,
+              speakerColorIndex: assigned.colorIndex,
+              matchedProfileId: assigned.matchedProfileId,
+              tentativeProfileId: assigned.tentativeProfileId,
+              tentativeProfileName: assigned.tentativeProfileName,
+              beginTimeMs: sentence.beginTimeMs ?? undefined,
+              endTimeMs: sentence.endTimeMs ?? undefined,
+              text: sentence.text,
+              timestamp: sentence.timestamp || formatSeconds(useMeetingStore.getState().elapsedSeconds),
+            };
+            addTranscriptSegment(newSeg);
+
+            // 传入滑动窗口触发切片
+            const windowPayload = slidingWindowRef.current.appendSegment(
+              newSeg,
+              useMeetingStore.getState().elapsedSeconds
+            );
+            if (windowPayload) {
+              triggerLiveInsightExtraction(windowPayload);
+            }
+          })();
         },
         onStatus: (st) => {
           if (st.status === 'READY') {
@@ -619,6 +827,7 @@ export const InMeetingWorkbench: React.FC = () => {
         deviceId: selectedMicId || undefined,
         onRmsLevel: (rms) => setRmsLevel(rms),
         onAudioChunk: (chunk) => {
+          sentenceBufferRef.current.appendPcm16Chunk(chunk);
           asrClient.sendPcmChunk(chunk);
         },
         onDeviceEnded: () => {
@@ -681,6 +890,10 @@ export const InMeetingWorkbench: React.FC = () => {
         asrClientRef.current = null;
       }
       slidingWindowRef.current.clear();
+      sentenceBufferRef.current.clear();
+      if (status === 'IDLE' || status === 'ENDED') {
+        speakerClustererRef.current.reset();
+      }
       setIsExtractingInsights(false);
       setRmsLevel(0);
       setInterimText('');
@@ -845,18 +1058,18 @@ export const InMeetingWorkbench: React.FC = () => {
         data-testid="workbench-page-header-container"
         className="h-13 px-5 py-3 border-b border-border-subtle bg-subtle flex items-center justify-between shrink-0"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
             data-testid="workbench-page-header-btn-back"
             onClick={() => setCurrentRoute('home')}
-            className="px-2.5 py-1 text-xs rounded bg-panel border border-border-subtle hover:bg-hover text-text-secondary flex items-center gap-1 font-medium transition-colors"
+            className="px-2.5 py-1 text-xs rounded bg-panel border border-border-subtle hover:bg-hover text-text-secondary flex items-center gap-1 font-medium transition-colors whitespace-nowrap shrink-0"
           >
             ← 返回工作台
           </button>
           <span
             data-testid="workbench-page-header-badge-status"
-            className={`w-3 h-3 rounded-full ${
+            className={`w-3 h-3 rounded-full shrink-0 ${
               status === 'RECORDING'
                 ? 'bg-status-danger animate-pulse'
                 : 'bg-text-tertiary'
@@ -865,31 +1078,40 @@ export const InMeetingWorkbench: React.FC = () => {
           />
           <h1
             data-testid="workbench-page-header-text-title"
-            className="text-base font-semibold truncate max-w-md"
+            className="text-base font-semibold truncate max-w-xs"
           >
             {title}
           </h1>
           <HeaderTimer />
 
-          {/* 会中参会人员信息识别展示 */}
+          {/* 会中参会人员信息识别展示（支持直接点击胶囊重命名对应声纹说话人） */}
           <div
             data-testid="workbench-page-header-badge-speakers"
-            className="hidden lg:flex items-center gap-1.5 text-xs bg-panel px-2.5 py-1 rounded-md border border-border-subtle"
-            title="本场参会人名单，支持在逐字稿中点击修改发言人"
+            className="hidden lg:flex items-center gap-1.5 text-xs bg-panel px-2.5 py-1 rounded-md border border-border-subtle whitespace-nowrap overflow-x-auto max-w-md"
+            title="本场端侧声纹识别参会人名单，点击姓名可修改全部同声纹发言"
           >
-            <span className="text-text-tertiary">👥 参会人:</span>
-            {uniqueSpeakers.map((sp: string) => (
-              <span
-                key={sp}
-                className="px-1.5 py-0.2 rounded text-[11px] bg-subtle text-text-secondary font-mono border border-border-subtle"
+            <span className="text-text-tertiary whitespace-nowrap shrink-0">👥 参会人:</span>
+            {speakerRoster.map((sp) => (
+              <button
+                key={sp.key}
+                type="button"
+                data-testid={`workbench-page-header-btn-speaker-${sp.key}`}
+                onClick={() => {
+                  setEditingHeaderSpeaker({ key: sp.key, name: sp.name });
+                  setHeaderSpeakerDraft(sp.name);
+                  setRememberSpeakerVoice(false);
+                }}
+                className="px-1.5 py-0.5 rounded text-[11px] bg-subtle hover:bg-active text-text-secondary hover:text-brand-blue font-mono border border-border-subtle flex items-center gap-1 transition-colors whitespace-nowrap shrink-0"
+                title="点击重命名该说话人"
               >
-                {sp}
-              </span>
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${getSpeakerDotClass(sp.colorIndex)}`} />
+                <span>{sp.name}</span>
+              </button>
             ))}
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
           {status !== 'RECORDING' ? (
             <button
               type="button"
@@ -937,6 +1159,149 @@ export const InMeetingWorkbench: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* 顶部参会人快速重命名弹窗 */}
+      {editingHeaderSpeaker && (
+        <div
+          data-testid="workbench-page-header-modal-rename-speaker"
+          className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+        >
+          <div className="bg-canvas border border-border-strong rounded-xl p-4 w-80 space-y-3 shadow-xl">
+            <h3 className="text-xs font-bold text-text-primary">
+              重命名说话人「{editingHeaderSpeaker.name}」
+            </h3>
+            <p className="text-[11px] text-text-secondary">
+              修改后，本场该声纹聚类（{editingHeaderSpeaker.key}）的所有历史与后续发言将自动更新为此姓名。
+            </p>
+            <input
+              type="text"
+              data-testid="workbench-page-header-input-rename-speaker"
+              value={headerSpeakerDraft}
+              autoFocus
+              onChange={(e) => setHeaderSpeakerDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && headerSpeakerDraft.trim()) {
+                  const cleanName = headerSpeakerDraft.trim();
+                  handleRenameSpeakerUnified(editingHeaderSpeaker.key, cleanName);
+                  if (rememberSpeakerVoice) {
+                    if (voiceprintConsentAt) {
+                      commitVoiceprintEnrollment(editingHeaderSpeaker.key, cleanName, true);
+                    } else {
+                      setPendingVoiceprintConsent({
+                        speakerKey: editingHeaderSpeaker.key,
+                        displayName: cleanName,
+                      });
+                    }
+                  }
+                  setEditingHeaderSpeaker(null);
+                }
+                if (e.key === 'Escape') {
+                  setEditingHeaderSpeaker(null);
+                }
+              }}
+              placeholder="输入真实姓名（如：张总、李架构师）"
+              className="w-full px-3 py-1.5 text-xs bg-subtle border border-border-subtle rounded-md focus:outline-none focus:border-brand-blue text-text-primary"
+            />
+            <label className="flex items-start gap-2 text-[11px] text-text-secondary cursor-pointer select-none pt-0.5">
+              <input
+                type="checkbox"
+                data-testid="workbench-page-header-checkbox-remember-voice"
+                checked={rememberSpeakerVoice}
+                onChange={(e) => setRememberSpeakerVoice(e.target.checked)}
+                className="mt-0.5 accent-brand-blue"
+              />
+              <span>
+                记住此人的声音（仅存本机加密声纹库，后续会议自动匹配为该姓名）
+              </span>
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                data-testid="workbench-page-header-btn-cancel-rename-speaker"
+                onClick={() => setEditingHeaderSpeaker(null)}
+                className="px-2.5 py-1 text-xs rounded bg-subtle text-text-secondary hover:bg-panel"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                data-testid="workbench-page-header-btn-confirm-rename-speaker"
+                onClick={() => {
+                  if (headerSpeakerDraft.trim()) {
+                    const cleanName = headerSpeakerDraft.trim();
+                    handleRenameSpeakerUnified(editingHeaderSpeaker.key, cleanName);
+                    if (rememberSpeakerVoice) {
+                      if (voiceprintConsentAt) {
+                        commitVoiceprintEnrollment(editingHeaderSpeaker.key, cleanName, true);
+                      } else {
+                        setPendingVoiceprintConsent({
+                          speakerKey: editingHeaderSpeaker.key,
+                          displayName: cleanName,
+                        });
+                      }
+                    }
+                  }
+                  setEditingHeaderSpeaker(null);
+                }}
+                className="px-3 py-1 text-xs rounded bg-brand-blue text-white font-medium hover:bg-brand-blue-hover"
+              >
+                确认命名
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 首次声纹记录隐私授权确认弹窗 (T09 Local-First 隐私主权) */}
+      {pendingVoiceprintConsent && (
+        <div
+          data-testid="workbench-page-modal-voiceprint-consent"
+          className="fixed inset-0 z-50 bg-black/45 flex items-center justify-center p-4"
+        >
+          <div className="bg-canvas border border-border-strong rounded-xl p-5 w-96 space-y-3.5 shadow-xl">
+            <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5">
+              <span>🔒</span>
+              <span>本地声纹特征记录授权确认</span>
+            </h3>
+            <div className="text-xs text-text-secondary space-y-2 leading-relaxed">
+              <p>
+                您正在为参会人「<strong className="text-text-primary">{pendingVoiceprintConsent.displayName}</strong>
+                」开启跨会议声纹记忆。请确认以下隐私保护承诺：
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-[11px]">
+                <li>仅在本机提取并加密存储 192 维数学特征向量，默认不保存原始录音片段；</li>
+                <li>声纹数据严禁上传云端、不进入大模型上下文或任何日志；</li>
+                <li>您可随时在「系统设置 → 声纹与参会人档案」中查看、导出或彻底删除。</li>
+              </ul>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                data-testid="workbench-page-btn-decline-voiceprint-consent"
+                onClick={() => setPendingVoiceprintConsent(null)}
+                className="px-3 py-1.5 text-xs rounded bg-subtle text-text-secondary hover:bg-panel"
+              >
+                仅改名不记声纹
+              </button>
+              <button
+                type="button"
+                data-testid="workbench-page-btn-accept-voiceprint-consent"
+                onClick={() => {
+                  commitVoiceprintEnrollment(
+                    pendingVoiceprintConsent.speakerKey,
+                    pendingVoiceprintConsent.displayName,
+                    true
+                  );
+                  setPendingVoiceprintConsent(null);
+                }}
+                className="px-3.5 py-1.5 text-xs rounded bg-brand-blue text-white font-medium hover:bg-brand-blue-hover"
+              >
+                同意授权并保存在本机
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 主体工作区：左 54% 洞察看板 + 右 46% 逐字稿 */}
       <main className="flex flex-1 overflow-hidden">
@@ -1180,6 +1545,7 @@ export const InMeetingWorkbench: React.FC = () => {
               </div>
               <button
                 type="button"
+                data-testid="workbench-page-transcript-panel-btn-clear-highlight"
                 onClick={() => setHighlightedTranscriptId(null)}
                 className="text-text-tertiary hover:text-brand-blue text-[11px] px-1"
               >
@@ -1215,7 +1581,9 @@ export const InMeetingWorkbench: React.FC = () => {
                     key={segment.id}
                     segment={segment}
                     isHighlighted={highlightedTranscriptId === segment.id}
-                    onRenameSpeaker={renameSpeaker}
+                    onRenameSpeaker={handleRenameSpeakerUnified}
+                    onConfirmTentative={handleConfirmTentativeMatch}
+                    onRejectTentative={handleRejectTentativeMatch}
                   />
                 ))}
                 {interimText && (
