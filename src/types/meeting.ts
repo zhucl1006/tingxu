@@ -30,9 +30,14 @@ export interface InsightCard {
 export interface TranscriptSegment {
   id: string;
   speaker: string;
+  speakerId?: string;
+  speakerConfidence?: number;
+  speakerColorIndex?: number;
   channel: 'mic' | 'system';
   timestamp: string;
   timestampSeconds?: number;
+  beginTimeMs?: number;
+  endTimeMs?: number;
   text: string;
   isStreaming?: boolean;
 }
@@ -141,7 +146,8 @@ export interface MeetingState {
   activeSummaryMeeting: HistoryMeeting | null;
   activeTargetSegmentId?: string | null;
   setActiveSummaryMeeting: (meeting: HistoryMeeting | null, targetSegmentId?: string) => void;
-  renameSpeaker: (oldName: string, newName: string) => void;
+  speakerNames: Record<string, string>;
+  renameSpeaker: (speakerIdOrOldName: string, newName: string) => void;
   isGeneratingSummary: boolean;
   setIsGeneratingSummary: (generating: boolean) => void;
   updateMeetingTitle: (newTitle: string) => void;

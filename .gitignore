@@ -6,5 +6,6 @@ server/dist/
 src-tauri/target/
 server/data/
 data/
+src-tauri/resources/models/*.onnx
 *.local
 .env

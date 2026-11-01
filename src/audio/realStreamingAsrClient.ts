@@ -5,7 +5,10 @@
 export interface FinalSentence {
   text: string;
   speaker?: string;
+  speakerId?: string | null;
   timestamp: string;
+  beginTimeMs?: number | null;
+  endTimeMs?: number | null;
 }
 
 export interface RealStreamingAsrClientOptions {

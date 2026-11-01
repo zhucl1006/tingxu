@@ -246,4 +246,64 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
     });
     expect(micSelect.value).toBe('mic-device-bt');
   });
+
+  it('支持单麦克风多说话人声纹区分展示、匹配置信度徽章及按 speakerId 精准重命名 (T08)', () => {
+    act(() => {
+      useMeetingStore.getState().startMeeting('多说话人声纹分离评审会');
+      useMeetingStore.getState().addTranscriptSegment({
+        id: 'seg_spk_1',
+        speaker: '发言人 1',
+        speakerId: 'spk_1',
+        speakerConfidence: 0.96,
+        speakerColorIndex: 0,
+        channel: 'mic',
+        timestamp: '00:00:10',
+        text: '我们先对齐端侧 CAM++ 声纹聚类的延迟预算。',
+      });
+      useMeetingStore.getState().addTranscriptSegment({
+        id: 'seg_spk_2',
+        speaker: '发言人 2',
+        speakerId: 'spk_2',
+        speakerConfidence: 0.91,
+        speakerColorIndex: 1,
+        channel: 'mic',
+        timestamp: '00:00:22',
+        text: '同意，单句声纹推理控制在 150ms 以内。',
+      });
+    });
+
+    render(<InMeetingWorkbench />);
+
+    // 1. 验证逐字稿行展示说话人彩色圆点与声纹匹配置信度徽章
+    expect(
+      screen.getByTestId('workbench-page-transcript-panel-badge-speaker-dot-seg_spk_1')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId('workbench-page-transcript-panel-badge-speaker-confidence-seg_spk_1')
+    ).toHaveTextContent('96%');
+    expect(
+      screen.getByTestId('workbench-page-transcript-panel-badge-speaker-confidence-seg_spk_2')
+    ).toHaveTextContent('91%');
+
+    // 2. 验证顶部参会人名单胶囊按钮展示两位说话人，并支持点击直接重命名
+    const speakerChip2 = screen.getByTestId('workbench-page-header-btn-speaker-spk_2');
+    expect(speakerChip2).toHaveTextContent('发言人 2');
+
+    // 3. 在逐字稿行点击重命名 发言人 2 -> 王架构师
+    fireEvent.click(screen.getByTestId('workbench-page-transcript-panel-btn-rename-speaker-seg_spk_2'));
+    const renameInput = screen.getByTestId('workbench-page-transcript-panel-input-rename-speaker-seg_spk_2');
+    fireEvent.change(renameInput, { target: { value: '王架构师' } });
+    fireEvent.click(screen.getByTestId('workbench-page-transcript-panel-btn-save-speaker-seg_spk_2'));
+
+    // 4. 验证 spk_2 已更新为 "王架构师"，而 spk_1 仍保持 "发言人 1"
+    expect(
+      screen.getByTestId('workbench-page-transcript-panel-text-speaker-seg_spk_2')
+    ).toHaveTextContent('王架构师');
+    expect(
+      screen.getByTestId('workbench-page-transcript-panel-text-speaker-seg_spk_1')
+    ).toHaveTextContent('发言人 1');
+    expect(
+      screen.getByTestId('workbench-page-header-btn-speaker-spk_2')
+    ).toHaveTextContent('王架构师');
+  });
 });

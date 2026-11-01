@@ -225,4 +225,56 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
       global.fetch = originalFetch;
     }
   });
+
+  it('支持按稳定 speakerId 精准重命名说话人，避免误改其他同名或不同 ID 的发言人 (T07)', () => {
+    const store = useMeetingStore.getState();
+    store.startMeeting('多说话人重命名测试');
+
+    store.addTranscriptSegment({
+      id: 'seg_spk1_a',
+      speaker: '发言人 1',
+      speakerId: 'spk_1',
+      speakerConfidence: 0.94,
+      speakerColorIndex: 0,
+      channel: 'mic',
+      timestamp: '00:00:05',
+      text: '大家好，我是第一位说话人。',
+    });
+
+    store.addTranscriptSegment({
+      id: 'seg_spk2_a',
+      speaker: '发言人 2',
+      speakerId: 'spk_2',
+      speakerConfidence: 0.91,
+      speakerColorIndex: 1,
+      channel: 'mic',
+      timestamp: '00:00:12',
+      text: '我是第二位说话人。',
+    });
+
+    store.addTranscriptSegment({
+      id: 'seg_spk2_b',
+      speaker: '发言人 2',
+      speakerId: 'spk_2',
+      speakerConfidence: 0.93,
+      speakerColorIndex: 1,
+      channel: 'mic',
+      timestamp: '00:00:20',
+      text: '我补充一下架构细节。',
+    });
+
+    // 按 speakerId 将 spk_2 重命名为 "张总"
+    store.renameSpeaker('spk_2', '张总');
+
+    const updated = useMeetingStore.getState().transcripts;
+    expect(updated[0].speaker).toBe('发言人 1');
+    expect(updated[0].speakerId).toBe('spk_1');
+    expect(updated[1].speaker).toBe('张总');
+    expect(updated[1].speakerId).toBe('spk_2');
+    expect(updated[2].speaker).toBe('张总');
+    expect(updated[2].speakerId).toBe('spk_2');
+
+    const speakerMap = useMeetingStore.getState().speakerNames;
+    expect(speakerMap['spk_2']).toBe('张总');
+  });
 });

@@ -47,7 +47,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
           message: '语音识别服务未配置，请在控制面后台完成服务集成配置。',
         })
       );
-    } else if (!isMockDevKey) {
+    } else if (!isMockDevKey && (!isTestEnv || endpoint.startsWith('ws://127.0.0.1') || endpoint.startsWith('ws://localhost'))) {
       // 真实连接流式语音识别上游服务
       try {
         upstreamWs = new WebSocket(endpoint, {
@@ -109,14 +109,23 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
                 if (sentence.sentence_end) {
                   const now = new Date();
                   const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+                  const beginTimeMs = typeof sentence.begin_time === 'number' ? sentence.begin_time : null;
+                  const endTimeMs = typeof sentence.end_time === 'number' ? sentence.end_time : null;
+                  const speakerId =
+                    sentence.speaker_id !== undefined && sentence.speaker_id !== null
+                      ? `spk_${Number(sentence.speaker_id) + 1}`
+                      : null;
                   if (ws.readyState === WebSocket.OPEN) {
                     ws.send(
                       JSON.stringify({
                         type: 'FINAL',
                         sentence: {
                           speaker: '发言人',
+                          speakerId,
                           text: sentence.text,
                           timestamp,
+                          beginTimeMs,
+                          endTimeMs,
                         },
                       })
                     );
@@ -156,8 +165,11 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
                 type: 'FINAL',
                 sentence: {
                   speaker: '发言人',
+                  speakerId: null,
                   text: '听序 ASR 流式测试成功。',
                   timestamp: '00:01:00',
+                  beginTimeMs: 0,
+                  endTimeMs: 1000,
                 },
               })
             );
@@ -180,6 +192,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
     }
 
     let testBytes = 0;
+    let totalTestBytes = 0;
 
     ws.on('message', (data: Buffer | ArrayBuffer, isBinary: boolean) => {
       if (isBinary) {
@@ -199,15 +212,21 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
 
         // 测试环境回退 (Vitest 离线单测)
         if (isTestEnv) {
+          const prevMs = Math.floor((totalTestBytes / 32000) * 1000);
           testBytes += buffer.length;
+          totalTestBytes += buffer.length;
+          const nextMs = Math.floor((totalTestBytes / 32000) * 1000);
           if (testBytes >= 16000 && ws.readyState === WebSocket.OPEN) {
             ws.send(
               JSON.stringify({
                 type: 'FINAL',
                 sentence: {
                   speaker: '发言人',
+                  speakerId: null,
                   text: '听序 ASR 流式测试成功。',
                   timestamp: '00:01:00',
+                  beginTimeMs: prevMs,
+                  endTimeMs: Math.max(prevMs + 500, nextMs),
                 },
               })
             );

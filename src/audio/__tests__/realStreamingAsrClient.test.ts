@@ -45,7 +45,7 @@ describe('RealStreamingAsrClient 流式 ASR 客户端测试 (T11)', () => {
 
   it('收到 ASR 转写消息时应触发临时与终态句子回调', async () => {
     let interimText = '';
-    let finalSentenceText = '';
+    let receivedSentence: any = null;
 
     const client = new RealStreamingAsrClient({
       wsUrl: 'ws://localhost:3201/gateway/v1/asr/stream',
@@ -53,7 +53,7 @@ describe('RealStreamingAsrClient 流式 ASR 客户端测试 (T11)', () => {
         interimText = text;
       },
       onFinalSentence: (sentence) => {
-        finalSentenceText = sentence.text;
+        receivedSentence = sentence;
       },
     });
 
@@ -69,17 +69,27 @@ describe('RealStreamingAsrClient 流式 ASR 客户端测试 (T11)', () => {
     });
     expect(interimText).toBe('我们今天讨论的是');
 
-    // 2. 模拟收到确认句
+    // 2. 模拟收到确认句（包含句子起止时间与说话人标识）
     mockWs.onmessage({
       data: JSON.stringify({
         type: 'FINAL',
         sentence: {
           text: '我们今天讨论的是听序正式接入真实 ASR 与大模型。',
           speaker: '我',
+          speakerId: 'spk_1',
           timestamp: '14:20:00',
+          beginTimeMs: 1200,
+          endTimeMs: 4200,
         },
       }),
     });
-    expect(finalSentenceText).toBe('我们今天讨论的是听序正式接入真实 ASR 与大模型。');
+    expect(receivedSentence).toEqual({
+      text: '我们今天讨论的是听序正式接入真实 ASR 与大模型。',
+      speaker: '我',
+      speakerId: 'spk_1',
+      timestamp: '14:20:00',
+      beginTimeMs: 1200,
+      endTimeMs: 4200,
+    });
   });
 });

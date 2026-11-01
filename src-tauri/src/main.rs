@@ -49,9 +49,18 @@ fn toggle_floating_mode(app: AppHandle, to_floating: bool) -> Result<(), AppErro
     })
 }
 
+// 本地 192 维声纹嵌入提取命令（音频流不出本机，严格遵守 Local-First 隐私铁律）
+#[tauri::command]
+fn speaker_embed(samples: Vec<f32>, sample_rate: u32) -> Result<Vec<f32>, AppError> {
+    tingxu_desktop::speaker::extract_speaker_embedding(&samples, sample_rate).map_err(|e| AppError {
+        code: format!("{:?}", e.code),
+        message: e.message,
+    })
+}
+
 fn main() {
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![toggle_floating_mode])
+        .invoke_handler(tauri::generate_handler![toggle_floating_mode, speaker_embed])
         .run(tauri::generate_context!())
         .expect("运行听序 Tauri 客户端异常");
 }

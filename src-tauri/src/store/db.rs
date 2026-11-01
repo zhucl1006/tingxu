@@ -1,5 +1,6 @@
 use crate::error::TingxuError;
 use crate::media::device::TrackType;
+use crate::speaker::MeetingSpeakerRecord;
 use crate::store::fts::{AudioSyncInfo, SearchResult};
 use rusqlite::{params, Connection};
 use std::fs;
@@ -67,10 +68,23 @@ impl LocalDatabase {
                 meeting_id TEXT NOT NULL,
                 account_id TEXT NOT NULL,
                 speaker TEXT NOT NULL,
+                speaker_id TEXT,
+                speaker_confidence REAL,
                 channel TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 timestamp_seconds INTEGER NOT NULL,
                 text TEXT NOT NULL,
+                FOREIGN KEY(meeting_id) REFERENCES meetings(local_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS meeting_speakers (
+                meeting_id TEXT NOT NULL,
+                local_speaker_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                color_index INTEGER NOT NULL,
+                confidence REAL,
+                first_seen_ms INTEGER NOT NULL,
+                PRIMARY KEY (meeting_id, local_speaker_id),
                 FOREIGN KEY(meeting_id) REFERENCES meetings(local_id) ON DELETE CASCADE
             );
 
@@ -141,6 +155,139 @@ impl LocalDatabase {
 
         tx.commit().map_err(|e| TingxuError::disk_io(e.to_string()))?;
         Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn insert_transcript_segment_with_speaker(
+        &self,
+        segment_id: &str,
+        meeting_id: &str,
+        account_id: &str,
+        speaker: &str,
+        speaker_id: Option<&str>,
+        speaker_confidence: Option<f64>,
+        track: TrackType,
+        timestamp: &str,
+        timestamp_seconds: u64,
+        text: &str,
+    ) -> Result<(), TingxuError> {
+        let mut conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        let channel_str = match track {
+            TrackType::Mic => "mic",
+            TrackType::System => "system",
+        };
+
+        let tx = conn
+            .transaction()
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        tx.execute(
+            "INSERT INTO transcript_segments 
+             (segment_id, meeting_id, account_id, speaker, speaker_id, speaker_confidence, channel, timestamp, timestamp_seconds, text) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                segment_id,
+                meeting_id,
+                account_id,
+                speaker,
+                speaker_id,
+                speaker_confidence,
+                channel_str,
+                timestamp,
+                timestamp_seconds,
+                text
+            ],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        tx.execute(
+            "INSERT INTO transcript_fts (segment_id, account_id, meeting_id, text) VALUES (?1, ?2, ?3, ?4)",
+            params![segment_id, account_id, meeting_id, text],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        tx.commit().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn upsert_meeting_speaker(
+        &self,
+        meeting_id: &str,
+        local_speaker_id: &str,
+        display_name: &str,
+        color_index: i32,
+        confidence: f64,
+        first_seen_ms: i64,
+    ) -> Result<(), TingxuError> {
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO meeting_speakers (meeting_id, local_speaker_id, display_name, color_index, confidence, first_seen_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(meeting_id, local_speaker_id) DO UPDATE SET
+               display_name = excluded.display_name,
+               confidence = excluded.confidence",
+            params![meeting_id, local_speaker_id, display_name, color_index, confidence, first_seen_ms],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn rename_meeting_speaker(
+        &self,
+        meeting_id: &str,
+        local_speaker_id: &str,
+        new_display_name: &str,
+    ) -> Result<(), TingxuError> {
+        let mut conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        tx.execute(
+            "UPDATE meeting_speakers SET display_name = ?1 WHERE meeting_id = ?2 AND local_speaker_id = ?3",
+            params![new_display_name, meeting_id, local_speaker_id],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        tx.execute(
+            "UPDATE transcript_segments SET speaker = ?1 WHERE meeting_id = ?2 AND speaker_id = ?3",
+            params![new_display_name, meeting_id, local_speaker_id],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        tx.commit().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn list_meeting_speakers(&self, meeting_id: &str) -> Result<Vec<MeetingSpeakerRecord>, TingxuError> {
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT meeting_id, local_speaker_id, display_name, color_index, COALESCE(confidence, 0.0), first_seen_ms
+                 FROM meeting_speakers
+                 WHERE meeting_id = ?1
+                 ORDER BY first_seen_ms ASC",
+            )
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![meeting_id], |row| {
+                Ok(MeetingSpeakerRecord {
+                    meeting_id: row.get(0)?,
+                    local_speaker_id: row.get(1)?,
+                    display_name: row.get(2)?,
+                    color_index: row.get(3)?,
+                    confidence: row.get(4)?,
+                    first_seen_ms: row.get(5)?,
+                })
+            })
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for item in rows.flatten() {
+            list.push(item);
+        }
+        Ok(list)
     }
 
     pub fn search_transcripts(

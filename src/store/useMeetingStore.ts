@@ -55,6 +55,7 @@ const initialMeetingState = {
   historyMeetings: initialHistoryMeetings,
   activeSummaryMeeting: null as HistoryMeeting | null,
   activeTargetSegmentId: null as string | null,
+  speakerNames: {} as Record<string, string>,
   isGeneratingSummary: false,
   gatewayUrl: 'http://localhost:3201',
 };
@@ -136,6 +137,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       initialQuotaSeconds: initialSec,
       transcripts: [],
       insights: [],
+      speakerNames: {},
       highlightedTranscriptId: null,
       currentRoute: 'record',
     });
@@ -161,20 +163,58 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     });
   },
 
-  renameSpeaker: (oldName: string, newName: string) => {
-    if (!oldName || !newName || oldName.trim() === newName.trim()) return;
+  renameSpeaker: (speakerIdOrOldName: string, newName: string) => {
+    if (!speakerIdOrOldName || !newName || speakerIdOrOldName.trim() === newName.trim()) return;
+    const targetKey = speakerIdOrOldName.trim();
     const cleanNew = newName.trim();
+
     set((state) => {
+      // 查找与 targetKey 关联的旧显示名及 speakerId
+      const matchedSpeakerIds = new Set<string>();
+      const matchedOldNames = new Set<string>();
+
+      for (const seg of state.transcripts) {
+        if (seg.speakerId === targetKey || seg.speaker === targetKey) {
+          if (seg.speakerId) matchedSpeakerIds.add(seg.speakerId);
+          if (seg.speaker) matchedOldNames.add(seg.speaker);
+        }
+      }
+      if (targetKey.startsWith('spk_')) {
+        matchedSpeakerIds.add(targetKey);
+      } else {
+        matchedOldNames.add(targetKey);
+      }
+
+      const matchesSegment = (t: TranscriptSegment): boolean => {
+        if (t.speakerId && matchedSpeakerIds.has(t.speakerId)) return true;
+        if (!t.speakerId && t.speaker === targetKey) return true;
+        if (t.speaker === targetKey && matchedSpeakerIds.size === 0) return true;
+        return false;
+      };
+
       const updatedTranscripts = state.transcripts.map((t) =>
-        t.speaker === oldName ? { ...t, speaker: cleanNew } : t
+        matchesSegment(t) ? { ...t, speaker: cleanNew } : t
       );
 
+      const nextSpeakerNames = { ...state.speakerNames };
+      matchedSpeakerIds.forEach((id) => {
+        nextSpeakerNames[id] = cleanNew;
+      });
+
       const updateMeeting = (m: HistoryMeeting): HistoryMeeting => {
-        const newSpeakers = Array.from(
-          new Set((m.speakers || []).map((s) => (s === oldName ? cleanNew : s)))
-        );
+        const meetingOldNames = new Set<string>(matchedOldNames);
+        (m.transcripts || []).forEach((t) => {
+          if (matchesSegment(t) && t.speaker) {
+            meetingOldNames.add(t.speaker);
+          }
+        });
         const newTranscripts = (m.transcripts || []).map((t) =>
-          t.speaker === oldName ? { ...t, speaker: cleanNew } : t
+          matchesSegment(t) || meetingOldNames.has(t.speaker) ? { ...t, speaker: cleanNew } : t
+        );
+        const newSpeakers = Array.from(
+          new Set(
+            (m.speakers || []).map((s) => (meetingOldNames.has(s) || s === targetKey ? cleanNew : s))
+          )
         );
         return {
           ...m,
@@ -188,6 +228,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
       return {
         transcripts: updatedTranscripts,
+        speakerNames: nextSpeakerNames,
         historyMeetings: updatedHistory,
         activeSummaryMeeting: updatedActive,
       };
@@ -414,9 +455,18 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   addTranscriptSegment: (segment: TranscriptSegment) => {
-    set((state) => ({
-      transcripts: [...state.transcripts, segment],
-    }));
+    set((state) => {
+      const mappedSpeaker =
+        (segment.speakerId && state.speakerNames[segment.speakerId]) || segment.speaker;
+      const nextSpeakerNames =
+        segment.speakerId && mappedSpeaker
+          ? { ...state.speakerNames, [segment.speakerId]: mappedSpeaker }
+          : state.speakerNames;
+      return {
+        speakerNames: nextSpeakerNames,
+        transcripts: [...state.transcripts, { ...segment, speaker: mappedSpeaker }],
+      };
+    });
   },
 
   addInsight: (insight) => {
@@ -520,6 +570,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       elapsedSeconds: 0,
       transcripts: [],
       insights: [],
+      speakerNames: {},
       highlightedTranscriptId: null,
       currentRoute: 'home',
     });
