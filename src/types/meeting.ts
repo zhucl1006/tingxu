@@ -166,5 +166,7 @@ export interface MeetingState {
   acceptInsightRevision: (id: string) => void;
   setHighlightedTranscriptId: (id: string | null) => void;
   setActiveWindow: (window: 'workbench' | 'floating-pill') => void;
+  deleteHistoryMeeting: (id: string) => void;
+  clearAllHistory: () => void;
   resetMeeting: () => void;
 }
