@@ -216,6 +216,48 @@ export class BillingEngine {
   }
 
   /**
+   * 直接结算扣减会议时长 (FIFO 先到期先扣除，落盘持久化并追加不可篡改流水)
+   */
+  public async deductDirect(params: {
+    userId: string;
+    seconds: number;
+    meetingId?: string;
+  }): Promise<{ totalAvailableSeconds: number; reservedSeconds: number }> {
+    const deductSeconds = Math.max(0, Math.round(params.seconds));
+    if (deductSeconds <= 0) {
+      return this.getUserBalance(params.userId);
+    }
+
+    let remainingToDeduct = deductSeconds;
+    const userBuckets = Array.from(this.buckets.values())
+      .filter((b) => b.userId === params.userId && b.remainingSeconds > 0)
+      .sort((a, b) => new Date(a.expireAt).getTime() - new Date(b.expireAt).getTime());
+
+    for (const b of userBuckets) {
+      if (remainingToDeduct <= 0) break;
+      const deductFromThis = Math.min(b.remainingSeconds, remainingToDeduct);
+      b.remainingSeconds -= deductFromThis;
+      remainingToDeduct -= deductFromThis;
+    }
+
+    const afterBal = await this.getUserBalance(params.userId);
+    this.appendLedger({
+      userId: params.userId,
+      action: 'DEDUCT',
+      deltaSeconds: -deductSeconds,
+      balanceAfter: afterBal.totalAvailableSeconds,
+      metadata: {
+        meetingId: params.meetingId,
+        actualSeconds: deductSeconds,
+      },
+    });
+
+    this.persist();
+
+    return afterBal;
+  }
+
+  /**
    * 任务完成：按实际消耗秒数核销，解冻预占，扣减批次
    */
   public async settleUsage(params: {

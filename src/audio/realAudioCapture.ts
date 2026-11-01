@@ -5,8 +5,11 @@
 export interface RealAudioCaptureOptions {
   sampleRate?: number;
   bufferSize?: number;
+  deviceId?: string;
   onAudioChunk?: (pcmChunk: ArrayBuffer) => void;
   onRmsLevel?: (rms: number) => void;
+  onDeviceEnded?: () => void;
+  onDeviceChange?: () => void;
 }
 
 /**
@@ -40,13 +43,17 @@ export class RealAudioCapture {
   private processor: ScriptProcessorNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private capturing: boolean = false;
+  private deviceChangeListener: (() => void) | null = null;
 
   constructor(options?: RealAudioCaptureOptions) {
     this.options = {
       sampleRate: options?.sampleRate || 16000,
       bufferSize: options?.bufferSize || 4096,
+      deviceId: options?.deviceId || '',
       onAudioChunk: options?.onAudioChunk || (() => {}),
       onRmsLevel: options?.onRmsLevel || (() => {}),
+      onDeviceEnded: options?.onDeviceEnded || (() => {}),
+      onDeviceChange: options?.onDeviceChange || (() => {}),
     };
   }
 
@@ -58,16 +65,39 @@ export class RealAudioCapture {
     }
 
     try {
-      // 1. 请求物理麦克风权限与音频流
+      // 1. 请求物理麦克风权限与音频流（支持指定 deviceId）
+      const audioConstraints: MediaTrackConstraints = {
+        channelCount: 1,
+        sampleRate: this.options.sampleRate,
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      if (this.options.deviceId) {
+        audioConstraints.deviceId = { exact: this.options.deviceId };
+      }
+
       this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 1,
-          sampleRate: this.options.sampleRate,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
+        audio: audioConstraints,
       });
+
+      // 监听音轨终止事件 (例如蓝牙耳机断开或被系统拔出)
+      const audioTracks = this.stream.getAudioTracks ? this.stream.getAudioTracks() : this.stream.getTracks();
+      audioTracks.forEach((track) => {
+        track.onended = () => {
+          console.warn('[RealAudioCapture] 当前音频轨道已断开 (例如蓝牙耳机断开/关闭)');
+          this.options.onDeviceEnded();
+        };
+      });
+
+      // 监听系统设备热插拔变动
+      if (navigator.mediaDevices && typeof navigator.mediaDevices.addEventListener === 'function') {
+        this.deviceChangeListener = () => {
+          console.info('[RealAudioCapture] 检测到系统音频输入设备列表变动');
+          this.options.onDeviceChange();
+        };
+        navigator.mediaDevices.addEventListener('devicechange', this.deviceChangeListener);
+      }
 
       // 2. 初始化 AudioContext
       const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
@@ -109,8 +139,42 @@ export class RealAudioCapture {
     }
   }
 
+  public async switchDevice(newDeviceId?: string): Promise<void> {
+    this.options.deviceId = newDeviceId || '';
+    if (this.capturing) {
+      await this.restart();
+    }
+  }
+
+  public async restart(): Promise<void> {
+    await this.stop();
+    await this.start();
+  }
+
+  public static async getAvailableMicrophones(): Promise<Array<{ deviceId: string; label: string }>> {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+      return [];
+    }
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      return devices
+        .filter((d) => d.kind === 'audioinput')
+        .map((d, index) => ({
+          deviceId: d.deviceId,
+          label: d.label || `系统麦克风 ${index + 1}`,
+        }));
+    } catch {
+      return [];
+    }
+  }
+
   public async stop(): Promise<void> {
     this.capturing = false;
+
+    if (this.deviceChangeListener && navigator.mediaDevices && typeof navigator.mediaDevices.removeEventListener === 'function') {
+      navigator.mediaDevices.removeEventListener('devicechange', this.deviceChangeListener);
+      this.deviceChangeListener = null;
+    }
 
     if (this.processor) {
       if (typeof this.processor.disconnect === 'function') {

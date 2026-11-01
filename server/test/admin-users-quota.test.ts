@@ -243,4 +243,62 @@ describe('Admin 管理台用户时长与额度列表功能 (TDD: 时长展示、
       }
     });
   });
+
+  describe('7. 会议时长真实结算与直接扣减 (Billing Deduction)', () => {
+    it('BillingEngine.deductDirect 应扣减用户时长批次并生成扣减记账流水', async () => {
+      // usr_001 初始有 7200 秒 (120 分钟)
+      const balBefore = await billingEngine.getUserBalance('usr_001');
+      expect(balBefore.totalAvailableSeconds).toBe(7200);
+
+      // 扣除 300 秒 (5 分钟会议)
+      const after = await billingEngine.deductDirect({
+        userId: 'usr_001',
+        seconds: 300,
+        meetingId: 'mtg_test_deduct',
+      });
+
+      expect(after.totalAvailableSeconds).toBe(6900);
+
+      const balAfter = await billingEngine.getUserBalance('usr_001');
+      expect(balAfter.totalAvailableSeconds).toBe(6900);
+
+      // 校验记账流水
+      const ledgers = await billingEngine.getLedgers('usr_001');
+      const deductLedger = ledgers.find((l) => l.action === 'DEDUCT');
+      expect(deductLedger).toBeDefined();
+      expect(deductLedger?.deltaSeconds).toBe(-300);
+      expect(deductLedger?.metadata?.meetingId).toBe('mtg_test_deduct');
+    });
+
+    it('HTTP 路由 POST /v1/billing/deduct 应能结算会议消耗并持久化扣减', async () => {
+      const { server } = createControlPlaneServer({
+        authService,
+        billingEngine,
+        opsService,
+      });
+
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/v1/billing/deduct`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            userId: 'usr_001',
+            seconds: 600,
+            meetingId: 'mtg_http_deduct',
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.code).toBe(0);
+        expect(json.data.totalAvailableSeconds).toBe(6600); // 7200 - 600 = 6600
+      } finally {
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+      }
+    });
+  });
 });

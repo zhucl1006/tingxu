@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { InMeetingWorkbench } from '../InMeetingWorkbench';
 import { useMeetingStore } from '../../store/useMeetingStore';
+import { RealAudioCapture } from '../../audio/realAudioCapture';
 
 describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
   beforeEach(() => {
@@ -46,6 +47,7 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
     expect(screen.getByTestId('workbench-page-transcript-panel-input-filter')).toBeInTheDocument();
     expect(screen.getByTestId('workbench-page-transcript-panel-text-status')).toBeInTheDocument();
     expect(screen.getByTestId('workbench-page-transcript-panel-badge-channel-source')).toBeInTheDocument();
+    expect(screen.getByTestId('workbench-page-transcript-panel-select-mic-device')).toBeInTheDocument();
   });
 
   it('点击洞察卡片的“查看依据”按钮联动高亮对应逐字稿段落', () => {
@@ -222,5 +224,26 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
     expect(
       screen.getByTestId('workbench-page-insights-panel-card-qa_item_1')
     ).toBeInTheDocument();
+  });
+
+  it('支持选择麦克风音频输入设备热切换与 QA 规范合规', async () => {
+    vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([
+      { deviceId: 'mic-device-bt', label: 'AirPods Pro 蓝牙耳机' },
+    ]);
+
+    render(<InMeetingWorkbench />);
+    const micSelect = screen.getByTestId('workbench-page-transcript-panel-select-mic-device') as HTMLSelectElement;
+    expect(micSelect).toBeInTheDocument();
+
+    // 等待设备列表加载落地
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // 切换至蓝牙设备
+    act(() => {
+      fireEvent.change(micSelect, { target: { value: 'mic-device-bt' } });
+    });
+    expect(micSelect.value).toBe('mic-device-bt');
   });
 });

@@ -368,6 +368,15 @@ export const InMeetingWorkbench: React.FC = () => {
   const [asrError, setAsrError] = useState<string>('');
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const [isExtractingInsights, setIsExtractingInsights] = useState(false);
+  const [availableMics, setAvailableMics] = useState<Array<{ deviceId: string; label: string }>>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string>('');
+
+  // 初始化加载音频输入设备列表
+  useEffect(() => {
+    RealAudioCapture.getAvailableMicrophones()
+      .then((mics) => setAvailableMics(mics))
+      .catch(() => {});
+  }, []);
 
   // 提取本场所有参会人名单
   const uniqueSpeakers = useMemo(() => {
@@ -541,6 +550,19 @@ export const InMeetingWorkbench: React.FC = () => {
     [meetingId, processInsightPatch]
   );
 
+  // 手动切换麦克风输入设备
+  const handleSwitchMicrophone = useCallback(async (newDeviceId: string) => {
+    setSelectedMicId(newDeviceId);
+    if (audioCaptureRef.current) {
+      try {
+        await audioCaptureRef.current.switchDevice(newDeviceId || undefined);
+        setMicError('');
+      } catch (err: any) {
+        setMicError(`切换音频设备失败: ${err.message || '麦克风无法访问'}`);
+      }
+    }
+  }, []);
+
   // 监听 status 切换，真实驱动物理麦克风采集与流式 ASR 传输
   useEffect(() => {
     if (status === 'RECORDING') {
@@ -594,9 +616,34 @@ export const InMeetingWorkbench: React.FC = () => {
 
       const audioCapture = new RealAudioCapture({
         sampleRate: 16000,
+        deviceId: selectedMicId || undefined,
         onRmsLevel: (rms) => setRmsLevel(rms),
         onAudioChunk: (chunk) => {
           asrClient.sendPcmChunk(chunk);
+        },
+        onDeviceEnded: () => {
+          // 🎧 当蓝牙耳机关闭或断开连接时，自动自愈切回系统默认麦克风
+          setMicError('🎧 检测到当前音频设备已断开（如蓝牙耳机关闭），已自动切回系统麦克风继续识别');
+          setSelectedMicId('');
+          if (audioCaptureRef.current) {
+            audioCaptureRef.current.switchDevice(undefined).catch((e) => {
+              console.warn('Auto switch to default mic failed:', e);
+            });
+          }
+          if (asrClientRef.current) {
+            asrClientRef.current.connect().catch(() => {});
+          }
+          setTimeout(() => {
+            setMicError('');
+          }, 4000);
+        },
+        onDeviceChange: async () => {
+          try {
+            const list = await RealAudioCapture.getAvailableMicrophones();
+            setAvailableMics(list);
+          } catch (e) {
+            console.warn('Device change enumerate error:', e);
+          }
         },
       });
 
@@ -1065,6 +1112,22 @@ export const InMeetingWorkbench: React.FC = () => {
                   />
                 </div>
               )}
+
+              {/* 麦克风输入设备切换下拉框 */}
+              <select
+                data-testid="workbench-page-transcript-panel-select-mic-device"
+                value={selectedMicId}
+                onChange={(e) => handleSwitchMicrophone(e.target.value)}
+                className="text-[11px] px-2 py-0.5 rounded bg-subtle border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[140px] truncate"
+                title="选择拾音麦克风（支持蓝牙耳机/系统内置麦克风平滑切换）"
+              >
+                <option value="">默认系统麦克风</option>
+                {availableMics.map((mic) => (
+                  <option key={mic.deviceId} value={mic.deviceId}>
+                    {mic.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <input

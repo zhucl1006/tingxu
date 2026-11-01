@@ -130,6 +130,7 @@ export interface MeetingState {
   // 用量与配额
   quotaMinutes: number;
   totalQuotaMinutes: number;
+  initialQuotaSeconds?: number;
   setQuotaMinutes: (minutes: number) => void;
   refreshUserBalance: () => Promise<void>;
 

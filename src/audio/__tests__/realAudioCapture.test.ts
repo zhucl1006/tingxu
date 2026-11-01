@@ -89,4 +89,83 @@ describe('RealAudioCapture 真实麦克风音频采集器测试 (T10)', () => {
     expect(capture.isCapturing()).toBe(false);
     expect(mockTrack.stop).toHaveBeenCalled();
   });
+
+  it('当音频音轨中断 (onended 蓝牙断开) 时应触发回调并支持平滑切回麦克风', async () => {
+    let trackEndedCallback: (() => void) | null = null;
+    const mockTrack = {
+      stop: vi.fn(),
+      set onended(fn: any) {
+        trackEndedCallback = fn;
+      },
+    };
+    const mockStream = {
+      getTracks: () => [mockTrack],
+      getAudioTracks: () => [mockTrack],
+    };
+
+    const getUserMediaMock = vi.fn().mockResolvedValue(mockStream);
+    Object.defineProperty(global.navigator, 'mediaDevices', {
+      value: {
+        getUserMedia: getUserMediaMock,
+        enumerateDevices: vi.fn().mockResolvedValue([
+          { kind: 'audioinput', deviceId: 'mic_default', label: '内置麦克风' },
+          { kind: 'audioinput', deviceId: 'mic_bluetooth', label: 'AirPods 蓝牙麦克风' },
+        ]),
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      configurable: true,
+      writable: true,
+    });
+
+    const mockSource = { connect: vi.fn(), disconnect: vi.fn() };
+    const mockProcessor = { connect: vi.fn(), disconnect: vi.fn(), onaudioprocess: null };
+    class MockAudioContext {
+      public sampleRate = 16000;
+      public createMediaStreamSource = vi.fn().mockReturnValue(mockSource);
+      public createScriptProcessor = vi.fn().mockReturnValue(mockProcessor);
+      public destination = {};
+      public close = vi.fn().mockResolvedValue(undefined);
+    }
+    (global as any).AudioContext = MockAudioContext;
+
+    let deviceEndedCalled = false;
+    const capture = new RealAudioCapture({
+      deviceId: 'mic_bluetooth',
+      onDeviceEnded: () => {
+        deviceEndedCalled = true;
+      },
+    });
+
+    await capture.start();
+    expect(getUserMediaMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        audio: expect.objectContaining({
+          deviceId: { exact: 'mic_bluetooth' },
+        }),
+      })
+    );
+
+    // 模拟关闭蓝牙耳机 -> track 触发 ended 事件
+    expect(trackEndedCallback).toBeDefined();
+    trackEndedCallback!();
+    expect(deviceEndedCalled).toBe(true);
+
+    // 平滑切回默认系统麦克风
+    await capture.switchDevice('mic_default');
+    expect(getUserMediaMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        audio: expect.objectContaining({
+          deviceId: { exact: 'mic_default' },
+        }),
+      })
+    );
+
+    // 测试枚举设备
+    const devices = await RealAudioCapture.getAvailableMicrophones();
+    expect(devices).toHaveLength(2);
+    expect(devices[0].label).toBe('内置麦克风');
+
+    await capture.stop();
+  });
 });

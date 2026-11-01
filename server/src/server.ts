@@ -185,6 +185,37 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
+      // 4.1 扣减/核销会议时长 (POST /v1/billing/deduct)
+      if (req.method === 'POST' && pathname === '/v1/billing/deduct') {
+        const body = JSON.parse(await readRequestBody(req));
+        let userId = body.userId;
+        if (!userId && req.headers.authorization?.startsWith('Bearer ')) {
+          try {
+            const token = req.headers.authorization.slice(7);
+            const decoded = authService.verifyJwt(token);
+            userId = decoded.userId;
+          } catch {
+            // ignore
+          }
+        }
+
+        if (!userId) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ code: 400, message: '缺少必要的用户参数 userId' }));
+          return;
+        }
+
+        const balance = await billingEngine.deductDirect({
+          userId,
+          seconds: Number(body.seconds) || 0,
+          meetingId: body.meetingId,
+        });
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: balance, message: '时长结算扣除成功' }));
+        return;
+      }
+
       // 5. 短信验证码发送 (POST /v1/auth/sms/send)
       if (req.method === 'POST' && pathname === '/v1/auth/sms/send') {
         const body = JSON.parse(await readRequestBody(req));

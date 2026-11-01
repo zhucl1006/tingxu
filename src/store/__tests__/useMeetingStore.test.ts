@@ -178,4 +178,51 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
       global.fetch = originalFetch;
     }
   });
+
+  it('会议进行中随着秒数增加实时动态递减 quotaMinutes，并在结束会议时结算扣减', async () => {
+    const store = useMeetingStore.getState();
+    store.loginUser({
+      userId: 'usr_deduct_test',
+      phone: '13811112222',
+      token: 'jwt_mock_token',
+    });
+    store.setQuotaMinutes(60);
+
+    store.startMeeting('时长扣减验证会议');
+    expect(useMeetingStore.getState().quotaMinutes).toBe(60);
+
+    // 开会进行了 65 秒 (超过 1 分钟)
+    for (let i = 0; i < 65; i++) {
+      useMeetingStore.getState().tickTimer();
+    }
+
+    // 应该动态递减为 58 或 59 分钟 (3600 - 65 = 3535 秒 -> 58 分钟)
+    expect(useMeetingStore.getState().quotaMinutes).toBe(58);
+
+    // 模拟 endMeeting 发起服务端核销
+    let deductPayload: any = null;
+    const originalFetch = global.fetch;
+    global.fetch = async (url: any, init: any) => {
+      if (String(url).includes('/v1/billing/deduct')) {
+        deductPayload = JSON.parse(init.body);
+        return {
+          ok: true,
+          json: async () => ({
+            code: 0,
+            data: { totalAvailableSeconds: 3535, reservedSeconds: 0 },
+          }),
+        } as any;
+      }
+      return { ok: true, json: async () => ({ code: 0, data: {} }) } as any;
+    };
+
+    try {
+      await store.endMeeting();
+      expect(deductPayload).toBeDefined();
+      expect(deductPayload.userId).toBe('usr_deduct_test');
+      expect(deductPayload.seconds).toBe(65);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

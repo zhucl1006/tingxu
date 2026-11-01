@@ -50,6 +50,7 @@ const initialMeetingState = {
   isLoginModalOpen: false,
   quotaMinutes: 0,
   totalQuotaMinutes: 60,
+  initialQuotaSeconds: 0,
   tasks: initialTasks,
   historyMeetings: initialHistoryMeetings,
   activeSummaryMeeting: null as HistoryMeeting | null,
@@ -125,11 +126,14 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   startMeeting: (title = '新会议讨论') => {
+    const currentQuota = get().quotaMinutes || 0;
+    const initialSec = currentQuota * 60;
     set({
       status: 'RECORDING',
       meetingId: `mtg_${Date.now()}`,
       title,
       elapsedSeconds: 0,
+      initialQuotaSeconds: initialSec,
       transcripts: [],
       insights: [],
       highlightedTranscriptId: null,
@@ -370,11 +374,42 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       isGeneratingSummary: false,
       currentRoute: 'summary',
     });
+
+    // 真实向商业控制面结算扣减本次会议消耗的时长
+    const currentUser = get().currentUser;
+    if (currentUser && elapsedSeconds > 0) {
+      try {
+        await fetch('http://localhost:3200/v1/billing/deduct', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${currentUser.token}`,
+          },
+          body: JSON.stringify({
+            userId: currentUser.userId,
+            seconds: elapsedSeconds,
+            meetingId: meetingId || undefined,
+          }),
+        });
+      } catch (err) {
+        console.warn('[MeetingStore] 扣减会议时长网络异常:', err);
+      }
+      get().refreshUserBalance();
+    }
   },
 
   tickTimer: () => {
     if (get().status === 'RECORDING') {
-      set((state) => ({ elapsedSeconds: state.elapsedSeconds + 1 }));
+      const nextElapsed = get().elapsedSeconds + 1;
+      const initialSec = get().initialQuotaSeconds || (get().quotaMinutes * 60);
+      const remainingSec = Math.max(0, initialSec - nextElapsed);
+      const calculatedMinutes = Math.floor(remainingSec / 60);
+
+      set({
+        elapsedSeconds: nextElapsed,
+        initialQuotaSeconds: initialSec,
+        quotaMinutes: calculatedMinutes,
+      });
     }
   },
 
