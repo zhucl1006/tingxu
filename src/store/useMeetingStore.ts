@@ -14,9 +14,52 @@ import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
 
 const patchApplier = new InsightPatchApplier();
 
-const initialHistoryMeetings: HistoryMeeting[] = [];
+// Local-First 本地优先持久化读取与写入方法（严格遵守 Zero-Content 与本地主权规范）
+function loadStoredHistoryMeetings(): HistoryMeeting[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('tingxu_history_meetings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取本地历史会议失败:', e);
+  }
+  return [];
+}
 
-const initialTasks: TaskItem[] = [];
+function saveStoredHistoryMeetings(meetings: HistoryMeeting[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_history_meetings', JSON.stringify(meetings));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化历史会议失败:', e);
+  }
+}
+
+function loadStoredTasks(): TaskItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('tingxu_tasks');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取本地任务失败:', e);
+  }
+  return [];
+}
+
+function saveStoredTasks(tasks: TaskItem[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_tasks', JSON.stringify(tasks));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化任务失败:', e);
+  }
+}
 
 // 本地存储的用户会话恢复（严格杜绝残留的 mock 假数据）
 function loadStoredUser(): UserProfile | null {
@@ -51,8 +94,8 @@ const initialMeetingState = {
   quotaMinutes: 0,
   totalQuotaMinutes: 60,
   initialQuotaSeconds: 0,
-  tasks: initialTasks,
-  historyMeetings: initialHistoryMeetings,
+  tasks: loadStoredTasks(),
+  historyMeetings: loadStoredHistoryMeetings(),
   activeSummaryMeeting: null as HistoryMeeting | null,
   activeTargetSegmentId: null as string | null,
   speakerNames: {} as Record<string, string>,
@@ -119,11 +162,13 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   toggleTask: (id: string) => {
-    set((state) => ({
-      tasks: state.tasks.map((t) =>
+    set((state) => {
+      const newTasks = state.tasks.map((t) =>
         t.id === id ? { ...t, completed: !t.completed } : t
-      ),
-    }));
+      );
+      saveStoredTasks(newTasks);
+      return { tasks: newTasks };
+    });
   },
 
   startMeeting: (title = '新会议讨论') => {
@@ -225,6 +270,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
       const updatedHistory = state.historyMeetings.map((m) => updateMeeting(m));
       const updatedActive = state.activeSummaryMeeting ? updateMeeting(state.activeSummaryMeeting) : null;
+      saveStoredHistoryMeetings(updatedHistory);
 
       return {
         transcripts: updatedTranscripts,
@@ -246,7 +292,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   endMeeting: async () => {
     const { meetingId, title, elapsedSeconds, insights, transcripts, historyMeetings, tasks, gatewayUrl } = get();
 
-    if (!meetingId || elapsedSeconds === 0) {
+    // 只有当没有 meetingId，或者既没有录制秒数也没有任何逐字稿内容时，才视为空会议退出
+    if (!meetingId || (elapsedSeconds === 0 && transcripts.length === 0)) {
       set({ status: 'ENDED', currentRoute: 'home' });
       return;
     }
@@ -405,12 +452,17 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         evidenceSegmentId: i.evidenceSegmentId,
       }));
 
+    const updatedHistory = [newHistory, ...historyMeetings];
+    const updatedTasks = [...newTasks, ...tasks];
+    saveStoredHistoryMeetings(updatedHistory);
+    saveStoredTasks(updatedTasks);
+
     set({
       status: 'ENDED',
       title: finalTitle,
       insights: finalInsights,
-      historyMeetings: [newHistory, ...historyMeetings],
-      tasks: [...newTasks, ...tasks],
+      historyMeetings: updatedHistory,
+      tasks: updatedTasks,
       activeSummaryMeeting: newHistory, // 自动激活总结详情查看
       isGeneratingSummary: false,
       currentRoute: 'summary',
@@ -573,6 +625,31 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       speakerNames: {},
       highlightedTranscriptId: null,
       currentRoute: 'home',
+    });
+  },
+
+  deleteHistoryMeeting: (id: string) => {
+    set((state) => {
+      const newHistory = state.historyMeetings.filter((m) => m.id !== id);
+      const newTasks = state.tasks.filter((t) => t.meetingId !== id);
+      saveStoredHistoryMeetings(newHistory);
+      saveStoredTasks(newTasks);
+      return {
+        historyMeetings: newHistory,
+        tasks: newTasks,
+        activeSummaryMeeting:
+          state.activeSummaryMeeting?.id === id ? null : state.activeSummaryMeeting,
+      };
+    });
+  },
+
+  clearAllHistory: () => {
+    saveStoredHistoryMeetings([]);
+    saveStoredTasks([]);
+    set({
+      historyMeetings: [],
+      tasks: [],
+      activeSummaryMeeting: null,
     });
   },
 }));

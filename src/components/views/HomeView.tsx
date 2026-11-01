@@ -3,7 +3,15 @@ import { useMeetingStore } from '../../store/useMeetingStore';
 import { formatSeconds } from '../../utils/formatTime';
 
 export const HomeView: React.FC = () => {
-  const { startMeeting, setCurrentRoute, historyMeetings, tasks, toggleTask, setActiveSummaryMeeting } = useMeetingStore();
+  const {
+    startMeeting,
+    setCurrentRoute,
+    historyMeetings,
+    tasks,
+    toggleTask,
+    setActiveSummaryMeeting,
+    deleteHistoryMeeting,
+  } = useMeetingStore();
   const [newTitle, setNewTitle] = useState('');
 
   const pendingTasks = tasks.filter((t) => !t.completed);
@@ -126,7 +134,23 @@ export const HomeView: React.FC = () => {
                       <h3 className="text-xs font-bold text-text-primary hover:text-brand-blue transition-colors">
                         {m.title}
                       </h3>
-                      <span className="text-[11px] text-text-tertiary font-mono">{m.date}</span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[11px] text-text-tertiary font-mono">{m.date}</span>
+                        <button
+                          type="button"
+                          data-testid={`home-page-btn-delete-history-${m.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (window.confirm(`确定删除《${m.title}》会议记录吗？删除后本地数据无法恢复。`)) {
+                              deleteHistoryMeeting(m.id);
+                            }
+                          }}
+                          className="text-text-tertiary hover:text-status-danger text-xs px-1 rounded transition-colors"
+                          title="删除此会议归档"
+                        >
+                          🗑
+                        </button>
+                      </div>
                     </div>
 
                     {/* 参会人员 */}

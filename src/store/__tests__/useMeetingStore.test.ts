@@ -277,4 +277,59 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     const speakerMap = useMeetingStore.getState().speakerNames;
     expect(speakerMap['spk_2']).toBe('张总');
   });
+
+  it('Local-First 历史会议与待办持久化落盘，页面刷新后完整恢复不丢失 (TDD)', async () => {
+    const store = useMeetingStore.getState();
+    store.clearAllHistory();
+    store.startMeeting('数据持久化保证会议');
+    store.tickTimer();
+    store.addTranscriptSegment({
+      id: 'seg_persist_1',
+      speaker: '我',
+      channel: 'mic',
+      timestamp: '00:00:01',
+      text: '本地优先，绝不丢数据。',
+    });
+    store.addInsight({
+      id: 'ins_persist_1',
+      type: 'action',
+      title: '落地 LocalStorage 持久化',
+      content: '完成历史会议与待办落盘',
+      timestamp: '00:00:01',
+      evidenceSegmentId: 'seg_persist_1',
+    });
+
+    await store.endMeeting();
+
+    // 1. 验证已序列化保存到 localStorage
+    const savedMeetingsRaw = localStorage.getItem('tingxu_history_meetings');
+    const savedTasksRaw = localStorage.getItem('tingxu_tasks');
+    expect(savedMeetingsRaw).not.toBeNull();
+    expect(savedTasksRaw).not.toBeNull();
+
+    const savedMeetings = JSON.parse(savedMeetingsRaw!);
+    expect(savedMeetings).toHaveLength(1);
+    expect(savedMeetings[0].title).toContain('数据持久化保证会议');
+
+    // 2. 即使 elapsedSeconds 为 0，但有逐字稿内容，也不得被直接丢弃
+    store.startMeeting('零秒短语速记会议');
+    store.addTranscriptSegment({
+      id: 'seg_zero_sec',
+      speaker: '我',
+      channel: 'mic',
+      timestamp: '00:00:00',
+      text: '紧急记录一条关键事实。',
+    });
+    await store.endMeeting();
+
+    const updatedSaved = JSON.parse(localStorage.getItem('tingxu_history_meetings')!);
+    expect(updatedSaved).toHaveLength(2);
+    expect(updatedSaved[0].title).toContain('零秒短语速记会议');
+
+    // 3. 支持删除历史会议并同步更新本地存储
+    store.deleteHistoryMeeting(updatedSaved[0].id);
+    const afterDelete = JSON.parse(localStorage.getItem('tingxu_history_meetings')!);
+    expect(afterDelete).toHaveLength(1);
+    expect(afterDelete[0].title).toContain('数据持久化保证会议');
+  });
 });
