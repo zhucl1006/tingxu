@@ -174,3 +174,77 @@ fn test_speaker_diarization_and_rename_persistence() {
     assert_eq!(speakers[1].display_name, "张架构师");
 }
 
+#[test]
+fn test_speaker_voiceprint_profile_crud_and_matching() {
+    let db = LocalDatabase::memory().expect("Init SQLite");
+
+    let mut emb_zhang = vec![0.0_f32; 192];
+    emb_zhang[0] = 1.0;
+
+    let mut emb_li = vec![0.0_f32; 192];
+    emb_li[42] = 1.0;
+
+    // 1. 注册两条声纹档案（必须携带显式 consent_at > 0）
+    db.upsert_speaker_profile(
+        "vp_zhang",
+        "acc_user_1",
+        "张总",
+        &emb_zhang,
+        "campplus_zh_en_fp16",
+        "1.0",
+        8500,
+        1700002000,
+        1700002000,
+    )
+    .expect("Upsert Zhang profile");
+
+    db.upsert_speaker_profile(
+        "vp_li",
+        "acc_user_1",
+        "李架构师",
+        &emb_li,
+        "campplus_zh_en_fp16",
+        "1.0",
+        9200,
+        1700002100,
+        1700002100,
+    )
+    .expect("Upsert Li profile");
+
+    // 2. 按账号列出声纹档案
+    let profiles = db
+        .list_speaker_profiles("acc_user_1")
+        .expect("List speaker profiles");
+    assert_eq!(profiles.len(), 2);
+    assert_eq!(profiles[0].display_name, "张总");
+    assert_eq!(profiles[1].display_name, "李架构师");
+
+    // 3. 跨会议声纹比对匹配 (1:N)
+    let mut query_vec = vec![0.0_f32; 192];
+    query_vec[42] = 0.98;
+    query_vec[43] = 0.15;
+    let matched = db
+        .match_speaker_profile("acc_user_1", &query_vec, 0.72, 0.06)
+        .expect("Match profile")
+        .expect("Should match Li");
+    assert_eq!(matched.profile_id, "vp_li");
+    assert_eq!(matched.display_name, "李架构师");
+    assert!(matched.score > 0.95);
+    assert!(matched.margin > 0.90);
+
+    // 4. 删除单条声纹档案后不可再匹配 (AC-05)
+    db.delete_speaker_profile("acc_user_1", "vp_li")
+        .expect("Delete Li profile");
+    let after_del = db
+        .match_speaker_profile("acc_user_1", &query_vec, 0.72, 0.06)
+        .expect("Match after delete");
+    assert!(after_del.is_none());
+
+    // 5. 清空账号全部声纹档案
+    db.clear_speaker_profiles("acc_user_1")
+        .expect("Clear all profiles");
+    let remaining = db.list_speaker_profiles("acc_user_1").unwrap();
+    assert_eq!(remaining.len(), 0);
+}
+
+

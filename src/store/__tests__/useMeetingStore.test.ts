@@ -332,4 +332,46 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     expect(afterDelete).toHaveLength(1);
     expect(afterDelete[0].title).toContain('数据持久化保证会议');
   });
+
+  it('支持本地声纹档案显式授权注册、持久化恢复、重命名、单条删除与全部清空 (T09)', () => {
+    const store = useMeetingStore.getState();
+    store.clearSpeakerProfiles();
+
+    const dummyEmbedding = new Array(192).fill(0);
+    dummyEmbedding[0] = 1.0;
+
+    // 1. 未显式授权 (consented = false) 严禁写入声纹档案 (AC-05)
+    const unconsented = store.registerSpeakerProfile({
+      displayName: '未授权用户',
+      embedding: dummyEmbedding,
+      sampleDurationMs: 5000,
+      consented: false,
+    });
+    expect(unconsented).toBeNull();
+    expect(useMeetingStore.getState().speakerProfiles).toHaveLength(0);
+
+    // 2. 显式授权 (consented = true) 成功保存声纹档案并落盘至 localStorage
+    const profile1 = store.registerSpeakerProfile({
+      displayName: '张总',
+      embedding: dummyEmbedding,
+      sampleDurationMs: 8600,
+      consented: true,
+    });
+    expect(profile1).not.toBeNull();
+    expect(profile1?.displayName).toBe('张总');
+    expect(useMeetingStore.getState().speakerProfiles).toHaveLength(1);
+    expect(useMeetingStore.getState().voiceprintConsentAt).toBeGreaterThan(0);
+
+    const savedRaw = localStorage.getItem('tingxu_speaker_profiles');
+    expect(savedRaw).not.toBeNull();
+    expect(JSON.parse(savedRaw!)).toHaveLength(1);
+
+    // 3. 支持重命名已保存的声纹档案
+    store.renameSpeakerProfile(profile1!.profileId, '张董事长');
+    expect(useMeetingStore.getState().speakerProfiles[0].displayName).toBe('张董事长');
+
+    // 4. 支持单条删除与全部清空
+    store.deleteSpeakerProfile(profile1!.profileId);
+    expect(useMeetingStore.getState().speakerProfiles).toHaveLength(0);
+  });
 });

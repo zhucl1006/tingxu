@@ -113,4 +113,88 @@ describe('OnlineSpeakerClusterer 会内在线声纹聚类测试 (T06)', () => {
     expect(res1.speakerId).toBe('spk_2');
     expect(res1.displayName).toBe('发言人 2');
   });
+
+  it('支持跨会议本地声纹库比对：单句首次命中标记为待确认候选（可能是 X），连续 2 句命中后自动确认为真实姓名 (T10)', () => {
+    const clusterer = new OnlineSpeakerClusterer({
+      similarityThreshold: 0.65,
+      profileMatchThreshold: 0.72,
+      profileMarginThreshold: 0.06,
+      requiredConsecutiveMatches: 2,
+    });
+
+    const knownProfiles = [
+      {
+        profileId: 'vp_zhang',
+        displayName: '张总',
+        embedding: makeBasisEmbedding(15, 0.01),
+      },
+      {
+        profileId: 'vp_wang',
+        displayName: '王总监',
+        embedding: makeBasisEmbedding(110, 0.01),
+      },
+    ];
+
+    // 1. 新会议第 1 句：命中张总声纹（top1 > 0.72, margin > 0.06），但仅第 1 句 -> 保持 "发言人 1" 并输出 tentativeProfileName = "张总"
+    const s1 = clusterer.assign({
+      embedding: makeBasisEmbedding(15, 0.03),
+      durationMs: 2200,
+      knownProfiles,
+    });
+    expect(s1.speakerId).toBe('spk_1');
+    expect(s1.displayName).toBe('发言人 1');
+    expect(s1.tentativeProfileId).toBe('vp_zhang');
+    expect(s1.tentativeProfileName).toBe('张总');
+    expect(s1.matchedProfileId).toBeNull();
+
+    // 2. 同一说话人连续第 2 句再次命中张总声纹 -> 自动升级确认为 "张总"！
+    const s2 = clusterer.assign({
+      embedding: makeBasisEmbedding(15, 0.04),
+      durationMs: 2400,
+      knownProfiles,
+    });
+    expect(s2.speakerId).toBe('spk_1');
+    expect(s2.displayName).toBe('张总');
+    expect(s2.matchedProfileId).toBe('vp_zhang');
+    expect(s2.tentativeProfileId).toBeNull();
+    expect(s2.autoMatchedJustNow).toBe(true);
+  });
+
+  it('当用户手动拒绝声纹候选（rejectProfileMatch）后，后续同声纹句子不再自动匹配该档案 (T10)', () => {
+    const clusterer = new OnlineSpeakerClusterer({
+      similarityThreshold: 0.65,
+      profileMatchThreshold: 0.72,
+      profileMarginThreshold: 0.06,
+      requiredConsecutiveMatches: 2,
+    });
+
+    const knownProfiles = [
+      {
+        profileId: 'vp_li',
+        displayName: '李工',
+        embedding: makeBasisEmbedding(30, 0.01),
+      },
+    ];
+
+    // 第 1 句产生候选提示
+    const s1 = clusterer.assign({
+      embedding: makeBasisEmbedding(30, 0.02),
+      durationMs: 2000,
+      knownProfiles,
+    });
+    expect(s1.tentativeProfileId).toBe('vp_li');
+
+    // 用户点击“不是李工”
+    clusterer.rejectProfileMatch('spk_1', 'vp_li');
+
+    // 第 2 句即便声纹接近，也绝不自动改成李工
+    const s2 = clusterer.assign({
+      embedding: makeBasisEmbedding(30, 0.02),
+      durationMs: 2100,
+      knownProfiles,
+    });
+    expect(s2.displayName).toBe('发言人 1');
+    expect(s2.matchedProfileId).toBeNull();
+    expect(s2.tentativeProfileId).toBeNull();
+  });
 });

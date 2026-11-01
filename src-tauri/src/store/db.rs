@@ -1,11 +1,50 @@
 use crate::error::TingxuError;
 use crate::media::device::TrackType;
-use crate::speaker::MeetingSpeakerRecord;
+use crate::speaker::{cosine_similarity, l2_normalize, MeetingSpeakerRecord, SpeakerMatchHit, SpeakerProfileMetadata};
 use crate::store::fts::{AudioSyncInfo, SearchResult};
 use rusqlite::{params, Connection};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+
+fn derive_embedding_keystream(account_id: &str, profile_id: &str, byte_len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(byte_len);
+    let mut counter: u32 = 0;
+    while out.len() < byte_len {
+        let mut hasher = Sha256::new();
+        hasher.update(b"tingxu_local_voiceprint_v1:");
+        hasher.update(account_id.as_bytes());
+        hasher.update(b":");
+        hasher.update(profile_id.as_bytes());
+        hasher.update(b":");
+        hasher.update(counter.to_le_bytes());
+        let digest = hasher.finalize();
+        out.extend_from_slice(&digest);
+        counter = counter.wrapping_add(1);
+    }
+    out.truncate(byte_len);
+    out
+}
+
+fn encode_encrypted_embedding(account_id: &str, profile_id: &str, embedding: &[f32]) -> Vec<u8> {
+    let mut raw = Vec::with_capacity(embedding.len() * 4);
+    for &val in embedding {
+        raw.extend_from_slice(&val.to_le_bytes());
+    }
+    let mask = derive_embedding_keystream(account_id, profile_id, raw.len());
+    raw.iter().zip(mask.iter()).map(|(b, m)| b ^ m).collect()
+}
+
+fn decode_encrypted_embedding(account_id: &str, profile_id: &str, encrypted: &[u8]) -> Vec<f32> {
+    let mask = derive_embedding_keystream(account_id, profile_id, encrypted.len());
+    let plain: Vec<u8> = encrypted.iter().zip(mask.iter()).map(|(b, m)| b ^ m).collect();
+    let mut out = Vec::with_capacity(plain.len() / 4);
+    for chunk in plain.chunks_exact(4) {
+        out.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    out
+}
 
 pub struct LocalDatabase {
     conn: Arc<Mutex<Connection>>,
@@ -80,12 +119,27 @@ impl LocalDatabase {
             CREATE TABLE IF NOT EXISTS meeting_speakers (
                 meeting_id TEXT NOT NULL,
                 local_speaker_id TEXT NOT NULL,
+                profile_id TEXT,
                 display_name TEXT NOT NULL,
                 color_index INTEGER NOT NULL,
                 confidence REAL,
                 first_seen_ms INTEGER NOT NULL,
                 PRIMARY KEY (meeting_id, local_speaker_id),
                 FOREIGN KEY(meeting_id) REFERENCES meetings(local_id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS speaker_profiles (
+                profile_id TEXT PRIMARY KEY,
+                account_id TEXT NOT NULL,
+                display_name TEXT NOT NULL,
+                embedding BLOB NOT NULL,
+                embedding_dim INTEGER NOT NULL,
+                model_id TEXT NOT NULL,
+                model_version TEXT NOT NULL,
+                sample_duration_ms INTEGER NOT NULL,
+                consent_at INTEGER NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_matched_at INTEGER
             );
 
             CREATE VIRTUAL TABLE IF NOT EXISTS transcript_fts USING fts5(
@@ -288,6 +342,180 @@ impl LocalDatabase {
             list.push(item);
         }
         Ok(list)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn upsert_speaker_profile(
+        &self,
+        profile_id: &str,
+        account_id: &str,
+        display_name: &str,
+        embedding: &[f32],
+        model_id: &str,
+        model_version: &str,
+        sample_duration_ms: i64,
+        consent_at: i64,
+        created_at: i64,
+    ) -> Result<(), TingxuError> {
+        if consent_at <= 0 {
+            return Err(TingxuError::permission_denied("未获得用户声纹记录授权，禁止保存声纹档案"));
+        }
+        if embedding.is_empty() {
+            return Err(TingxuError::slice_corrupted("声纹向量为空，无法保存声纹档案"));
+        }
+
+        let normalized = l2_normalize(embedding);
+        let encrypted_blob = encode_encrypted_embedding(account_id, profile_id, &normalized);
+        let dim = normalized.len() as i32;
+
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        conn.execute(
+            "INSERT INTO speaker_profiles
+             (profile_id, account_id, display_name, embedding, embedding_dim, model_id, model_version, sample_duration_ms, consent_at, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             ON CONFLICT(profile_id) DO UPDATE SET
+               display_name = excluded.display_name,
+               embedding = excluded.embedding,
+               embedding_dim = excluded.embedding_dim,
+               sample_duration_ms = excluded.sample_duration_ms,
+               consent_at = excluded.consent_at",
+            params![
+                profile_id,
+                account_id,
+                display_name,
+                encrypted_blob,
+                dim,
+                model_id,
+                model_version,
+                sample_duration_ms,
+                consent_at,
+                created_at
+            ],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn list_speaker_profiles(&self, account_id: &str) -> Result<Vec<SpeakerProfileMetadata>, TingxuError> {
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT profile_id, account_id, display_name, embedding_dim, model_id, model_version, sample_duration_ms, consent_at, created_at, last_matched_at
+                 FROM speaker_profiles
+                 WHERE account_id = ?1
+                 ORDER BY created_at ASC",
+            )
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![account_id], |row| {
+                Ok(SpeakerProfileMetadata {
+                    profile_id: row.get(0)?,
+                    account_id: row.get(1)?,
+                    display_name: row.get(2)?,
+                    embedding_dim: row.get(3)?,
+                    model_id: row.get(4)?,
+                    model_version: row.get(5)?,
+                    sample_duration_ms: row.get(6)?,
+                    consent_at: row.get(7)?,
+                    created_at: row.get(8)?,
+                    last_matched_at: row.get(9)?,
+                })
+            })
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        let mut list = Vec::new();
+        for item in rows.flatten() {
+            list.push(item);
+        }
+        Ok(list)
+    }
+
+    pub fn delete_speaker_profile(&self, account_id: &str, profile_id: &str) -> Result<(), TingxuError> {
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM speaker_profiles WHERE account_id = ?1 AND profile_id = ?2",
+            params![account_id, profile_id],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn clear_speaker_profiles(&self, account_id: &str) -> Result<(), TingxuError> {
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        conn.execute(
+            "DELETE FROM speaker_profiles WHERE account_id = ?1",
+            params![account_id],
+        )
+        .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn match_speaker_profile(
+        &self,
+        account_id: &str,
+        query_embedding: &[f32],
+        min_score: f32,
+        min_margin: f32,
+    ) -> Result<Option<SpeakerMatchHit>, TingxuError> {
+        if query_embedding.is_empty() {
+            return Ok(None);
+        }
+        let query_norm = l2_normalize(query_embedding);
+        let conn = self.conn.lock().map_err(|e| TingxuError::disk_io(e.to_string()))?;
+        let mut stmt = conn
+            .prepare(
+                "SELECT profile_id, display_name, embedding
+                 FROM speaker_profiles
+                 WHERE account_id = ?1",
+            )
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        let rows = stmt
+            .query_map(params![account_id], |row| {
+                let profile_id: String = row.get(0)?;
+                let display_name: String = row.get(1)?;
+                let encrypted: Vec<u8> = row.get(2)?;
+                Ok((profile_id, display_name, encrypted))
+            })
+            .map_err(|e| TingxuError::disk_io(e.to_string()))?;
+
+        let mut best: Option<(String, String, f32)> = None;
+        let mut second_best_score: f32 = 0.0;
+
+        for item in rows.flatten() {
+            let (profile_id, display_name, encrypted) = item;
+            let vec = decode_encrypted_embedding(account_id, &profile_id, &encrypted);
+            let sim = cosine_similarity(&query_norm, &vec);
+            match &best {
+                None => {
+                    best = Some((profile_id, display_name, sim));
+                }
+                Some((_, _, best_sim)) if sim > *best_sim => {
+                    second_best_score = *best_sim;
+                    best = Some((profile_id, display_name, sim));
+                }
+                _ => {
+                    if sim > second_best_score {
+                        second_best_score = sim;
+                    }
+                }
+            }
+        }
+
+        if let Some((profile_id, display_name, top1)) = best {
+            let margin = top1 - second_best_score.max(0.0);
+            if top1 >= min_score && margin >= min_margin {
+                return Ok(Some(SpeakerMatchHit {
+                    profile_id,
+                    display_name,
+                    score: top1 as f64,
+                    margin: margin as f64,
+                }));
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn search_transcripts(

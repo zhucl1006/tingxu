@@ -33,6 +33,9 @@ export interface TranscriptSegment {
   speakerId?: string;
   speakerConfidence?: number;
   speakerColorIndex?: number;
+  matchedProfileId?: string | null;
+  tentativeProfileId?: string | null;
+  tentativeProfileName?: string | null;
   channel: 'mic' | 'system';
   timestamp: string;
   timestampSeconds?: number;
@@ -40,6 +43,27 @@ export interface TranscriptSegment {
   endTimeMs?: number;
   text: string;
   isStreaming?: boolean;
+}
+
+export interface SpeakerVoiceprintProfile {
+  profileId: string;
+  accountId: string;
+  displayName: string;
+  embedding: number[];
+  embeddingDim: number;
+  modelId: string;
+  modelVersion: string;
+  sampleDurationMs: number;
+  consentAt: number;
+  createdAt: number;
+  lastMatchedAt?: number;
+}
+
+export interface RegisterSpeakerProfileInput {
+  displayName: string;
+  embedding: number[];
+  sampleDurationMs?: number;
+  consented?: boolean;
 }
 
 export interface UserProfile {
@@ -148,6 +172,15 @@ export interface MeetingState {
   setActiveSummaryMeeting: (meeting: HistoryMeeting | null, targetSegmentId?: string) => void;
   speakerNames: Record<string, string>;
   renameSpeaker: (speakerIdOrOldName: string, newName: string) => void;
+  speakerProfiles: SpeakerVoiceprintProfile[];
+  voiceprintConsentAt: number | null;
+  grantVoiceprintConsent: () => number;
+  registerSpeakerProfile: (input: RegisterSpeakerProfileInput) => SpeakerVoiceprintProfile | null;
+  renameSpeakerProfile: (profileId: string, newName: string) => void;
+  deleteSpeakerProfile: (profileId: string) => void;
+  clearSpeakerProfiles: () => void;
+  markProfileMatched: (profileId: string) => void;
+  dismissTentativeMatch: (speakerId: string, profileId: string) => void;
   isGeneratingSummary: boolean;
   setIsGeneratingSummary: (generating: boolean) => void;
   updateMeetingTitle: (newTitle: string) => void;

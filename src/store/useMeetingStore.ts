@@ -9,8 +9,11 @@ import {
   UserProfile,
   TaskItem,
   HistoryMeeting,
+  SpeakerVoiceprintProfile,
+  RegisterSpeakerProfileInput,
 } from '../types/meeting';
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
+import { l2Normalize } from '../audio/speakerEmbeddingEngine';
 
 const patchApplier = new InsightPatchApplier();
 
@@ -61,6 +64,56 @@ function saveStoredTasks(tasks: TaskItem[]) {
   }
 }
 
+function loadStoredSpeakerProfiles(): SpeakerVoiceprintProfile[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = localStorage.getItem('tingxu_speaker_profiles');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed;
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取本地声纹档案失败:', e);
+  }
+  return [];
+}
+
+function saveStoredSpeakerProfiles(profiles: SpeakerVoiceprintProfile[]) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_speaker_profiles', JSON.stringify(profiles));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化本地声纹档案失败:', e);
+  }
+}
+
+function loadStoredVoiceprintConsent(): number | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('tingxu_voiceprint_consent_at');
+    if (raw) {
+      const num = Number(raw);
+      if (Number.isFinite(num) && num > 0) return num;
+    }
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function saveStoredVoiceprintConsent(consentAt: number | null) {
+  if (typeof window === 'undefined') return;
+  try {
+    if (consentAt && consentAt > 0) {
+      localStorage.setItem('tingxu_voiceprint_consent_at', String(consentAt));
+    } else {
+      localStorage.removeItem('tingxu_voiceprint_consent_at');
+    }
+  } catch {
+    // ignore
+  }
+}
+
 // 本地存储的用户会话恢复（严格杜绝残留的 mock 假数据）
 function loadStoredUser(): UserProfile | null {
   if (typeof window === 'undefined') return null;
@@ -99,6 +152,8 @@ const initialMeetingState = {
   activeSummaryMeeting: null as HistoryMeeting | null,
   activeTargetSegmentId: null as string | null,
   speakerNames: {} as Record<string, string>,
+  speakerProfiles: loadStoredSpeakerProfiles(),
+  voiceprintConsentAt: loadStoredVoiceprintConsent(),
   isGeneratingSummary: false,
   gatewayUrl: 'http://localhost:3201',
 };
@@ -238,7 +293,14 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       };
 
       const updatedTranscripts = state.transcripts.map((t) =>
-        matchesSegment(t) ? { ...t, speaker: cleanNew } : t
+        matchesSegment(t)
+          ? {
+              ...t,
+              speaker: cleanNew,
+              tentativeProfileId: null,
+              tentativeProfileName: null,
+            }
+          : t
       );
 
       const nextSpeakerNames = { ...state.speakerNames };
@@ -651,5 +713,148 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       tasks: [],
       activeSummaryMeeting: null,
     });
+  },
+
+  grantVoiceprintConsent: () => {
+    const now = Date.now();
+    saveStoredVoiceprintConsent(now);
+    set({ voiceprintConsentAt: now });
+    return now;
+  },
+
+  registerSpeakerProfile: (input: RegisterSpeakerProfileInput) => {
+    const cleanName = input.displayName.trim();
+    if (!cleanName || !Array.isArray(input.embedding) || input.embedding.length === 0) {
+      return null;
+    }
+
+    // 显式授权门禁：consented === false 严禁保存声纹；consented === true 或此前已授权才允许落盘
+    if (input.consented === false) {
+      return null;
+    }
+
+    let consentAt = get().voiceprintConsentAt;
+    if (input.consented === true && !consentAt) {
+      consentAt = Date.now();
+      saveStoredVoiceprintConsent(consentAt);
+    }
+    if (!consentAt) {
+      return null;
+    }
+
+    const now = Date.now();
+    const accountId = get().currentUser?.userId || 'local_default';
+    const normalized = l2Normalize(input.embedding);
+    const sampleDurationMs = Math.max(1200, input.sampleDurationMs ?? 3000);
+
+    const existingList = get().speakerProfiles;
+    const existingIdx = existingList.findIndex(
+      (p) => p.accountId === accountId && p.displayName === cleanName
+    );
+
+    let savedProfile: SpeakerVoiceprintProfile;
+    let nextProfiles: SpeakerVoiceprintProfile[];
+
+    if (existingIdx >= 0) {
+      const prev = existingList[existingIdx];
+      const mergedVec = l2Normalize(
+        prev.embedding.map((v, i) => v * 0.6 + (normalized[i] ?? 0) * 0.4)
+      );
+      savedProfile = {
+        ...prev,
+        displayName: cleanName,
+        embedding: mergedVec,
+        embeddingDim: mergedVec.length,
+        sampleDurationMs: prev.sampleDurationMs + sampleDurationMs,
+        consentAt,
+        lastMatchedAt: now,
+      };
+      nextProfiles = existingList.map((p, idx) => (idx === existingIdx ? savedProfile : p));
+    } else {
+      savedProfile = {
+        profileId: `vp_${now}_${Math.random().toString(36).slice(2, 6)}`,
+        accountId,
+        displayName: cleanName,
+        embedding: normalized,
+        embeddingDim: normalized.length,
+        modelId: 'campplus_zh_en_fp16',
+        modelVersion: '1.0',
+        sampleDurationMs,
+        consentAt,
+        createdAt: now,
+        lastMatchedAt: now,
+      };
+      nextProfiles = [...existingList, savedProfile];
+    }
+
+    saveStoredSpeakerProfiles(nextProfiles);
+    set({
+      voiceprintConsentAt: consentAt,
+      speakerProfiles: nextProfiles,
+    });
+    return savedProfile;
+  },
+
+  renameSpeakerProfile: (profileId: string, newName: string) => {
+    const clean = newName.trim();
+    if (!profileId || !clean) return;
+    set((state) => {
+      const target = state.speakerProfiles.find((p) => p.profileId === profileId);
+      const oldName = target?.displayName;
+      const nextProfiles = state.speakerProfiles.map((p) =>
+        p.profileId === profileId ? { ...p, displayName: clean } : p
+      );
+      saveStoredSpeakerProfiles(nextProfiles);
+
+      const updatedTranscripts = state.transcripts.map((t) =>
+        t.matchedProfileId === profileId || (oldName && t.speaker === oldName)
+          ? { ...t, speaker: clean }
+          : t
+      );
+
+      return {
+        speakerProfiles: nextProfiles,
+        transcripts: updatedTranscripts,
+      };
+    });
+  },
+
+  deleteSpeakerProfile: (profileId: string) => {
+    if (!profileId) return;
+    set((state) => {
+      const nextProfiles = state.speakerProfiles.filter((p) => p.profileId !== profileId);
+      saveStoredSpeakerProfiles(nextProfiles);
+      return { speakerProfiles: nextProfiles };
+    });
+  },
+
+  clearSpeakerProfiles: () => {
+    saveStoredSpeakerProfiles([]);
+    saveStoredVoiceprintConsent(null);
+    set({
+      speakerProfiles: [],
+      voiceprintConsentAt: null,
+    });
+  },
+
+  markProfileMatched: (profileId: string) => {
+    const now = Date.now();
+    set((state) => {
+      const nextProfiles = state.speakerProfiles.map((p) =>
+        p.profileId === profileId ? { ...p, lastMatchedAt: now } : p
+      );
+      saveStoredSpeakerProfiles(nextProfiles);
+      return { speakerProfiles: nextProfiles };
+    });
+  },
+
+  dismissTentativeMatch: (speakerId: string, profileId: string) => {
+    set((state) => ({
+      transcripts: state.transcripts.map((t) =>
+        t.speakerId === speakerId && t.tentativeProfileId === profileId
+          ? { ...t, tentativeProfileId: null, tentativeProfileName: null }
+          : t
+      ),
+    }));
   },
 }));

@@ -14,6 +14,28 @@ pub struct MeetingSpeakerRecord {
     pub first_seen_ms: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SpeakerProfileMetadata {
+    pub profile_id: String,
+    pub account_id: String,
+    pub display_name: String,
+    pub embedding_dim: i32,
+    pub model_id: String,
+    pub model_version: String,
+    pub sample_duration_ms: i64,
+    pub consent_at: i64,
+    pub created_at: i64,
+    pub last_matched_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SpeakerMatchHit {
+    pub profile_id: String,
+    pub display_name: String,
+    pub score: f64,
+    pub margin: f64,
+}
+
 fn hz_to_mel(hz: f32) -> f32 {
     2595.0 * (1.0 + hz / 700.0).log10()
 }
