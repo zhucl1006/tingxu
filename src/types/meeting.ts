@@ -1,8 +1,8 @@
 export type MeetingStatus = 'IDLE' | 'RECORDING' | 'PAUSED' | 'ENDED';
 
-export type InsightType = 'decision' | 'action' | 'risk' | 'fact';
+export type InsightType = 'decision' | 'action' | 'risk' | 'fact' | 'qa';
 
-export type NavRoute = 'home' | 'record' | 'tasks' | 'search' | 'billing' | 'settings';
+export type NavRoute = 'home' | 'record' | 'tasks' | 'search' | 'billing' | 'settings' | 'summary';
 
 export interface RevisionProposal {
   id: string;
@@ -17,11 +17,14 @@ export interface InsightCard {
   type: InsightType;
   title: string;
   content: string;
+  question?: string;
   timestamp: string;
   evidenceSegmentId: string;
   isConfirmed: boolean;
   isEdited: boolean;
   pendingRevision?: RevisionProposal;
+  assignee?: string;
+  dueDate?: string;
 }
 
 export interface TranscriptSegment {
@@ -44,11 +47,48 @@ export interface UserProfile {
 export interface TaskItem {
   id: string;
   title: string;
+  meetingId?: string;
   meetingTitle: string;
   assignee: string;
   completed: boolean;
   createdAt: string;
   evidenceSegmentId?: string;
+}
+
+export interface SummaryDecisionItem {
+  title: string;
+  content: string;
+  evidenceQuote?: string;
+  evidenceSegmentId?: string;
+}
+
+export interface SummaryActionItem {
+  title: string;
+  assignee?: string;
+  dueDate?: string;
+  evidenceQuote?: string;
+  evidenceSegmentId?: string;
+}
+
+export interface SummaryRiskItem {
+  title: string;
+  content: string;
+  evidenceQuote?: string;
+}
+
+export interface SummaryFactItem {
+  title: string;
+  content: string;
+  evidenceQuote?: string;
+}
+
+export interface MeetingStructuredSummary {
+  suggestedTitle: string;
+  overview: string;
+  decisions: SummaryDecisionItem[];
+  actions: SummaryActionItem[];
+  risks: SummaryRiskItem[];
+  facts: SummaryFactItem[];
 }
 
 export interface HistoryMeeting {
@@ -59,6 +99,11 @@ export interface HistoryMeeting {
   summary: string;
   decisionsCount: number;
   tasksCount: number;
+  speakers?: string[];
+  // 完整纪要与四维总结资产
+  structuredSummary?: MeetingStructuredSummary;
+  insights?: InsightCard[];
+  transcripts?: TranscriptSegment[];
 }
 
 export interface MeetingState {
@@ -86,11 +131,19 @@ export interface MeetingState {
   quotaMinutes: number;
   totalQuotaMinutes: number;
   setQuotaMinutes: (minutes: number) => void;
+  refreshUserBalance: () => Promise<void>;
 
   // 待办与历史
   tasks: TaskItem[];
   toggleTask: (id: string) => void;
   historyMeetings: HistoryMeeting[];
+  activeSummaryMeeting: HistoryMeeting | null;
+  activeTargetSegmentId?: string | null;
+  setActiveSummaryMeeting: (meeting: HistoryMeeting | null, targetSegmentId?: string) => void;
+  renameSpeaker: (oldName: string, newName: string) => void;
+  isGeneratingSummary: boolean;
+  setIsGeneratingSummary: (generating: boolean) => void;
+  updateMeetingTitle: (newTitle: string) => void;
   
   // 网关地址
   gatewayUrl: string;
@@ -104,6 +157,7 @@ export interface MeetingState {
   tickTimer: () => void;
   addTranscriptSegment: (segment: TranscriptSegment) => void;
   addInsight: (insight: Omit<InsightCard, 'isConfirmed' | 'isEdited'>) => void;
+  applyInsightPatch: (patch: any) => void;
   confirmInsight: (id: string) => void;
   editInsight: (id: string, newContent: string) => void;
   proposeInsightRevision: (id: string, proposal: RevisionProposal) => void;

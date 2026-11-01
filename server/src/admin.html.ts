@@ -530,29 +530,96 @@ export function renderAdminDashboardHtml(): string {
 
     <!-- Tab 1: 用户与额度 -->
     <div id="tab-users" class="panel" style="display:none;">
-      <div class="panel-header">
+      <div class="panel-header" style="margin-bottom:16px;">
         <div>
           <div class="panel-title">用户时长权益资产表</div>
           <div style="font-size:12px; color:var(--text-sub); margin-top:2px;">
             严格遵循 Zero-Content 隐私红线：手机号脱敏掩码，绝无会议正文与录音文件
           </div>
         </div>
+        <div style="display:flex; gap:10px; align-items:center;">
+          <button class="btn btn-outline" onclick="loadUsers(currentUserPage)">🔄 刷新数据</button>
+        </div>
+      </div>
+
+      <!-- 手机号快速定位与过滤栏 -->
+      <div style="display:flex; justify-content:space-between; align-items:center; background:#0d1322; border:1px solid var(--card-border); border-radius:8px; padding:12px 16px; margin-bottom:16px; gap:12px; flex-wrap:wrap;">
+        <div style="display:flex; align-items:center; gap:8px; flex:1; max-width:480px;">
+          <input 
+            type="text" 
+            id="admin-users-search-input" 
+            data-testid="admin-users-input-search-phone" 
+            placeholder="输入手机号快速定位用户（支持完整手机号或前缀/后缀）..." 
+            style="flex:1; background:#1f2937; border:1px solid var(--card-border); border-radius:6px; padding:8px 12px; color:var(--text-main); font-size:13px;"
+            onkeydown="if(event.key==='Enter') doSearchUsers()"
+          >
+          <button class="btn btn-primary" data-testid="admin-users-btn-search" onclick="doSearchUsers()">🔍 搜索</button>
+          <button class="btn btn-outline" data-testid="admin-users-btn-reset" onclick="resetSearchUsers()">重置</button>
+        </div>
+        <div id="users-search-status-tip" style="font-size:12px; color:var(--text-sub);"></div>
       </div>
 
       <table>
         <thead>
           <tr>
-            <th>用户标识</th>
-            <th>脱敏手机号</th>
+            <th style="width:180px;">用户标识</th>
+            <th style="width:160px;">脱敏手机号</th>
+            <th style="width:200px;">剩余可用时长</th>
+            <th style="width:140px;">预占冻结时长</th>
             <th>注册时间</th>
           </tr>
         </thead>
         <tbody id="user-table-body">
           <tr class="empty-state-row">
-            <td colspan="3">暂无注册用户，客户端用户首次手机短信登录后将在此展示（已脱敏）。</td>
+            <td colspan="5">暂无注册用户，客户端用户首次手机短信登录后将在此展示（已脱敏）。</td>
           </tr>
         </tbody>
       </table>
+
+      <!-- 分页控制栏 -->
+      <div 
+        id="admin-users-pagination-bar" 
+        data-testid="admin-users-pagination-bar" 
+        style="display:flex; justify-content:space-between; align-items:center; margin-top:16px; padding-top:16px; border-top:1px solid var(--card-border); font-size:13px; color:var(--text-sub);"
+      >
+        <div data-testid="admin-users-pagination-info" id="users-pagination-info">
+          共 0 位用户，第 1 / 1 页
+        </div>
+        <div style="display:flex; align-items:center; gap:10px;">
+          <div style="display:flex; align-items:center; gap:6px;">
+            <span>每页:</span>
+            <select 
+              id="admin-users-page-size-select" 
+              data-testid="admin-users-select-page-size" 
+              style="background:#1f2937; border:1px solid var(--card-border); border-radius:6px; color:var(--text-main); padding:4px 8px; font-size:12px;"
+              onchange="changeUsersPageSize(this.value)"
+            >
+              <option value="10">10 条/页</option>
+              <option value="20">20 条/页</option>
+              <option value="50">50 条/页</option>
+            </select>
+          </div>
+          <button 
+            class="btn btn-outline" 
+            id="admin-users-btn-prev" 
+            data-testid="admin-users-btn-prev-page" 
+            onclick="goUsersPage(currentUserPage - 1)"
+          >
+            上一页
+          </button>
+          <span id="users-current-page-badge" style="padding:4px 10px; background:rgba(255,255,255,0.06); border-radius:6px; font-weight:600; color:var(--text-main);">
+            1
+          </span>
+          <button 
+            class="btn btn-outline" 
+            id="admin-users-btn-next" 
+            data-testid="admin-users-btn-next-page" 
+            onclick="goUsersPage(currentUserPage + 1)"
+          >
+            下一页
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Tab 2: 补偿时长审批流 -->
@@ -960,22 +1027,130 @@ export function renderAdminDashboardHtml(): string {
       }
     }
 
-    async function loadUsers() {
+    let currentUserPage = 1;
+    let currentUserPageSize = 10;
+    let currentUserSearch = '';
+    let totalUsersCount = 0;
+    let totalUsersPages = 1;
+
+    function formatDuration(sec) {
+      const s = Number(sec) || 0;
+      if (s <= 0) return '0 分钟';
+      const mins = Math.floor(s / 60);
+      const remainSec = s % 60;
+      if (mins < 60) {
+        return mins + ' 分钟' + (remainSec > 0 ? ' ' + remainSec + ' 秒' : '');
+      }
+      const hours = Math.floor(mins / 60);
+      const remMins = mins % 60;
+      return hours + ' 小时' + (remMins > 0 ? ' ' + remMins + ' 分钟' : '');
+    }
+
+    function doSearchUsers() {
+      const val = document.getElementById('admin-users-search-input').value.trim();
+      currentUserSearch = val;
+      const tip = document.getElementById('users-search-status-tip');
+      if (val) {
+        tip.textContent = '当前定位条件：' + val;
+      } else {
+        tip.textContent = '';
+      }
+      loadUsers(1);
+    }
+
+    function resetSearchUsers() {
+      document.getElementById('admin-users-search-input').value = '';
+      document.getElementById('users-search-status-tip').textContent = '';
+      currentUserSearch = '';
+      loadUsers(1);
+    }
+
+    function changeUsersPageSize(size) {
+      currentUserPageSize = parseInt(size, 10) || 10;
+      loadUsers(1);
+    }
+
+    function goUsersPage(page) {
+      if (page < 1 || page > totalUsersPages) return;
+      loadUsers(page);
+    }
+
+    function updateUsersPaginationUI() {
+      const infoEl = document.getElementById('users-pagination-info');
+      if (infoEl) {
+        infoEl.textContent = '共 ' + totalUsersCount + ' 位用户，第 ' + currentUserPage + ' / ' + totalUsersPages + ' 页';
+      }
+      const badgeEl = document.getElementById('users-current-page-badge');
+      if (badgeEl) {
+        badgeEl.textContent = currentUserPage;
+      }
+      const prevBtn = document.getElementById('admin-users-btn-prev');
+      if (prevBtn) {
+        prevBtn.disabled = currentUserPage <= 1;
+        prevBtn.style.opacity = currentUserPage <= 1 ? '0.5' : '1';
+        prevBtn.style.cursor = currentUserPage <= 1 ? 'not-allowed' : 'pointer';
+      }
+      const nextBtn = document.getElementById('admin-users-btn-next');
+      if (nextBtn) {
+        nextBtn.disabled = currentUserPage >= totalUsersPages;
+        nextBtn.style.opacity = currentUserPage >= totalUsersPages ? '0.5' : '1';
+        nextBtn.style.cursor = currentUserPage >= totalUsersPages ? 'not-allowed' : 'pointer';
+      }
+    }
+
+    async function loadUsers(page = 1) {
+      currentUserPage = page;
+      const params = new URLSearchParams();
+      if (currentUserSearch) params.set('search', currentUserSearch);
+      params.set('page', String(currentUserPage));
+      params.set('pageSize', String(currentUserPageSize));
+
       try {
-        const res = await fetch('/v1/ops/users');
+        const res = await fetch('/v1/ops/users?' + params.toString());
         if (!res.ok) return;
         const json = await res.json();
         const tbody = document.getElementById('user-table-body');
-        if (json.code === 0 && Array.isArray(json.data) && json.data.length > 0) {
-          tbody.innerHTML = json.data.map(u => \`
-            <tr>
+        
+        let items = [];
+        if (json.code === 0 && json.data) {
+          if (Array.isArray(json.data)) {
+            items = json.data;
+            totalUsersCount = items.length;
+            totalUsersPages = 1;
+          } else {
+            items = json.data.list || [];
+            totalUsersCount = json.data.total ?? items.length;
+            currentUserPage = json.data.page ?? page;
+            currentUserPageSize = json.data.pageSize ?? currentUserPageSize;
+            totalUsersPages = json.data.totalPages ?? Math.max(1, Math.ceil(totalUsersCount / currentUserPageSize));
+          }
+        }
+
+        updateUsersPaginationUI();
+
+        if (items.length > 0) {
+          tbody.innerHTML = items.map(u => \`
+            <tr data-testid="admin-users-row-user-\${u.userId}">
               <td><code>\${u.userId}</code></td>
-              <td>\${u.maskedPhone}</td>
-              <td>\${u.createdAt || '-'}</td>
+              <td><strong>\${u.maskedPhone}</strong></td>
+              <td data-testid="admin-users-cell-remaining-time-\${u.userId}">
+                \${u.remainingSeconds > 0 
+                  ? '<span class="badge badge-green" style="font-size:12px; font-variant-numeric:tabular-nums;">' + formatDuration(u.remainingSeconds) + '</span> <span style="font-size:11px; color:var(--text-sub); font-variant-numeric:tabular-nums;">(' + Number(u.remainingSeconds).toLocaleString() + ' 秒)</span>' 
+                  : '<span class="badge" style="background:rgba(156,163,175,0.15); color:var(--text-sub); font-size:12px;">0 分钟</span>'}
+              </td>
+              <td>
+                \${u.reservedSeconds > 0 
+                  ? '<span class="badge badge-yellow" style="font-size:12px; font-variant-numeric:tabular-nums;">' + formatDuration(u.reservedSeconds) + '</span>' 
+                  : '<span style="color:var(--text-sub);">-</span>'}
+              </td>
+              <td style="color:var(--text-sub); font-variant-numeric:tabular-nums;">\${u.createdAt || '-'}</td>
             </tr>
           \`).join('');
         } else {
-          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="3">暂无注册用户，客户端用户首次手机短信登录后将在此展示（已脱敏）。</td></tr>';
+          const emptyText = currentUserSearch 
+            ? '未搜索到匹配“' + currentUserSearch + '”的手机号用户，请更换关键词重试。' 
+            : '暂无注册用户，客户端用户首次手机短信登录后将在此展示（已脱敏）。';
+          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="5">' + emptyText + '</td></tr>';
         }
       } catch (err) {
         console.warn('获取用户列表失败:', err);

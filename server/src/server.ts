@@ -2,6 +2,7 @@ import http from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import crypto from 'node:crypto';
 import { AuthService } from './auth/auth.service.js';
+import { sendAliyunSms } from './auth/aliyun-sms.js';
 import { BillingEngine } from './billing/billing.engine.js';
 import { WechatPayService } from './payment/wechat-pay.service.js';
 import { OpsService } from './ops/ops.service.js';
@@ -167,8 +168,17 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
 
       // 4. 查询时长余额 (GET /v1/billing/balance)
       if (req.method === 'GET' && pathname === '/v1/billing/balance') {
-        const userId = url.searchParams.get('userId') || 'unknown';
-        const balance = await billingEngine.getUserBalance(userId);
+        let userId = url.searchParams.get('userId');
+        if (!userId && req.headers.authorization?.startsWith('Bearer ')) {
+          try {
+            const token = req.headers.authorization.slice(7);
+            const decoded = authService.verifyJwt(token);
+            userId = decoded.userId;
+          } catch {
+            // ignore
+          }
+        }
+        const balance = await billingEngine.getUserBalance(userId || 'unknown');
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, data: balance }));
@@ -178,7 +188,43 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
       // 5. 短信验证码发送 (POST /v1/auth/sms/send)
       if (req.method === 'POST' && pathname === '/v1/auth/sms/send') {
         const body = JSON.parse(await readRequestBody(req));
-        const sendResult = await authService.sendSmsCode(body.phone);
+        const smsConfig = (await configService.getConfig({ masked: false })).sms;
+        const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+
+        // 真实阿里云凭据检测：严禁在未配置时假装发送成功 (遵守 Zero-Content 与真实接入铁律)
+        const hasRealAliyunKey =
+          smsConfig &&
+          smsConfig.provider === 'aliyun' &&
+          smsConfig.accessKeyId &&
+          smsConfig.accessKeySecret &&
+          !smsConfig.accessKeyId.includes('Placeholder');
+
+        if (!hasRealAliyunKey && !isTestEnv && smsConfig.provider !== 'sandbox') {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              code: 400,
+              message: '未配置阿里云短信 AccessKey ID 或 AccessKey Secret，无法发送真实短信。请前往控制面运营后台 (http://localhost:3200) 配置真实短信服务凭据。',
+            })
+          );
+          return;
+        }
+
+        let sender: ((phone: string, code: string) => Promise<{ success: boolean; message?: string }>) | undefined;
+        if (hasRealAliyunKey) {
+          sender = async (phone, code) => {
+            return await sendAliyunSms({
+              accessKeyId: smsConfig.accessKeyId,
+              accessKeySecret: smsConfig.accessKeySecret,
+              phoneNumbers: phone,
+              signName: smsConfig.signName,
+              templateCode: smsConfig.templateCode,
+              templateParam: { code },
+            });
+          };
+        }
+
+        const sendResult = await authService.sendSmsCode(body.phone, { sender });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, ...sendResult }));
@@ -189,6 +235,18 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
       if (req.method === 'POST' && pathname === '/v1/auth/sms/login') {
         const body = JSON.parse(await readRequestBody(req));
         const session = await authService.loginWithSms(body.phone, body.code);
+
+        // 新用户注册体验时长赠送：若无任何历史批次则真实发放 60 分钟 (3600 秒) 体验时长
+        const userBal = await billingEngine.getUserBalance(session.user.userId);
+        if (userBal.totalAvailableSeconds === 0) {
+          await billingEngine.grantBucket({
+            userId: session.user.userId,
+            source: 'PROMOTION',
+            totalSeconds: 3600,
+            expireAt: new Date(Date.now() + 30 * 86400 * 1000).toISOString(),
+            metadata: { reason: '新用户注册体验时长赠送 (60分钟)' },
+          });
+        }
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, data: session }));
@@ -225,11 +283,15 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
 
       // 8. 运营后台：真实脱敏用户列表 (GET /v1/ops/users)
       if (req.method === 'GET' && pathname === '/v1/ops/users') {
+        const search = url.searchParams.get('search') || url.searchParams.get('phone') || undefined;
+        const page = parseInt(url.searchParams.get('page') || '1', 10);
+        const pageSize = parseInt(url.searchParams.get('pageSize') || '10', 10);
+
         const users = authService.getUsers();
-        const desensitized = await opsService.getDesensitizedUsers(users);
+        const pagedResult = await opsService.queryDesensitizedUsers(users, { search, page, pageSize });
 
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ code: 0, data: desensitized }));
+        res.end(JSON.stringify({ code: 0, data: pagedResult }));
         return;
       }
 

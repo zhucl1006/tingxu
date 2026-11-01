@@ -2,12 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 
 export const LoginModal: React.FC = () => {
-  const { isLoginModalOpen, setIsLoginModalOpen, loginUser } = useMeetingStore();
-  const [phone, setPhone] = useState('13800138000');
+  const { isLoginModalOpen, setIsLoginModalOpen, loginUser, currentUser } = useMeetingStore();
+  const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [countdown, setCountdown] = useState(0);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [infoMsg, setInfoMsg] = useState('');
 
   useEffect(() => {
     let timer: NodeJS.Timeout;
@@ -25,26 +26,25 @@ export const LoginModal: React.FC = () => {
       return;
     }
     setErrorMsg('');
+    setInfoMsg('');
     setLoading(true);
 
     try {
-      // 优先调用本地控制面 Server 接口
+      // 真实调用本地控制面 Server 短信接口（连通阿里云短信网关）
       const res = await fetch('http://localhost:3200/v1/auth/sms/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone }),
-      }).catch(() => null);
+      }).catch((e) => {
+        throw new Error(`无法连接控制面服务端 (http://localhost:3200): ${e.message}`);
+      });
 
-      if (res && res.ok) {
-        const data = await res.json();
-        if (data.debugCode) {
-          setCode(data.debugCode); // 开发便利：自动填入下发的 debugCode
-        }
-      } else {
-        // 若控制面未开启，前端本地模拟下发
-        setCode('123456');
+      const data = await res.json();
+      if (!res.ok || data.code !== 0) {
+        throw new Error(data.message || '短信验证码下发失败，请检查短信服务状态');
       }
 
+      setInfoMsg(data.message || '短信验证码已下发至您的手机，请查收');
       setCountdown(60);
     } catch (err) {
       setErrorMsg((err as Error).message);
@@ -56,10 +56,11 @@ export const LoginModal: React.FC = () => {
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!phone || !code) {
-      setErrorMsg('请填写手机号和验证码');
+      setErrorMsg('请填写手机号和短信验证码');
       return;
     }
     setErrorMsg('');
+    setInfoMsg('');
     setLoading(true);
 
     try {
@@ -67,39 +68,27 @@ export const LoginModal: React.FC = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ phone, code }),
-      }).catch(() => null);
+      }).catch((e) => {
+        throw new Error(`无法连接控制面服务端: ${e.message}`);
+      });
 
-      if (res && res.ok) {
-        const json = await res.json();
-        loginUser({
-          userId: json.data?.user?.userId || `usr_${phone.slice(-4)}`,
-          phone,
-          token: json.data?.token || 'mock_jwt_token',
-          role: json.data?.user?.role || 'USER',
-        });
-      } else {
-        // 离线/开发模式一键登录
-        loginUser({
-          userId: `usr_${phone.slice(-4)}`,
-          phone,
-          token: 'mock_jwt_token_local',
-          role: 'USER',
-        });
+      const json = await res.json();
+      if (!res.ok || json.code !== 0 || !json.data?.token) {
+        throw new Error(json.message || '验证码核验失败或已失效，请重新获取');
       }
+
+      // 仅接受真实签发的服务端凭据与用户身份
+      loginUser({
+        userId: json.data.user.userId,
+        phone: json.data.user.phone,
+        token: json.data.token,
+        role: json.data.user.role || 'USER',
+      });
     } catch (err) {
       setErrorMsg((err as Error).message);
     } finally {
       setLoading(false);
     }
-  };
-
-  const handleQuickLogin = () => {
-    loginUser({
-      userId: 'usr_8000',
-      phone: '13800138000',
-      token: 'jwt_mock_quick_token',
-      role: 'USER',
-    });
   };
 
   return (
@@ -111,14 +100,17 @@ export const LoginModal: React.FC = () => {
         data-testid="login-modal-container"
         className="w-full max-w-sm rounded-xl bg-canvas border border-border-subtle shadow-2xl p-6 relative animate-in fade-in zoom-in-95 duration-150"
       >
-        <button
-          type="button"
-          data-testid="login-modal-btn-close"
-          onClick={() => setIsLoginModalOpen(false)}
-          className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary text-xl leading-none"
-        >
-          ×
-        </button>
+        {/* 仅在已登录状态（切换账号或重新鉴权时）允许关闭；首次未登录强制要求完成认证 */}
+        {currentUser && (
+          <button
+            type="button"
+            data-testid="login-modal-btn-close"
+            onClick={() => setIsLoginModalOpen(false)}
+            className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary text-xl leading-none"
+          >
+            ×
+          </button>
+        )}
 
         <div className="flex items-center gap-3 mb-5">
           <div className="w-10 h-10 rounded-lg bg-brand-blue/15 text-brand-blue flex items-center justify-center font-bold text-lg">
@@ -133,9 +125,28 @@ export const LoginModal: React.FC = () => {
         {errorMsg && (
           <div
             data-testid="login-modal-alert-error"
-            className="mb-4 p-2.5 rounded bg-status-danger/10 border border-status-danger/30 text-status-danger text-xs"
+            className="mb-4 p-2.5 rounded bg-status-danger/10 border border-status-danger/30 text-status-danger text-xs leading-relaxed"
           >
-            {errorMsg}
+            <div>{errorMsg}</div>
+            {errorMsg.includes('后台') && (
+              <a
+                href="http://localhost:3200"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1.5 inline-block text-brand-blue hover:underline font-medium"
+              >
+                前往控制面运营后台配置凭据 →
+              </a>
+            )}
+          </div>
+        )}
+
+        {infoMsg && (
+          <div
+            data-testid="login-modal-alert-info"
+            className="mb-4 p-2.5 rounded bg-status-success-bg border border-status-success-border text-status-success text-xs leading-relaxed"
+          >
+            {infoMsg}
           </div>
         )}
 
@@ -190,18 +201,6 @@ export const LoginModal: React.FC = () => {
             {loading ? '正在验证...' : '登 录 / 注 册'}
           </button>
         </form>
-
-        <div className="mt-4 pt-3 border-t border-border-subtle flex items-center justify-between text-xs">
-          <span className="text-text-tertiary">测试快速通道：</span>
-          <button
-            type="button"
-            data-testid="login-modal-btn-quick-login"
-            onClick={handleQuickLogin}
-            className="text-brand-blue hover:underline font-medium"
-          >
-            一键体验免密登录 →
-          </button>
-        </div>
       </div>
     </div>
   );

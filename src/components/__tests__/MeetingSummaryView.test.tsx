@@ -1,0 +1,155 @@
+import { describe, it, expect, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { MeetingSummaryView } from '../views/MeetingSummaryView';
+import { useMeetingStore } from '../../store/useMeetingStore';
+import { HistoryMeeting } from '../../types/meeting';
+
+describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 (TDD)', () => {
+  const mockMeeting: HistoryMeeting = {
+    id: 'mtg_summary_01',
+    title: '听序核心架构与隐私合规评审 11-01 11:15',
+    date: '2026-11-01 11:18',
+    durationSeconds: 245,
+    summary: '全场会议围绕本地优先架构与双轨音频捕获展开，确认了核心结论并排期待办。',
+    decisionsCount: 2,
+    tasksCount: 1,
+    speakers: ['本人麦克风', '对方声卡'],
+    structuredSummary: {
+      suggestedTitle: '听序核心架构与隐私合规评审',
+      overview: '全场会议深入探讨了本地优先隐私合规与双轨音频捕获方案，明确了架构基准。',
+      decisions: [
+        {
+          title: '系统架构原则达成一致',
+          content: '确认本地优先与隐私合规基准，关键业务逻辑实施 TDD 测试保护。',
+          evidenceQuote: '本地逐字稿不上传云端',
+          evidenceSegmentId: 'seg_1',
+        },
+      ],
+      actions: [
+        {
+          title: '跟进全链路门禁联调',
+          assignee: '张经理',
+          dueDate: '本周五',
+          evidenceQuote: '周五前完成联调',
+          evidenceSegmentId: 'seg_2',
+        },
+      ],
+      risks: [
+        {
+          title: '弱网环境连接自愈风险',
+          content: '需持续观测 WebSocket 心跳断线重连下的增量补丁一致性。',
+        },
+      ],
+      facts: [
+        {
+          title: '本地 SQLite 存储已就绪',
+          content: '会议音视频与逐字稿均存储于客户端本地沙箱，云端零留存。',
+        },
+      ],
+    },
+    transcripts: [
+      {
+        id: 'seg_1',
+        speaker: '本人麦克风',
+        channel: 'mic',
+        timestamp: '00:15',
+        text: '确认本地优先与隐私合规基准，关键业务逻辑实施 TDD 测试保护。',
+      },
+      {
+        id: 'seg_2',
+        speaker: '对方声卡',
+        channel: 'system',
+        timestamp: '01:20',
+        text: '我来负责跟进全链路门禁联调，预计本周五交付。',
+      },
+    ],
+  };
+
+  beforeEach(() => {
+    useMeetingStore.setState({
+      activeSummaryMeeting: mockMeeting,
+      activeTargetSegmentId: null,
+      currentRoute: 'summary',
+    });
+  });
+
+  it('应该渲染沉浸式全屏页面（非 Modal 弹窗）及完整的 QA data-testid', () => {
+    render(<MeetingSummaryView />);
+
+    expect(screen.getByTestId('summary-page-container')).toBeDefined();
+    expect(screen.getByTestId('summary-page-header')).toBeDefined();
+    expect(screen.getByTestId('summary-page-text-title').textContent).toContain('听序核心架构与隐私合规评审');
+    expect(screen.getByTestId('summary-page-btn-back')).toBeDefined();
+    expect(screen.getByTestId('summary-page-btn-copy')).toBeDefined();
+    expect(screen.getByTestId('summary-page-btn-export-markdown')).toBeDefined();
+  });
+
+  it('应该渲染结构化总结报告四大象限：决策、待办、风险与事实', () => {
+    render(<MeetingSummaryView />);
+
+    expect(screen.getByTestId('summary-page-card-overview')).toBeDefined();
+    expect(screen.getByTestId('summary-page-section-decisions')).toBeDefined();
+    expect(screen.getByTestId('summary-page-section-actions')).toBeDefined();
+    expect(screen.getByTestId('summary-page-section-risks')).toBeDefined();
+    expect(screen.getByTestId('summary-page-section-facts')).toBeDefined();
+
+    expect(screen.getByText('系统架构原则达成一致')).toBeDefined();
+    expect(screen.getByText('跟进全链路门禁联调')).toBeDefined();
+    expect(screen.getByText('弱网环境连接自愈风险')).toBeDefined();
+    expect(screen.getByText('本地 SQLite 存储已就绪')).toBeDefined();
+  });
+
+  it('应该支持点击切换到【听序思维导图】选项卡并展示特色脑图分支', () => {
+    render(<MeetingSummaryView />);
+
+    const mindmapTab = screen.getByTestId('summary-page-tab-mindmap');
+    fireEvent.click(mindmapTab);
+
+    // 脑图容器必须呈现
+    expect(screen.getByTestId('meeting-mindmap-container')).toBeDefined();
+    expect(screen.getByTestId('meeting-mindmap-node-root')).toBeDefined();
+    expect(screen.getAllByText('听序核心架构与隐私合规评审 11-01 11:15').length).toBeGreaterThanOrEqual(2);
+
+    // 检查听序特色参会人分支
+    expect(screen.getByTestId('meeting-mindmap-branch-branch-participants')).toBeDefined();
+  });
+
+  it('应该支持点击参会人一键快速重命名，全场联动更新', () => {
+    render(<MeetingSummaryView />);
+
+    const speakerTag = screen.getByText('对方声卡');
+    fireEvent.click(speakerTag);
+
+    const input = screen.getByTestId('summary-page-input-rename-speaker');
+    fireEvent.change(input, { target: { value: '李架构师' } });
+
+    const saveBtn = screen.getByTestId('summary-page-btn-confirm-rename');
+    fireEvent.click(saveBtn);
+
+    // 校验 store 中全场逐字稿与参会人已联动改名
+    const updated = useMeetingStore.getState().activeSummaryMeeting;
+    expect(updated?.speakers).toContain('李架构师');
+    expect(updated?.transcripts?.some((t) => t.speaker === '李架构师')).toBe(true);
+  });
+
+  it('应该支持切换到全场逐字稿明细选项卡，并高亮指定依据段落', () => {
+    render(<MeetingSummaryView />);
+
+    const transcriptsTab = screen.getByTestId('summary-page-tab-transcripts');
+    fireEvent.click(transcriptsTab);
+
+    expect(screen.getByTestId('summary-page-list-transcripts')).toBeDefined();
+    const targetSegment = screen.getByTestId('summary-page-row-transcript-seg_2');
+    expect(targetSegment).toBeDefined();
+  });
+
+  it('点击返回工作台按钮时，应清空当前选中并安全切回工作台路由', () => {
+    render(<MeetingSummaryView />);
+
+    const backBtn = screen.getByTestId('summary-page-btn-back');
+    fireEvent.click(backBtn);
+
+    expect(useMeetingStore.getState().currentRoute).toBe('home');
+    expect(useMeetingStore.getState().activeSummaryMeeting).toBeNull();
+  });
+});

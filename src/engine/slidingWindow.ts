@@ -62,6 +62,37 @@ export class SlidingWindowAccumulator {
     return null;
   }
 
+  /**
+   * 周期性时间窗口或静音兜底触发：主动刷出当前缓冲区中的待处理发言
+   * @param currentMeetingSeconds 会议当前秒数
+   * @param minChars 触发刷盘的最小字符数（默认 20 字）
+   */
+  public flush(
+    currentMeetingSeconds: number,
+    minChars: number = 20
+  ): WindowPayload | null {
+    const totalChars = this.getPendingCharCount();
+    if (this.buffer.length === 0 || totalChars < minChars) {
+      return null;
+    }
+
+    const combinedText = this.buffer
+      .map((s) => `${s.speaker}: ${s.text}`)
+      .join('\n');
+
+    const payload: WindowPayload = {
+      segments: [...this.buffer],
+      combinedText,
+      endTimestampSeconds: currentMeetingSeconds,
+    };
+
+    const overlap = this.buffer.length > 1 ? this.buffer.slice(-1) : [];
+    this.buffer = overlap;
+    this.lastTriggerSeconds = currentMeetingSeconds;
+
+    return payload;
+  }
+
   public clear(): void {
     this.buffer = [];
     this.lastTriggerSeconds = 0;

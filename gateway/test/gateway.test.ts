@@ -254,5 +254,40 @@ describe('AI Gateway 核心套件测试', () => {
 
       await new Promise<void>((resolve) => server.close(() => resolve()));
     });
+
+    it('会后高精纪要接口 POST /gateway/v1/meeting-summary 应生成切题标题与结构化报告', async () => {
+      const deepseek = new DeepSeekAdapter({ mockMode: true });
+      const qwen = new QwenAdapter({ mockMode: true });
+      const router = new ModelRouter({ primaryAdapter: deepseek, fallbackAdapter: qwen });
+      const { server } = createGatewayServer({ router });
+
+      await new Promise<void>((resolve) => server.listen(0, resolve));
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : 0;
+
+      const res = await fetch(`http://127.0.0.1:${port}/gateway/v1/meeting-summary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          meetingId: 'meet_summary_01',
+          transcripts: [
+            { segmentId: 'seg_1', speaker: '朱工', text: '今天我们讨论 AI 工具链与双轨音频架构' },
+            { segmentId: 'seg_2', speaker: '李工', text: '同意，会后总结要支持关键结论与待办' },
+          ],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.code).toBe(0);
+      expect(json.data.suggestedTitle).toBeTruthy();
+      expect(json.data.overview).toBeTruthy();
+      expect(json.data.decisions).toBeInstanceOf(Array);
+      expect(json.data.actions).toBeInstanceOf(Array);
+      expect(json.data.risks).toBeInstanceOf(Array);
+      expect(json.data.facts).toBeInstanceOf(Array);
+
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
   });
 });

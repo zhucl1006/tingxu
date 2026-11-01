@@ -25,6 +25,28 @@ export interface AuditEvent {
   timestamp: string;
 }
 
+export interface DesensitizedUser {
+  userId: string;
+  maskedPhone: string;
+  createdAt: string;
+  remainingSeconds: number;
+  reservedSeconds: number;
+}
+
+export interface QueryUsersParams {
+  search?: string;
+  page?: number;
+  pageSize?: number;
+}
+
+export interface PagedUsersResult {
+  list: DesensitizedUser[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
 export class OpsService {
   private readonly billingEngine: BillingEngine;
   private readonly requests = new Map<string, CompensationRequest>();
@@ -133,15 +155,60 @@ export class OpsService {
 
   public async getDesensitizedUsers(
     users: Array<{ userId: string; phone: string; createdAt: string }>
-  ) {
-    return users.map((u) => {
-      const maskedPhone = u.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2');
-      return {
-        userId: u.userId,
-        maskedPhone,
-        createdAt: u.createdAt,
-      };
-    });
+  ): Promise<DesensitizedUser[]> {
+    return Promise.all(
+      users.map(async (u) => {
+        const maskedPhone = u.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2');
+        let remainingSeconds = 0;
+        let reservedSeconds = 0;
+        if (this.billingEngine) {
+          const balance = await this.billingEngine.getUserBalance(u.userId);
+          remainingSeconds = balance.totalAvailableSeconds;
+          reservedSeconds = balance.reservedSeconds;
+        }
+        return {
+          userId: u.userId,
+          maskedPhone,
+          createdAt: u.createdAt,
+          remainingSeconds,
+          reservedSeconds,
+        };
+      })
+    );
+  }
+
+  public async queryDesensitizedUsers(
+    users: Array<{ userId: string; phone: string; createdAt: string }>,
+    params?: QueryUsersParams
+  ): Promise<PagedUsersResult> {
+    const rawSearch = (params?.search || '').trim().toLowerCase();
+
+    let filtered = users;
+    if (rawSearch) {
+      filtered = users.filter((u) => {
+        const phone = (u.phone || '').toLowerCase();
+        const userId = (u.userId || '').toLowerCase();
+        return phone.includes(rawSearch) || userId.includes(rawSearch);
+      });
+    }
+
+    const total = filtered.length;
+    const page = Math.max(1, Number(params?.page) || 1);
+    const pageSize = Math.max(1, Number(params?.pageSize) || 10);
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+    const startIndex = (page - 1) * pageSize;
+    const pagedUsers = filtered.slice(startIndex, startIndex + pageSize);
+
+    const list = await this.getDesensitizedUsers(pagedUsers);
+
+    return {
+      list,
+      total,
+      page,
+      pageSize,
+      totalPages,
+    };
   }
 
   public async getAuditLogs(): Promise<AuditEvent[]> {

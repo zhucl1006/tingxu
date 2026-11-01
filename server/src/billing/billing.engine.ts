@@ -1,4 +1,6 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type BucketSource = 'PURCHASE' | 'COMPENSATION' | 'PROMOTION';
 export type ReservationStatus = 'PENDING' | 'SETTLED' | 'RELEASED';
@@ -33,10 +35,73 @@ export interface UsageLedger {
   createdAt: string;
 }
 
+export interface BillingEngineOptions {
+  storageFilePath?: string;
+}
+
 export class BillingEngine {
+  private readonly storageFilePath?: string;
   private readonly buckets = new Map<string, EntitlementBucket>();
   private readonly reservations = new Map<string, UsageReservation>();
   private readonly ledgers: UsageLedger[] = [];
+
+  constructor(options?: BillingEngineOptions) {
+    const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+    if (options?.storageFilePath) {
+      this.storageFilePath = options.storageFilePath;
+    } else if (process.env.BILLING_STORAGE_PATH) {
+      this.storageFilePath = process.env.BILLING_STORAGE_PATH;
+    } else if (!isTest) {
+      this.storageFilePath = path.resolve(process.cwd(), 'data/billing.json');
+    }
+
+    this.loadFromStorage();
+  }
+
+  private loadFromStorage(): void {
+    if (!this.storageFilePath) return;
+    try {
+      if (fs.existsSync(this.storageFilePath)) {
+        const content = fs.readFileSync(this.storageFilePath, 'utf-8');
+        const data = JSON.parse(content);
+        if (data && typeof data === 'object') {
+          if (Array.isArray(data.buckets)) {
+            for (const b of data.buckets) {
+              if (b && b.bucketId) this.buckets.set(b.bucketId, b);
+            }
+          }
+          if (Array.isArray(data.reservations)) {
+            for (const r of data.reservations) {
+              if (r && r.reservationId) this.reservations.set(r.reservationId, r);
+            }
+          }
+          if (Array.isArray(data.ledgers)) {
+            this.ledgers.push(...data.ledgers);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[BillingEngine] 加载账本持久化文件失败:', (e as Error).message);
+    }
+  }
+
+  private persist(): void {
+    if (!this.storageFilePath) return;
+    try {
+      const dir = path.dirname(this.storageFilePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const data = {
+        buckets: Array.from(this.buckets.values()),
+        reservations: Array.from(this.reservations.values()),
+        ledgers: this.ledgers,
+      };
+      fs.writeFileSync(this.storageFilePath, JSON.stringify(data, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('[BillingEngine] 持久化账本失败:', (e as Error).message);
+    }
+  }
 
   /**
    * 发放时长批次 (购买、运营补偿或活动赠送)
@@ -69,6 +134,8 @@ export class BillingEngine {
       balanceAfter: balance.totalAvailableSeconds,
       metadata: params.metadata,
     });
+
+    this.persist();
 
     return bucket;
   }
@@ -143,6 +210,8 @@ export class BillingEngine {
       metadata: { reservationId, meetingId: params.meetingId },
     });
 
+    this.persist();
+
     return reservation;
   }
 
@@ -186,6 +255,8 @@ export class BillingEngine {
         actualSeconds: params.actualSeconds,
       },
     });
+
+    this.persist();
   }
 
   /**
@@ -210,6 +281,8 @@ export class BillingEngine {
       balanceAfter: afterBal.totalAvailableSeconds,
       metadata: { reservationId: params.reservationId },
     });
+
+    this.persist();
   }
 
   /**

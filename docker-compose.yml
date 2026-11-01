@@ -35,8 +35,16 @@ services:
       PORT: 3000
       DATABASE_URL: postgresql://tingxu_admin:tingxu_secure_password@postgres:5432/tingxu_db
       JWT_SECRET: tingxu_jwt_secret_key_development_only
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      ALIYUN_ACCESS_KEY_ID: ${ALIYUN_ACCESS_KEY_ID:-}
+      ALIYUN_ACCESS_KEY_SECRET: ${ALIYUN_ACCESS_KEY_SECRET:-}
+      ALIYUN_SMS_SIGN_NAME: ${ALIYUN_SMS_SIGN_NAME:-听序}
+      ALIYUN_SMS_TEMPLATE_CODE: ${ALIYUN_SMS_TEMPLATE_CODE:-SMS_TINGXU_CODE}
     ports:
       - "${SERVER_PORT:-3200}:3000"
+    volumes:
+      - ./server/data:/app/data
 
   gateway:
     build:
@@ -46,10 +54,13 @@ services:
     restart: always
     environment:
       PORT: 3001
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-mock_key_for_dev}
-      QWEN_API_KEY: ${QWEN_API_KEY:-mock_key_for_dev}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      QWEN_API_KEY: ${QWEN_API_KEY:-}
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
     ports:
       - "${GATEWAY_PORT:-3201}:3001"
+    volumes:
+      - ./server/data:/app/data:ro
 
 volumes:
   postgres_data:

@@ -117,4 +117,65 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     store.setActiveWindow('floating-pill');
     expect(useMeetingStore.getState().activeWindow).toBe('floating-pill');
   });
+
+  it('结束会议时应结合逐字稿自动生成切题标题与四维结构化纪要', async () => {
+    const store = useMeetingStore.getState();
+    // 初始标题为默认日期时间标题
+    store.startMeeting('会议记录 11-01 10:30');
+    store.tickTimer();
+    store.addTranscriptSegment({
+      id: 'seg_1',
+      speaker: '朱工',
+      channel: 'mic',
+      timestamp: '00:01:00',
+      text: '今天探讨 AI 工具链与双轨音频低延迟方案',
+    });
+
+    // 模拟 fetch 返回 meeting-summary
+    const originalFetch = global.fetch;
+    global.fetch = async (url: any) => {
+      if (String(url).includes('/meeting-summary')) {
+        return {
+          ok: true,
+          json: async () => ({
+            code: 0,
+            data: {
+              suggestedTitle: 'AI 工具链与双轨音频方案探讨',
+              overview: '讨论了双轨音频低延迟采集与 AI 增量提炼方案。',
+              decisions: [{ title: '采用双轨音频方案', content: '确认低延迟管道', evidenceQuote: '今天探讨' }],
+              actions: [{ title: '完成链路联调', assignee: '朱工', dueDate: '周五' }],
+              risks: [{ title: '网络波动风险', content: '需增加重连' }],
+              facts: [{ title: '本地沙箱存储', content: '完全保障数据主权' }],
+            },
+          }),
+        } as any;
+      }
+      return { ok: true, json: async () => ({ code: 0, data: {} }) } as any;
+    };
+
+    try {
+      await store.endMeeting();
+      const state = useMeetingStore.getState();
+
+      // 验证标题已升级为：切题主题 + 日期时间
+      expect(state.title).toContain('AI 工具链与双轨音频方案探讨');
+      expect(state.title).toMatch(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/);
+
+      // 验证历史会议中包含四维结构化总结
+      expect(state.historyMeetings).toHaveLength(1);
+      const history = state.historyMeetings[0];
+      expect(history.structuredSummary).toBeDefined();
+      expect(history.structuredSummary?.suggestedTitle).toBe('AI 工具链与双轨音频方案探讨');
+      expect(history.structuredSummary?.decisions).toHaveLength(1);
+      expect(history.structuredSummary?.actions).toHaveLength(1);
+
+      // 验证待办自动录入 tasks
+      expect(state.tasks.some((t) => t.title.includes('完成链路联调'))).toBe(true);
+
+      // 验证 activeSummaryMeeting 已激活
+      expect(state.activeSummaryMeeting).toBe(history);
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
 });

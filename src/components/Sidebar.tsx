@@ -19,7 +19,7 @@ export const Sidebar: React.FC = () => {
     { id: 'record', label: '会中实时记录', icon: '◉' },
     { id: 'tasks', label: '我的待办', icon: '☑' },
     { id: 'search', label: '历史检索', icon: '⌕' },
-    { id: 'billing', label: '套餐与用量', icon: '◇' },
+    { id: 'billing', label: '时长与用量', icon: '◇' },
     { id: 'settings', label: '系统设置', icon: '⚙' },
   ];
 
@@ -82,15 +82,15 @@ export const Sidebar: React.FC = () => {
 
       {/* 底部用量与用户中心 */}
       <div className="space-y-3 pt-3 border-t border-border-subtle">
-        {/* 套餐用量卡片 */}
+        {/* 会议时长账户用量卡片 */}
         <div
           data-testid="app-sidebar-card-quota"
           className="p-3 rounded-lg bg-panel border border-border-subtle space-y-2"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-text-primary">专业版 · 个人套餐</span>
-            <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-brand-blue/15 text-brand-blue">
-              Pro
+            <span className="font-semibold text-text-primary">会议时长额度</span>
+            <span className="text-[10px] text-text-tertiary">
+              按时长计费
             </span>
           </div>
 
@@ -102,14 +102,14 @@ export const Sidebar: React.FC = () => {
           </div>
 
           <div className="flex items-center justify-between text-[11px] text-text-secondary">
-            <span>时长剩余 {quotaMinutes} 分钟</span>
+            <span>剩余 {quotaMinutes} 分钟</span>
             <button
               type="button"
               data-testid="app-sidebar-btn-view-billing"
               onClick={() => setCurrentRoute('billing')}
               className="text-brand-blue hover:underline"
             >
-              充值 →
+              充值时长 →
             </button>
           </div>
         </div>
@@ -150,7 +150,10 @@ export const Sidebar: React.FC = () => {
             <button
               type="button"
               data-testid="app-sidebar-btn-logout"
-              onClick={logoutUser}
+              onClick={() => {
+                logoutUser();
+                setIsLoginModalOpen(true);
+              }}
               title="退出登录"
               className="text-[11px] text-text-tertiary hover:text-status-danger px-1.5 py-0.5 rounded"
             >

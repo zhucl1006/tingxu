@@ -40,6 +40,37 @@ describe('Plan 006: 会中实时洞察与本场问答流水线 (TDD)', () => {
       expect(windowPayload?.combinedText).toContain('架构设计讨论');
       expect(accumulator.getPendingCharCount()).toBeLessThan(50); // 保留少量重叠重绘上下文
     });
+
+    it('未达字符阈值但周期性时间窗口到达时，flush 能成功输出增量切片', () => {
+      const seg: TranscriptSegment = {
+        id: 's-3',
+        speaker: '朱总',
+        channel: 'mic',
+        timestamp: '00:00:20',
+        text: '我们今天开会重点对一下整个客户端的洞察总结功能。', // 26 字
+      };
+      accumulator.appendSegment(seg, 20);
+      expect(accumulator.getPendingCharCount()).toBe(seg.text.length);
+
+      // 周期时间窗口到达（如 15 秒定时触发）
+      const flushedPayload = accumulator.flush(35, 20);
+      expect(flushedPayload).not.toBeNull();
+      expect(flushedPayload?.combinedText).toContain('整个客户端的洞察总结功能');
+      expect(flushedPayload?.endTimestampSeconds).toBe(35);
+    });
+
+    it('缓冲区字符不足最小限制时，flush 返回 null', () => {
+      const shortSeg: TranscriptSegment = {
+        id: 's-4',
+        speaker: '李四',
+        channel: 'mic',
+        timestamp: '00:00:05',
+        text: '嗯好。', // 3 字
+      };
+      accumulator.appendSegment(shortSeg, 5);
+      const flushed = accumulator.flush(20, 20);
+      expect(flushed).toBeNull();
+    });
   });
 
   describe('InsightPatchApplier - 结构化增量补丁解析与人工保护', () => {

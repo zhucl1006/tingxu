@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { InMeetingWorkbench } from '../InMeetingWorkbench';
 import { useMeetingStore } from '../../store/useMeetingStore';
@@ -91,5 +91,136 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
     // 3. 点击“保留当前版本”
     fireEvent.click(screen.getByTestId('workbench-page-insights-panel-btn-keep-current-ins-101'));
     expect(screen.queryByTestId('workbench-page-insights-panel-div-pending-revision-ins-101')).toBeNull();
+  });
+
+  it('逐字稿向上滚动脱手检测与“回到最新发言”悬浮按钮交互', () => {
+    render(<InMeetingWorkbench />);
+    const listContainer = screen.getByTestId('workbench-page-transcript-panel-list-segments');
+
+    // 默认在底部，不应显示“回到最新发言”按钮
+    expect(screen.queryByTestId('workbench-page-transcript-panel-btn-scroll-bottom')).toBeNull();
+
+    // 模拟用户向上翻阅逐字稿（scrollTop 远离底部）
+    Object.defineProperty(listContainer, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(listContainer, 'clientHeight', { value: 400, configurable: true });
+    Object.defineProperty(listContainer, 'scrollTop', { value: 200, configurable: true });
+
+    fireEvent.scroll(listContainer);
+
+    // 向上滑动后，应该出现“回到最新发言”悬浮按钮
+    const scrollBottomBtn = screen.getByTestId('workbench-page-transcript-panel-btn-scroll-bottom');
+    expect(scrollBottomBtn).toBeInTheDocument();
+
+    // 点击按钮应平滑滚到底部并隐藏自身
+    let scrolledToOptions: any = null;
+    listContainer.scrollTo = ((options: any) => {
+      scrolledToOptions = options;
+    }) as any;
+
+    fireEvent.click(scrollBottomBtn);
+    expect(scrolledToOptions).toEqual({ top: 1000, behavior: 'smooth' });
+    expect(screen.queryByTestId('workbench-page-transcript-panel-btn-scroll-bottom')).toBeNull();
+  });
+
+  it('支持关闭 ASR 错误提示条并保证 QA 元素合规', () => {
+    render(<InMeetingWorkbench />);
+    // 初始状态下无错误
+    expect(screen.queryByTestId('workbench-page-transcript-panel-alert-asr-error')).toBeNull();
+  });
+
+  it('滑动窗口切片与 AI 增量洞察提取全链路测试', async () => {
+    // 模拟 fetch 拦截 live-insights SSE
+    const originalFetch = global.fetch;
+    const encoder = new TextEncoder();
+    const mockSseStream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(
+            'event: insight_patch\ndata: {"action":"CREATE_TOPIC","topicId":"topic_auto_001","patch":{"title":"端到端增量洞察与待办对齐","status":"RESOLVED","decisions":["确认麦克风双轨音频无感直连","实现逐字稿平滑吸底与脱手暂停"],"evidenceRefs":[{"segmentId":"seg_live_1","quote":"本地优先是听序的核心铁律"}]}}\n\n'
+          )
+        );
+        controller.enqueue(encoder.encode('event: done\ndata: {"tokensUsed":120}\n\n'));
+        controller.close();
+      },
+    });
+
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/gateway/v1/live-insights')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          body: mockSseStream,
+        } as any);
+      }
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ code: 0, data: {} }) } as any);
+    });
+
+    try {
+      render(<InMeetingWorkbench />);
+
+      // 直接调用 store 的 applyInsightPatch 模拟增量补丁落地
+      act(() => {
+        useMeetingStore.getState().applyInsightPatch({
+          op: 'add',
+          card: {
+            id: 'topic_auto_001',
+            type: 'decision',
+            title: '端到端增量洞察与待办对齐',
+            content: '确认麦克风双轨音频无感直连；实现逐字稿平滑吸底与脱手暂停',
+            timestamp: '00:01:20',
+            evidenceSegmentId: 'seg_live_1',
+          },
+        });
+      });
+
+      // 验证新增洞察卡片已渲染
+      expect(
+        screen.getByTestId('workbench-page-insights-panel-card-topic_auto_001')
+      ).toBeInTheDocument();
+      expect(screen.getByText('端到端增量洞察与待办对齐')).toBeInTheDocument();
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('会中即时提问与问答卡片渲染合规：渲染专属问答气泡，支持 Tab 筛选，不渲染确认结论按钮', () => {
+    act(() => {
+      useMeetingStore.getState().startMeeting('本场问答测试会议');
+      useMeetingStore.getState().addInsight({
+        id: 'qa_item_1',
+        type: 'qa',
+        title: '提问：上线排期确定了吗？',
+        question: '上线排期确定了吗？',
+        content: '根据当前讨论，听序定于本周五下午四点正式上线。',
+        timestamp: '00:03:15',
+        evidenceSegmentId: 'seg_1',
+      });
+    });
+
+    render(<InMeetingWorkbench />);
+
+    // 1. 验证问答卡片专属徽章与提问/回答区块
+    expect(
+      screen.getByTestId('workbench-page-insights-panel-badge-qa-qa_item_1')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId('workbench-page-insights-panel-div-qa-question-qa_item_1')
+    ).toHaveTextContent('上线排期确定了吗？');
+    expect(
+      screen.getByTestId('workbench-page-insights-panel-div-qa-answer-qa_item_1')
+    ).toHaveTextContent('听序定于本周五下午四点正式上线');
+
+    // 2. 问答卡片绝对不渲染“确认结论”按钮
+    expect(
+      screen.queryByTestId('workbench-page-insights-panel-btn-confirm-decision-qa_item_1')
+    ).toBeNull();
+
+    // 3. 验证本场问答 Tab
+    const qaTab = screen.getByTestId('workbench-page-insights-panel-tab-qa');
+    expect(qaTab).toBeInTheDocument();
+    fireEvent.click(qaTab);
+    expect(
+      screen.getByTestId('workbench-page-insights-panel-card-qa_item_1')
+    ).toBeInTheDocument();
   });
 });

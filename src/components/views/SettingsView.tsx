@@ -13,8 +13,7 @@ export const SettingsView: React.FC = () => {
     try {
       const res = await fetch(`${gatewayUrl}/gateway/v1/health`);
       if (res.ok) {
-        const json = await res.json();
-        setGatewayStatus(`✓ 连接正常！主力模型: ${json.circuitBreakers?.primary?.provider || 'DeepSeek'}`);
+        setGatewayStatus('✓ AI Gateway 智能网关连接正常，全双工转写与推理通道就绪');
       } else {
         setGatewayStatus(`× 连接失败: HTTP ${res.status}`);
       }

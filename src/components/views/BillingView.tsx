@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
 
 export const BillingView: React.FC = () => {
-  const { quotaMinutes, setQuotaMinutes, currentUser } = useMeetingStore();
+  const { quotaMinutes, setQuotaMinutes, refreshUserBalance, currentUser } = useMeetingStore();
   const [selectedPlan, setSelectedPlan] = useState<'plan_starter' | 'plan_pro_monthly' | 'plan_pro_annual'>('plan_pro_monthly');
   const [orderModal, setOrderModal] = useState<{
     orderNo: string;
@@ -16,31 +16,29 @@ export const BillingView: React.FC = () => {
   const plans = [
     {
       id: 'plan_starter' as const,
-      name: '基础体验包',
+      name: '10 小时会议时长包',
       hours: 10,
       price: 9.9,
-      desc: '轻量尝鲜，适合偶尔开会记录整理',
+      desc: '轻量尝鲜，全量包含实时双通道 ASR 与 AI 实时洞察',
     },
     {
       id: 'plan_pro_monthly' as const,
-      name: '专业月度套餐',
+      name: '30 小时会议时长包',
       hours: 30,
       price: 39.0,
-      desc: '职场高频首选，支持双轨原子刷盘与大模型全部能力',
+      desc: '职场高频推荐，AI 全包无单次问答扣点，双轨录音高保真保障',
       recommend: true,
     },
     {
       id: 'plan_pro_annual' as const,
-      name: '年度尊享套餐',
-      hours: 400,
-      price: 399.0,
-      desc: '折合每月仅 33 元，大时长包不限月度单次上限',
+      name: '100 小时大额时长包',
+      hours: 100,
+      price: 99.0,
+      desc: '大额深度使用，纯按会议实际消耗秒数结算，长期有效',
     },
   ];
 
   const handleCreateOrder = async (planId: typeof selectedPlan) => {
-    const targetPlan = plans.find((p) => p.id === planId)!;
-
     try {
       const res = await fetch('http://localhost:3200/v1/orders', {
         method: 'POST',
@@ -60,21 +58,10 @@ export const BillingView: React.FC = () => {
           codeUrl: json.data.codeUrl,
         });
       } else {
-        // 本地降级模拟
-        setOrderModal({
-          orderNo: `TX${Date.now()}`,
-          planName: targetPlan.name,
-          priceYuan: targetPlan.price,
-          codeUrl: 'weixin://wxpay/bizpayurl?mock=1',
-        });
+        alert('无法连接控制面服务端创建微信支付订单，请确认服务端已启动。');
       }
-    } catch {
-      setOrderModal({
-        orderNo: `TX${Date.now()}`,
-        planName: targetPlan.name,
-        priceYuan: targetPlan.price,
-        codeUrl: 'weixin://wxpay/bizpayurl?mock=1',
-      });
+    } catch (e) {
+      alert(`创建订单异常: ${(e as Error).message}`);
     }
   };
 
@@ -97,6 +84,8 @@ export const BillingView: React.FC = () => {
       const targetPlan = plans.find((p) => p.name === orderModal.planName);
       const addedMinutes = (targetPlan?.hours || 30) * 60;
       setQuotaMinutes(quotaMinutes + addedMinutes);
+      // 向控制面同步真实最新账本余额
+      await refreshUserBalance();
 
       setPaySuccessMsg(`🎉 微信支付成功！已成功充值 ${targetPlan?.hours} 小时会议时长。`);
       setOrderModal(null);
@@ -108,9 +97,9 @@ export const BillingView: React.FC = () => {
   return (
     <div data-testid="billing-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-6">
       <div>
-        <h1 className="text-xl font-bold text-text-primary tracking-tight">套餐与时长用量</h1>
+        <h1 className="text-xl font-bold text-text-primary tracking-tight">会议时长账户与用量</h1>
         <p className="text-xs text-text-secondary mt-1">
-          团队最新商业决策：按会议时长计费，双通道 ASR 与 AI 智能洞察全量纳入套餐，无额外点数烦恼
+          团队商业核心决策：纯按会议时长计费，无版本等级差异，双通道 ASR 与 AI 智能洞察全量纳入时长包，无额外扣点
         </p>
       </div>
 

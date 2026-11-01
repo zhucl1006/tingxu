@@ -4,3 +4,7 @@ dist/
 gateway/dist/
 server/dist/
 src-tauri/target/
+server/data/
+data/
+*.local
+.env

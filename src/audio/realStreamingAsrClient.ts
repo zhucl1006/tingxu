@@ -12,6 +12,7 @@ export interface RealStreamingAsrClientOptions {
   wsUrl?: string;
   onInterimText?: (text: string) => void;
   onFinalSentence?: (sentence: FinalSentence) => void;
+  onStatus?: (status: { type: string; status?: string; message?: string }) => void;
   onError?: (err: Error) => void;
 }
 
@@ -46,6 +47,10 @@ export class RealStreamingAsrClient {
               this.options.onInterimText(data.text || '');
             } else if (data.type === 'FINAL' && this.options.onFinalSentence && data.sentence) {
               this.options.onFinalSentence(data.sentence);
+            } else if (data.type === 'STATUS' && this.options.onStatus) {
+              this.options.onStatus(data);
+            } else if (data.type === 'ERROR' && this.options.onError) {
+              this.options.onError(new Error(data.message || 'ASR 服务异常'));
             }
           } catch (e) {
             console.warn('[RealStreamingAsrClient] Parse message error:', e);

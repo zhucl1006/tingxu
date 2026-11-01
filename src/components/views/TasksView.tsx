@@ -1,8 +1,18 @@
 import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
+import { TaskItem, HistoryMeeting } from '../../types/meeting';
 
 export const TasksView: React.FC = () => {
-  const { tasks, toggleTask } = useMeetingStore();
+  const {
+    tasks,
+    toggleTask,
+    historyMeetings,
+    setActiveSummaryMeeting,
+    status,
+    meetingId,
+    setCurrentRoute,
+    setHighlightedTranscriptId,
+  } = useMeetingStore();
   const [filter, setFilter] = useState<'all' | 'pending' | 'completed'>('all');
   const [searchKw, setSearchKw] = useState('');
 
@@ -12,6 +22,45 @@ export const TasksView: React.FC = () => {
     if (searchKw && !t.title.toLowerCase().includes(searchKw.toLowerCase())) return false;
     return true;
   });
+
+  const handleLocateMeeting = (task: TaskItem) => {
+    // 1. 若当前正在进行该会议，直接跳转会中看板并聚焦对应逐字稿
+    if (status === 'RECORDING' && task.meetingId && task.meetingId === meetingId) {
+      if (task.evidenceSegmentId) {
+        setHighlightedTranscriptId(task.evidenceSegmentId);
+      }
+      setCurrentRoute('record');
+      return;
+    }
+
+    // 2. 在历史会议列表中定位
+    const targetMeeting = historyMeetings.find(
+      (m) => (task.meetingId && m.id === task.meetingId) || m.title === task.meetingTitle
+    );
+
+    if (targetMeeting) {
+      setActiveSummaryMeeting(targetMeeting, task.evidenceSegmentId);
+    } else {
+      const fallbackMeeting: HistoryMeeting = {
+        id: task.meetingId || `mtg_task_${task.id}`,
+        title: task.meetingTitle,
+        date: task.createdAt,
+        durationSeconds: 0,
+        summary: `待办来源会议：「${task.meetingTitle}」`,
+        decisionsCount: 0,
+        tasksCount: 1,
+        structuredSummary: {
+          suggestedTitle: task.meetingTitle,
+          overview: `本场会议提炼待办：“${task.title}”，负责人：${task.assignee}。`,
+          decisions: [],
+          actions: [{ title: task.title, assignee: task.assignee, dueDate: '尽快跟进' }],
+          risks: [],
+          facts: [],
+        },
+      };
+      setActiveSummaryMeeting(fallbackMeeting, task.evidenceSegmentId);
+    }
+  };
 
   return (
     <div data-testid="tasks-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-6">
@@ -84,6 +133,17 @@ export const TasksView: React.FC = () => {
                   <span>创建于：{t.createdAt}</span>
                 </div>
               </div>
+
+              {/* 定位到会议过程 */}
+              <button
+                type="button"
+                data-testid={`tasks-page-btn-locate-meeting-${t.id}`}
+                onClick={() => handleLocateMeeting(t)}
+                className="px-2.5 py-1 text-xs rounded bg-panel border border-border-subtle hover:bg-hover hover:border-brand-blue/30 text-brand-blue font-medium shrink-0 flex items-center gap-1 transition-colors self-center shadow-2xs"
+                title="打开该待办来源会议记录，并定位到当时发言"
+              >
+                <span>📍 定位会议记录</span>
+              </button>
             </div>
           ))}
 

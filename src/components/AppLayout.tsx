@@ -7,11 +7,21 @@ import { TasksView } from './views/TasksView';
 import { SearchView } from './views/SearchView';
 import { BillingView } from './views/BillingView';
 import { SettingsView } from './views/SettingsView';
+import { MeetingSummaryView } from './views/MeetingSummaryView';
 import { LoginModal } from './LoginModal';
 import { GatewayConnectionGuard } from './guards/GatewayConnectionGuard';
 
 export const AppLayout: React.FC = () => {
-  const { currentRoute } = useMeetingStore();
+  const { currentRoute, currentUser, isLoginModalOpen, setIsLoginModalOpen, refreshUserBalance } = useMeetingStore();
+
+  // 未登录时强制弹出登录认证，杜绝未登录直接进入业务系统；若已登录则从服务端同步真实时长余额
+  React.useEffect(() => {
+    if (!currentUser && !isLoginModalOpen) {
+      setIsLoginModalOpen(true);
+    } else if (currentUser) {
+      refreshUserBalance();
+    }
+  }, [currentUser, isLoginModalOpen, setIsLoginModalOpen, refreshUserBalance]);
 
   const renderActiveView = () => {
     switch (currentRoute) {
@@ -27,6 +37,8 @@ export const AppLayout: React.FC = () => {
         return <BillingView />;
       case 'settings':
         return <SettingsView />;
+      case 'summary':
+        return <MeetingSummaryView />;
       default:
         return <HomeView />;
     }

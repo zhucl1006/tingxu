@@ -1,20 +1,32 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { createControlPlaneServer } from '../../server/src/server.js';
 import { createGatewayServer } from '../../gateway/src/server.js';
+import { SystemConfigService } from '../../server/src/config/system-config.service.js';
 import { floatTo16BitPCM } from '../../src/audio/realAudioCapture.js';
 import { RealStreamingAsrClient } from '../../src/audio/realStreamingAsrClient.js';
 
 describe('生产级真实接入端到端闭环验证 (E2E Test - T13)', () => {
   it('配置中心更新 -> Gateway 热载 -> 麦克风推流 -> 逐字稿 -> 真实问答全链路走通', async () => {
-    // 1. 启动 Control Plane
-    const cp = createControlPlaneServer();
-    await new Promise<void>((resolve) => cp.server.listen(0, resolve));
-    const cpPort = (cp.server.address() as any).port;
-
-    // 2. 启动 AI Gateway
+    // 1. 启动独立的测试 AI Gateway
     const gw = createGatewayServer();
     await new Promise<void>((resolve) => gw.server.listen(0, resolve));
     const gwPort = (gw.server.address() as any).port;
+
+    // 2. 启动独立的测试 Control Plane，避免污染宿主机 3201 容器真实配置
+    const testConfigFile = path.resolve(process.cwd(), 'data/test-e2e-real-services.json');
+    if (fs.existsSync(testConfigFile)) {
+      try { fs.unlinkSync(testConfigFile); } catch { /* ignore */ }
+    }
+    const cp = createControlPlaneServer({
+      configService: new SystemConfigService({
+        gatewayReloadUrl: `http://127.0.0.1:${gwPort}/internal/config/reload`,
+        configFilePath: testConfigFile,
+      }),
+    });
+    await new Promise<void>((resolve) => cp.server.listen(0, resolve));
+    const cpPort = (cp.server.address() as any).port;
 
     try {
       // 2.5 管理员超级密码登录获取会话
@@ -37,13 +49,13 @@ describe('生产级真实接入端到端闭环验证 (E2E Test - T13)', () => {
         body: JSON.stringify({
           llm: {
             provider: 'deepseek',
-            apiKey: 'sk-deepseek-production-live-key',
+            apiKey: 'mock_deepseek_production_live_key',
             baseUrl: 'https://api.deepseek.com/v1',
             model: 'deepseek-chat',
           },
           asr: {
             provider: 'dashscope',
-            apiKey: 'sk-dashscope-live-key',
+            apiKey: 'mock_dashscope_live_key',
             endpoint: 'wss://dashscope.aliyuncs.com/api-v1/tasks',
           },
         }),
@@ -55,7 +67,11 @@ describe('生产级真实接入端到端闭环验证 (E2E Test - T13)', () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          llm: { provider: 'deepseek', model: 'deepseek-chat' },
+          llm: {
+            provider: 'deepseek',
+            apiKey: 'mock_deepseek_production_live_key',
+            model: 'deepseek-chat',
+          },
           asr: { provider: 'dashscope' },
         }),
       });
@@ -97,6 +113,9 @@ describe('生产级真实接入端到端闭环验证 (E2E Test - T13)', () => {
     } finally {
       await new Promise((resolve) => cp.server.close(resolve));
       await new Promise((resolve) => gw.server.close(resolve));
+      if (fs.existsSync(testConfigFile)) {
+        try { fs.unlinkSync(testConfigFile); } catch { /* ignore */ }
+      }
     }
   });
 });

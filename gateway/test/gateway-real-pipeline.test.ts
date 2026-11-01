@@ -11,8 +11,8 @@ describe('AI Gateway 热重载与真实模型调用测试 (T04, T05, T06)', () =
 
   beforeEach(() => {
     router = new ModelRouter({
-      primaryAdapter: new DeepSeekAdapter(),
-      fallbackAdapter: new QwenAdapter(),
+      primaryAdapter: new DeepSeekAdapter({ apiKey: 'mock_test_key', mockMode: true }),
+      fallbackAdapter: new QwenAdapter({ apiKey: 'mock_test_key', mockMode: true }),
     });
     serverInstance = createGatewayServer({ router });
   });

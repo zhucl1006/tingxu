@@ -3,6 +3,8 @@ import type {
   ModelAdapter,
   LiveInsightRequest,
   MeetingChatRequest,
+  MeetingSummaryRequest,
+  MeetingStructuredSummary,
   InsightPatchPayload,
   ChatResponsePayload,
   ModelExecutionResult,
@@ -79,6 +81,29 @@ export class ModelRouter {
 
       const fallbackResult = await this.fallbackBreaker.execute(async () => {
         return await this.fallbackAdapter.chat(req);
+      });
+
+      return {
+        ...fallbackResult,
+        fallbackTriggered: true,
+      };
+    }
+  }
+
+  public async summarize(
+    req: MeetingSummaryRequest
+  ): Promise<ModelExecutionResult<MeetingStructuredSummary>> {
+    try {
+      return await this.primaryBreaker.execute(async () => {
+        return await this.primaryAdapter.summarize(req);
+      });
+    } catch (primaryError) {
+      console.warn(
+        `[ModelRouter] Primary model ${this.primaryAdapter.provider} failed during summarize. Falling back to ${this.fallbackAdapter.provider}. Reason: ${(primaryError as Error).message}`
+      );
+
+      const fallbackResult = await this.fallbackBreaker.execute(async () => {
+        return await this.fallbackAdapter.summarize(req);
       });
 
       return {

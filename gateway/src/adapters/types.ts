@@ -30,6 +30,8 @@ export interface EvidenceRef {
 
 export interface InsightTopicPatch {
   title: string;
+  type?: 'decision' | 'action' | 'risk' | 'fact';
+  content?: string;
   status: 'DISCUSSING' | 'IN_PROGRESS' | 'RESOLVED';
   decisions: string[];
   evidenceRefs: EvidenceRef[];
@@ -57,6 +59,47 @@ export interface MeetingChatRequest {
 export interface ChatResponsePayload {
   answer: string;
   evidenceRefs: EvidenceRef[];
+}
+
+export interface MeetingSummaryRequest {
+  meetingId: string;
+  transcripts: TranscriptSegment[];
+}
+
+export interface SummaryDecisionItem {
+  title: string;
+  content: string;
+  evidenceQuote?: string;
+  evidenceSegmentId?: string;
+}
+
+export interface SummaryActionItem {
+  title: string;
+  assignee?: string;
+  dueDate?: string;
+  evidenceQuote?: string;
+  evidenceSegmentId?: string;
+}
+
+export interface SummaryRiskItem {
+  title: string;
+  content: string;
+  evidenceQuote?: string;
+}
+
+export interface SummaryFactItem {
+  title: string;
+  content: string;
+  evidenceQuote?: string;
+}
+
+export interface MeetingStructuredSummary {
+  suggestedTitle: string;
+  overview: string;
+  decisions: SummaryDecisionItem[];
+  actions: SummaryActionItem[];
+  risks: SummaryRiskItem[];
+  facts: SummaryFactItem[];
 }
 
 export interface OpenAiCompatibleResponse {
@@ -89,4 +132,5 @@ export interface ModelAdapter {
     onPatch: (patch: InsightPatchPayload) => void
   ): Promise<ModelExecutionResult<InsightPatchPayload[]>>;
   chat(req: MeetingChatRequest): Promise<ModelExecutionResult<ChatResponsePayload>>;
+  summarize(req: MeetingSummaryRequest): Promise<ModelExecutionResult<MeetingStructuredSummary>>;
 }

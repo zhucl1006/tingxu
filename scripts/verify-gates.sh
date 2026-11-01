@@ -31,12 +31,13 @@ echo -e "\n${YELLOW}[Gate 1/5] 正在执行敏感凭据与 API Key 防泄漏扫�
 SECRET_PATTERNS="(sk-[a-zA-Z0-9]{24,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36}|BEGIN[[:space:]]+PRIVATE[[:space:]]+KEY)"
 LEAK_FOUND=0
 
-# 扫描除 .git, node_modules, target, dist, docs/guides, AGENTS.md 自身正则说明之外的所有源文件
+# 扫描除 .git, node_modules, target, dist, data, docs/guides, AGENTS.md 自身正则说明之外的所有源文件
 FILES_TO_SCAN=$(find . -type f \
     ! -path '*/.*/*' \
     ! -path '*/node_modules/*' \
     ! -path '*/target/*' \
     ! -path '*/dist/*' \
+    ! -path '*/data/*' \
     ! -path './scripts/verify-gates.sh' \
     ! -path './docs/guides/AI-DEVELOPMENT-GUIDE.md' \
     ! -path './AGENTS.md' \

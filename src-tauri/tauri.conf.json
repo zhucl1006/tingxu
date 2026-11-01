@@ -46,7 +46,8 @@
     "category": "Productivity",
     "macOS": {
       "hardenedRuntime": true,
-      "entitlements": "Entitlements.plist"
+      "entitlements": "Entitlements.plist",
+      "infoPlist": "Info.plist"
     },
     "windows": {
       "digestAlgorithm": "sha256",

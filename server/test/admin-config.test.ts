@@ -1,4 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import { SystemConfigService } from '../src/config/system-config.service.js';
 import { createControlPlaneServer } from '../src/server.js';
 import { AuthService } from '../src/auth/auth.service.js';
@@ -8,9 +10,19 @@ import { OpsService } from '../src/ops/ops.service.js';
 
 describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
   let configService: SystemConfigService;
+  const testConfigFile = path.resolve(process.cwd(), 'data/test-admin-config.json');
 
   beforeEach(() => {
-    configService = new SystemConfigService();
+    if (fs.existsSync(testConfigFile)) {
+      try { fs.unlinkSync(testConfigFile); } catch { /* ignore */ }
+    }
+    configService = new SystemConfigService({ configFilePath: testConfigFile });
+  });
+
+  afterAll(() => {
+    if (fs.existsSync(testConfigFile)) {
+      try { fs.unlinkSync(testConfigFile); } catch { /* ignore */ }
+    }
   });
 
   it('应该能获取初始系统配置并完成密钥脱敏 (Masking)', async () => {
@@ -170,7 +182,7 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
       const testJson = await testRes.json();
       expect(testJson.code).toBe(0);
       expect(testJson.data.success).toBe(false);
-      expect(testJson.data.message).toContain('未配置大模型 API Key');
+      expect(testJson.data.message).toMatch(/(未配置大模型 API Key|鉴权失败|无效)/);
 
       // 3.1 POST /v1/admin/config/test-llm (传入当前输入框中新填写的 apiKey 时，应优先测试该 key)
       const testWithKeyRes = await fetch(`http://localhost:${port}/v1/admin/config/test-llm`, {

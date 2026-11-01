@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { sendAliyunSms } from '../auth/aliyun-sms.js';
 
 export interface LlmConfig {
@@ -52,9 +54,11 @@ export function isMasked(value: string): boolean {
 export class SystemConfigService {
   private config: SystemConfig;
   private gatewayReloadUrl: string;
+  private configFilePath: string;
 
-  constructor(options?: { gatewayReloadUrl?: string }) {
+  constructor(options?: { gatewayReloadUrl?: string; configFilePath?: string }) {
     this.gatewayReloadUrl = options?.gatewayReloadUrl || process.env.GATEWAY_RELOAD_URL || 'http://localhost:3201/internal/config/reload';
+    this.configFilePath = options?.configFilePath || process.env.SYSTEM_CONFIG_PATH || path.resolve(process.cwd(), 'data/system-config.json');
 
     // 默认内置开箱配置项（未配置凭据保持为空栏位，绝不使用模拟假数据）
     this.config = {
@@ -69,7 +73,7 @@ export class SystemConfigService {
       asr: {
         provider: 'dashscope',
         apiKey: process.env.DASHSCOPE_API_KEY || '',
-        endpoint: process.env.DASHSCOPE_ASR_ENDPOINT || 'wss://dashscope.aliyuncs.com/api-v1/tasks',
+        endpoint: process.env.DASHSCOPE_ASR_ENDPOINT || 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
         sampleRate: 16000,
       },
       sms: {
@@ -84,6 +88,24 @@ export class SystemConfigService {
         apiV3Key: process.env.WECHAT_APIV3_KEY || '',
       },
     };
+
+    // 尝试从持久化文件中恢复配置
+    try {
+      if (fs.existsSync(this.configFilePath)) {
+        const fileContent = fs.readFileSync(this.configFilePath, 'utf-8');
+        const saved = JSON.parse(fileContent);
+        if (saved && typeof saved === 'object') {
+          this.config = {
+            llm: { ...this.config.llm, ...saved.llm },
+            asr: { ...this.config.asr, ...saved.asr },
+            sms: { ...this.config.sms, ...saved.sms },
+            payment: { ...this.config.payment, ...saved.payment },
+          };
+        }
+      }
+    } catch (e) {
+      console.warn('[SystemConfigService] Load persistent config error:', (e as Error).message);
+    }
   }
 
   public async getConfig(options: { masked: boolean }): Promise<SystemConfig> {
@@ -155,6 +177,17 @@ export class SystemConfigService {
       };
     }
 
+    // 安全持久化写入本地配置文件
+    try {
+      const dir = path.dirname(this.configFilePath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      fs.writeFileSync(this.configFilePath, JSON.stringify(this.config, null, 2), 'utf-8');
+    } catch (e) {
+      console.warn('[SystemConfigService] Save config to disk error:', (e as Error).message);
+    }
+
     // 尝试异步通知 AI Gateway 热重载
     this.notifyGatewayReload().catch((err) => {
       console.warn('[SystemConfigService] Gateway hot-reload notification warning:', err.message);
@@ -164,6 +197,11 @@ export class SystemConfigService {
   }
 
   public async notifyGatewayReload(): Promise<boolean> {
+    const isTestEnv = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+    if (isTestEnv && !process.env.GATEWAY_RELOAD_URL && this.gatewayReloadUrl.includes('localhost:3201')) {
+      // 避免单测环境向宿主机生产/开发容器发送热重载，冲掉宿主机真实配置
+      return true;
+    }
     try {
       const internalConfig = await this.getConfig({ masked: false });
       const res = await fetch(this.gatewayReloadUrl, {

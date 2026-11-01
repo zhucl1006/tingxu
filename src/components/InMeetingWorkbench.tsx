@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect, memo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, memo, useCallback, useMemo } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
 import { RealAudioCapture } from '../audio/realAudioCapture';
 import { RealStreamingAsrClient } from '../audio/realStreamingAsrClient';
+import { SlidingWindowAccumulator, WindowPayload } from '../engine/slidingWindow';
 
 // 独立抽离秒表组件：仅订阅 elapsedSeconds，避免每秒重渲庞大整树（对齐 AGENTS.md 5.2 性能规范）
 const HeaderTimer: React.FC = () => {
@@ -34,6 +35,69 @@ const InsightCardItem = memo<InsightCardItemProps>(({
   onKeepCurrent,
   onAcceptRevision,
 }) => {
+  // 专属 Q&A 问答卡片（解决即时问答直观识别与对话呈现）
+  if (card.type === 'qa') {
+    const questionText =
+      card.question || card.title.replace(/^提问：/, '').replace(/^AI 问答：/, '');
+    return (
+      <div
+        data-testid={`workbench-page-insights-panel-card-${card.id}`}
+        className="p-3.5 rounded-lg border border-brand-blue/30 bg-canvas shadow-sm space-y-2.5 transition-all"
+      >
+        <div className="flex items-center justify-between text-xs">
+          <div className="flex items-center gap-1.5">
+            <span
+              data-testid={`workbench-page-insights-panel-badge-qa-${card.id}`}
+              className="text-[11px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue font-semibold flex items-center gap-1"
+            >
+              <span>💬</span>
+              <span>本场问答</span>
+            </span>
+            <span className="text-[11px] text-text-tertiary tabular-nums font-mono">
+              {card.timestamp}
+            </span>
+          </div>
+          {card.evidenceSegmentId && (
+            <button
+              type="button"
+              data-testid={`workbench-page-insights-panel-btn-view-evidence-${card.id}`}
+              onClick={() => onViewEvidence(card.evidenceSegmentId)}
+              className="text-text-secondary hover:text-brand-blue transition-colors flex items-center gap-1 font-medium text-[11px]"
+            >
+              <span>🔗 查看依据</span>
+            </button>
+          )}
+        </div>
+
+        {/* 您的提问 */}
+        <div
+          data-testid={`workbench-page-insights-panel-div-qa-question-${card.id}`}
+          className="p-2 rounded bg-subtle border border-border-subtle flex items-start gap-2"
+        >
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue/15 text-brand-blue font-bold shrink-0">
+            您的提问
+          </span>
+          <p className="text-xs text-text-primary font-medium flex-1">
+            {questionText}
+          </p>
+        </div>
+
+        {/* 听序智能解答 */}
+        <div
+          data-testid={`workbench-page-insights-panel-div-qa-answer-${card.id}`}
+          className="p-2.5 rounded bg-panel/70 border border-border-subtle text-xs text-text-primary leading-relaxed space-y-1"
+        >
+          <div className="flex items-center gap-1.5 text-[10px] text-brand-blue font-semibold">
+            <span>🤖 听序回答</span>
+          </div>
+          <p className="whitespace-pre-wrap text-text-primary leading-relaxed">
+            {card.content}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
       data-testid={`workbench-page-insights-panel-card-${card.id}`}
@@ -78,10 +142,11 @@ const InsightCardItem = memo<InsightCardItemProps>(({
           type="button"
           data-testid={`workbench-page-insights-panel-btn-view-evidence-${card.id}`}
           onClick={() => onViewEvidence(card.evidenceSegmentId)}
-          className="text-brand-blue hover:underline flex items-center gap-1 font-medium"
+          className="text-brand-blue hover:underline flex items-center gap-1 font-medium cursor-pointer"
+          title="点击在右侧高亮查看该洞察依据的发言段落"
         >
-          🔗 查看依据
-          <span className="text-text-tertiary tabular-nums font-mono">
+          🔍 高亮查看发言
+          <span className="text-text-tertiary tabular-nums font-mono text-[11px]">
             ({card.timestamp})
           </span>
         </button>
@@ -145,28 +210,104 @@ const InsightCardItem = memo<InsightCardItemProps>(({
 interface TranscriptRowProps {
   segment: TranscriptSegment;
   isHighlighted: boolean;
+  onRenameSpeaker: (oldName: string, newName: string) => void;
 }
 
-const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted }) => {
+const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted, onRenameSpeaker }) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState(segment.speaker);
+
+  const handleSaveRename = () => {
+    if (editName.trim() && editName.trim() !== segment.speaker) {
+      onRenameSpeaker(segment.speaker, editName.trim());
+    }
+    setIsEditing(false);
+  };
+
   return (
     <div
       id={segment.id}
       data-testid={`workbench-page-transcript-panel-row-segment-${segment.id}`}
       className={`p-3 rounded-md transition-all border ${
         isHighlighted
-          ? 'bg-active border-brand-blue shadow-sm ring-1 ring-brand-blue/30'
+          ? 'bg-active border-brand-blue shadow-md ring-2 ring-brand-blue/30 border-l-4 border-l-brand-blue scale-[1.005]'
           : 'bg-canvas border-border-subtle hover:border-border-strong'
       }`}
     >
-      <div className="flex items-center justify-between mb-1 text-xs">
+      <div className="flex items-center justify-between mb-1.5 text-xs">
         <div className="flex items-center gap-2">
-          <span className="font-semibold text-text-primary">
-            {segment.speaker}
-          </span>
+          {isEditing ? (
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                data-testid={`workbench-page-transcript-panel-input-rename-speaker-${segment.id}`}
+                value={editName}
+                autoFocus
+                onChange={(e) => setEditName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSaveRename();
+                  if (e.key === 'Escape') setIsEditing(false);
+                }}
+                className="px-1.5 py-0.5 text-xs rounded bg-panel border border-brand-blue text-text-primary focus:outline-none w-24"
+              />
+              <button
+                type="button"
+                data-testid={`workbench-page-transcript-panel-btn-save-speaker-${segment.id}`}
+                onClick={handleSaveRename}
+                className="px-1.5 py-0.5 text-[11px] bg-brand-blue text-white rounded hover:bg-brand-blue-hover"
+              >
+                保存
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditing(false)}
+                className="text-[11px] text-text-tertiary hover:text-text-primary"
+              >
+                取消
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 group">
+              <span
+                data-testid={`workbench-page-transcript-panel-text-speaker-${segment.id}`}
+                onClick={() => {
+                  setEditName(segment.speaker);
+                  setIsEditing(true);
+                }}
+                className="font-semibold text-text-primary hover:text-brand-blue cursor-pointer transition-colors"
+                title="点击修改发言人真实姓名"
+              >
+                {segment.speaker}
+              </span>
+              <button
+                type="button"
+                data-testid={`workbench-page-transcript-panel-btn-rename-speaker-${segment.id}`}
+                onClick={() => {
+                  setEditName(segment.speaker);
+                  setIsEditing(true);
+                }}
+                className="text-text-tertiary opacity-0 group-hover:opacity-100 hover:text-brand-blue text-[11px] transition-opacity"
+                title="重命名发言人"
+              >
+                ✎
+              </button>
+            </div>
+          )}
+
           <span className="text-[10px] px-1 py-0.2 rounded bg-panel text-text-secondary">
             {segment.channel === 'mic' ? '本人麦克风' : '对方声卡'}
           </span>
+
+          {isHighlighted && (
+            <span
+              data-testid={`workbench-page-transcript-panel-badge-evidence-${segment.id}`}
+              className="px-1.5 py-0.2 rounded text-[10px] bg-brand-blue text-white font-medium animate-pulse"
+            >
+              📍 洞察依据段落
+            </span>
+          )}
         </div>
+
         <span className="font-mono tabular-nums text-text-tertiary text-[11px]">
           {segment.timestamp}
         </span>
@@ -178,6 +319,18 @@ const TranscriptRow = memo<TranscriptRowProps>(({ segment, isHighlighted }) => {
     </div>
   );
 });
+
+// 严苛的真实待办判断函数：必须有明确行动/落实动词，排除闲聊/假设/口癖
+const isValidActionItem = (title: string, content: string): boolean => {
+  const text = `${title} ${content}`.trim();
+  const actionVerbs = /(负责|完成|提交|排期|推进|输出|跟进|修复|开发|整理|制定|核对|撰写|优化|联系|发给|发送|交付|上线|准备|测试|梳理|编写)/;
+  const casualChat = /(生病|头疼|闲聊|随口|说说|不知道|觉得吧|算了吧|哈哈|嗯嗯|哎呀|可能吧|怎么搞|没意思)/;
+
+  if (casualChat.test(text) && !actionVerbs.test(text)) {
+    return false;
+  }
+  return actionVerbs.test(text);
+};
 
 export const InMeetingWorkbench: React.FC = () => {
   const {
@@ -199,6 +352,8 @@ export const InMeetingWorkbench: React.FC = () => {
     endMeeting,
     addInsight,
     addTranscriptSegment,
+    isGeneratingSummary,
+    renameSpeaker,
   } = useMeetingStore();
 
   const [activeFilter, setActiveFilter] = useState<'all' | InsightType>('all');
@@ -207,25 +362,233 @@ export const InMeetingWorkbench: React.FC = () => {
   const [isAsking, setIsAsking] = useState(false);
   const [rmsLevel, setRmsLevel] = useState(0);
   const [interimText, setInterimText] = useState('');
+  const [micStatus, setMicStatus] = useState<'idle' | 'recording' | 'denied' | 'error'>('idle');
+  const [micError, setMicError] = useState<string>('');
+  const [asrStatus, setAsrStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
+  const [asrError, setAsrError] = useState<string>('');
+  const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
+  const [isExtractingInsights, setIsExtractingInsights] = useState(false);
+
+  // 提取本场所有参会人名单
+  const uniqueSpeakers = useMemo(() => {
+    const list = Array.from(new Set(transcripts.map((t) => t.speaker).filter(Boolean)));
+    return list.length > 0 ? list : ['本人麦克风'];
+  }, [transcripts]);
+
   const transcriptListRef = useRef<HTMLDivElement>(null);
   const audioCaptureRef = useRef<RealAudioCapture | null>(null);
   const asrClientRef = useRef<RealStreamingAsrClient | null>(null);
+  const slidingWindowRef = useRef<SlidingWindowAccumulator>(
+    new SlidingWindowAccumulator({ minCharsThreshold: 60, maxSilenceSeconds: 12 })
+  );
+
+  // 处理增量洞察补丁（严格遵循不可覆盖的人工编辑保护）
+  const processInsightPatch = useCallback((item: any, win: WindowPayload) => {
+    if (!item || !item.patch) return;
+    const { action, topicId, patch } = item;
+    const currentStore = useMeetingStore.getState();
+    const nowTime = formatSeconds(currentStore.elapsedSeconds);
+    const defaultEvidenceId =
+      patch.evidenceRefs?.[0]?.segmentId || win.segments[win.segments.length - 1]?.id || '';
+
+    // 依据大模型返回提炼真实内容，杜绝套话与臆造
+    const cardContent =
+      patch.content ||
+      (Array.isArray(patch.decisions) && patch.decisions.length > 0
+        ? patch.decisions.join('；')
+        : patch.title
+        ? `围绕“${patch.title}”展开讨论并跟进细节`
+        : '现场讨论要点');
+
+    const rawCardType = patch.type || (action === 'ADD_TODO' ? 'action' : 'decision');
+    const isTodoAction = action === 'ADD_TODO' || rawCardType === 'action';
+
+    // 严苛过滤：只有具备明确责任人与行动承诺的才作为待办；普通讨论一律降级为阶段段落总结，杜绝假待办泛滥
+    const isGenuineAction = isTodoAction && isValidActionItem(patch.title || '', cardContent);
+    const cardType = isGenuineAction ? 'action' : (rawCardType === 'action' ? 'decision' : rawCardType);
+
+    if (isGenuineAction) {
+      currentStore.applyInsightPatch({
+        op: 'add',
+        card: {
+          id: topicId || `action_${Date.now()}`,
+          type: 'action',
+          title: `待办：${patch.title || '新增行动项'}`,
+          content: cardContent,
+          timestamp: nowTime,
+          evidenceSegmentId: defaultEvidenceId,
+        },
+      });
+    } else {
+      const existingCard = currentStore.insights.find(
+        (c) => c.id === topicId || (patch.title && c.title === patch.title)
+      );
+
+      const titlePrefix = cardType === 'decision' && isTodoAction ? '阶段讨论洞察：' : '';
+      const displayTitle = `${titlePrefix}${patch.title || '阶段讨论关键结论'}`;
+
+      if (existingCard) {
+        currentStore.applyInsightPatch({
+          op: 'update',
+          targetId: existingCard.id,
+          title: displayTitle,
+          content: cardContent,
+          timestamp: nowTime,
+          evidenceSegmentId: defaultEvidenceId,
+          reason: '后续发言补充事实与结论',
+        });
+      } else {
+        currentStore.applyInsightPatch({
+          op: 'add',
+          card: {
+            id: topicId || `ins_${Date.now()}`,
+            type: cardType,
+            title: displayTitle,
+            content: cardContent,
+            timestamp: nowTime,
+            evidenceSegmentId: defaultEvidenceId,
+          },
+        });
+      }
+    }
+
+    // 动态升级会议标题：若当前是系统生成的通用标题，根据当前对话提炼的主题更新标题，后面跟上日期时间
+    if (patch.title) {
+      const currentTitle = currentStore.title;
+      const isDefaultTitle =
+        !currentTitle ||
+        currentTitle.startsWith('会议记录') ||
+        currentTitle.startsWith('新会议') ||
+        currentTitle.startsWith('未命名');
+
+      if (isDefaultTitle) {
+        const now = new Date();
+        const timeSuffix = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+        currentStore.updateMeetingTitle(`${patch.title.trim()} ${timeSuffix}`);
+      }
+    }
+  }, []);
+
+  // 触发 AI Gateway 增量提炼洞察
+  const triggerLiveInsightExtraction = useCallback(
+    async (windowPayload: WindowPayload) => {
+      setIsExtractingInsights(true);
+      try {
+        const currentInsights = useMeetingStore.getState().insights;
+        const latestTopic =
+          currentInsights.length > 0
+            ? currentInsights[currentInsights.length - 1].title
+            : undefined;
+
+        const res = await fetch('http://localhost:3201/gateway/v1/live-insights', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meetingId: meetingId || 'mtg_current',
+            currentTopicSummary: latestTopic,
+            newStableText: windowPayload.combinedText,
+            contextAnchors: windowPayload.segments.map((s) => ({
+              segmentId: s.id,
+              quote: s.text.slice(0, 30),
+            })),
+          }),
+        });
+
+        if (!res.ok) {
+          console.warn('[LiveInsight] AI Gateway responded with error:', res.status);
+          return;
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) return;
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const chunks = buffer.split('\n\n');
+          buffer = chunks.pop() || '';
+
+          for (const chunk of chunks) {
+            const lines = chunk.split('\n');
+            let event = '';
+            let dataStr = '';
+            for (const line of lines) {
+              if (line.startsWith('event:')) event = line.replace('event:', '').trim();
+              if (line.startsWith('data:')) dataStr = line.replace('data:', '').trim();
+            }
+
+            if (event === 'insight_patch' && dataStr) {
+              try {
+                const parsed = JSON.parse(dataStr);
+                processInsightPatch(parsed, windowPayload);
+              } catch (e) {
+                console.warn('[LiveInsight] JSON parse error:', e);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[LiveInsight] Extraction error:', err);
+      } finally {
+        setIsExtractingInsights(false);
+      }
+    },
+    [meetingId, processInsightPatch]
+  );
 
   // 监听 status 切换，真实驱动物理麦克风采集与流式 ASR 传输
   useEffect(() => {
     if (status === 'RECORDING') {
+      setAsrStatus('connecting');
+      setAsrError('');
+      setMicStatus('recording');
+      setMicError('');
+
       const asrClient = new RealStreamingAsrClient({
         wsUrl: 'ws://localhost:3201/gateway/v1/asr/stream',
-        onInterimText: (text) => setInterimText(text),
+        onInterimText: (text) => {
+          setInterimText(text);
+          if (text) {
+            setAsrError('');
+            setAsrStatus('connected');
+          }
+        },
         onFinalSentence: (sentence) => {
           setInterimText('');
-          addTranscriptSegment({
+          setAsrError('');
+          setAsrStatus('connected');
+          const newSeg: TranscriptSegment = {
             id: `seg_${Date.now()}`,
             channel: 'mic',
             speaker: sentence.speaker || '我',
             text: sentence.text,
             timestamp: sentence.timestamp || formatSeconds(useMeetingStore.getState().elapsedSeconds),
-          });
+          };
+          addTranscriptSegment(newSeg);
+
+          // 传入滑动窗口触发切片
+          const windowPayload = slidingWindowRef.current.appendSegment(
+            newSeg,
+            useMeetingStore.getState().elapsedSeconds
+          );
+          if (windowPayload) {
+            triggerLiveInsightExtraction(windowPayload);
+          }
+        },
+        onStatus: (st) => {
+          if (st.status === 'READY') {
+            setAsrStatus('connected');
+            setAsrError('');
+          }
+        },
+        onError: (err) => {
+          setAsrStatus('error');
+          setAsrError(err.message);
         },
       });
 
@@ -241,9 +604,25 @@ export const InMeetingWorkbench: React.FC = () => {
       audioCaptureRef.current = audioCapture;
 
       // 启动 WebSocket 与麦克风物理采集
-      asrClient.connect().catch(() => {});
-      audioCapture.start().catch((err) => {
-        console.warn('物理麦克风拾取启动提示:', err.message);
+      asrClient.connect().then(() => {
+        setAsrStatus('connected');
+        setAsrError('');
+      }).catch((err) => {
+        setAsrStatus('error');
+        setAsrError(err.message || '无法连接 AI 网关流式 ASR 通道');
+      });
+
+      audioCapture.start().then(() => {
+        setMicStatus('recording');
+      }).catch((err) => {
+        const msg = (err as Error).message;
+        if (msg.includes('NotAllowedError') || msg.includes('Permission') || msg.includes('权限')) {
+          setMicStatus('denied');
+          setMicError('系统麦克风权限未授予，请在系统设置中允许听序使用麦克风');
+        } else {
+          setMicStatus('error');
+          setMicError(msg || '麦克风设备初始化异常');
+        }
       });
     } else {
       if (audioCaptureRef.current) {
@@ -254,8 +633,12 @@ export const InMeetingWorkbench: React.FC = () => {
         asrClientRef.current.disconnect();
         asrClientRef.current = null;
       }
+      slidingWindowRef.current.clear();
+      setIsExtractingInsights(false);
       setRmsLevel(0);
       setInterimText('');
+      setMicStatus('idle');
+      setAsrStatus('disconnected');
     }
 
     return () => {
@@ -266,7 +649,56 @@ export const InMeetingWorkbench: React.FC = () => {
         asrClientRef.current.disconnect();
       }
     };
-  }, [status, addTranscriptSegment]);
+  }, [status, addTranscriptSegment, triggerLiveInsightExtraction]);
+
+  // 周期性时间窗口自动提炼：在会议进行中每隔 25 秒检查一次缓冲区，若累积字符数 >= 35 字自动触发增量段落洞察
+  useEffect(() => {
+    if (status !== 'RECORDING') return;
+
+    const intervalId = setInterval(() => {
+      if (isExtractingInsights) return;
+      const currentSeconds = useMeetingStore.getState().elapsedSeconds;
+      const windowPayload = slidingWindowRef.current.flush(currentSeconds, 35);
+      if (windowPayload) {
+        triggerLiveInsightExtraction(windowPayload);
+      }
+    }, 25000);
+
+    return () => clearInterval(intervalId);
+  }, [status, isExtractingInsights, triggerLiveInsightExtraction]);
+
+  // 平滑或直接吸底滚动辅助函数（兼顾 jsdom 测试环境）
+  const scrollToBottom = useCallback((smooth = true) => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    if (typeof el.scrollTo === 'function') {
+      el.scrollTo({
+        top: el.scrollHeight,
+        behavior: smooth ? 'smooth' : 'auto',
+      });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, []);
+
+  // 监听逐字稿更新与流式打字：未脱手时自动保持平滑吸底
+  useEffect(() => {
+    if (!isUserScrolledUp) {
+      scrollToBottom(true);
+    }
+  }, [transcripts.length, interimText, isUserScrolledUp, scrollToBottom]);
+
+  // 逐字稿向上滚动脱手检测
+  const handleTranscriptScroll = useCallback(() => {
+    const el = transcriptListRef.current;
+    if (!el) return;
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (distanceFromBottom > 60) {
+      setIsUserScrolledUp(true);
+    } else {
+      setIsUserScrolledUp(false);
+    }
+  }, []);
 
   // 联动滚动与短促呼吸高亮消退机制（依据 UIUX-DESIGN-SPEC.md 规范）
   useEffect(() => {
@@ -316,14 +748,26 @@ export const InMeetingWorkbench: React.FC = () => {
 
       if (res && res.ok) {
         const json = await res.json();
+        const evidenceId =
+          json.data?.evidenceRefs?.[0]?.segmentId ||
+          json.data?.citations?.[0]?.segmentId ||
+          transcripts[transcripts.length - 1]?.id ||
+          '';
+
         addInsight({
-          id: `ask-${Date.now()}`,
-          type: 'fact',
-          title: `AI 问答：${q}`,
+          id: `qa-${Date.now()}`,
+          type: 'qa',
+          title: `提问：${q}`,
+          question: q,
           content: json.data?.answer || '已完成本场会议问答分析。',
           timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
-          evidenceSegmentId: json.data?.evidenceRefs?.[0]?.segmentId || transcripts[transcripts.length - 1]?.id || '',
+          evidenceSegmentId: evidenceId,
         });
+
+        // 提问完成后若不在全部或问答视图，自动切到全部让用户立刻看到问答卡片
+        if (activeFilter !== 'all' && activeFilter !== 'qa') {
+          setActiveFilter('all');
+        }
       } else {
         // 彻底废除假数据生成：网关异常时明确提示真实错误，绝不臆造会议内容 (对齐 AGENTS.md 铁律)
         alert('⚠️ AI 网关处理请求失败或网络不可达。根据安全防臆造铁律，系统已拒绝生成离线假数据，请确保网关运行正常后重试。');
@@ -347,7 +791,7 @@ export const InMeetingWorkbench: React.FC = () => {
   return (
     <div
       data-testid="workbench-page-container"
-      className="flex flex-col h-screen w-screen bg-canvas text-text-primary overflow-hidden select-none"
+      className="flex flex-col h-full w-full flex-1 bg-canvas text-text-primary overflow-hidden select-none"
     >
       {/* 顶部状态与工具栏 */}
       <header
@@ -379,6 +823,23 @@ export const InMeetingWorkbench: React.FC = () => {
             {title}
           </h1>
           <HeaderTimer />
+
+          {/* 会中参会人员信息识别展示 */}
+          <div
+            data-testid="workbench-page-header-badge-speakers"
+            className="hidden lg:flex items-center gap-1.5 text-xs bg-panel px-2.5 py-1 rounded-md border border-border-subtle"
+            title="本场参会人名单，支持在逐字稿中点击修改发言人"
+          >
+            <span className="text-text-tertiary">👥 参会人:</span>
+            {uniqueSpeakers.map((sp: string) => (
+              <span
+                key={sp}
+                className="px-1.5 py-0.2 rounded text-[11px] bg-subtle text-text-secondary font-mono border border-border-subtle"
+              >
+                {sp}
+              </span>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
@@ -414,10 +875,18 @@ export const InMeetingWorkbench: React.FC = () => {
           <button
             type="button"
             data-testid="workbench-page-header-btn-end-meeting"
+            disabled={isGeneratingSummary}
             onClick={endMeeting}
-            className="px-3 py-1.5 text-xs bg-status-danger text-white hover:opacity-90 rounded-md font-medium transition-opacity"
+            className="px-3 py-1.5 text-xs bg-status-danger text-white hover:opacity-90 rounded-md font-medium transition-opacity disabled:opacity-60 flex items-center gap-1.5"
           >
-            结束会议
+            {isGeneratingSummary ? (
+              <>
+                <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                <span>提炼全场总结中...</span>
+              </>
+            ) : (
+              <span>结束会议</span>
+            )}
           </button>
         </div>
       </header>
@@ -435,23 +904,26 @@ export const InMeetingWorkbench: React.FC = () => {
             className="px-4 py-2.5 border-b border-border-subtle bg-subtle flex items-center justify-between shrink-0"
           >
             <div className="flex items-center gap-1.5">
-              {(['all', 'decision', 'action', 'risk', 'fact'] as const).map((tab) => (
+              {([
+                { id: 'all', label: '全部洞察' },
+                { id: 'decision', label: '关键结论' },
+                { id: 'action', label: '待办项' },
+                { id: 'risk', label: '风险争议' },
+                { id: 'fact', label: '核心事实' },
+                { id: 'qa', label: '本场问答' },
+              ] as const).map((tab) => (
                 <button
-                  key={tab}
+                  key={tab.id}
                   type="button"
-                  data-testid={`workbench-page-insights-panel-tab-${tab}`}
-                  onClick={() => setActiveFilter(tab)}
+                  data-testid={`workbench-page-insights-panel-tab-${tab.id}`}
+                  onClick={() => setActiveFilter(tab.id as 'all' | InsightType)}
                   className={`px-2.5 py-1 text-xs rounded transition-colors ${
-                    activeFilter === tab
+                    activeFilter === tab.id
                       ? 'bg-brand-blue text-white font-medium'
                       : 'text-text-secondary hover:bg-panel'
                   }`}
                 >
-                  {tab === 'all' && '全部洞察'}
-                  {tab === 'decision' && '关键结论'}
-                  {tab === 'action' && '待办项'}
-                  {tab === 'risk' && '风险争议'}
-                  {tab === 'fact' && '核心事实'}
+                  {tab.label}
                 </button>
               ))}
             </div>
@@ -462,6 +934,17 @@ export const InMeetingWorkbench: React.FC = () => {
               已提炼 {filteredInsights.length} 项
             </span>
           </div>
+
+          {/* AI 增量洞察提炼中指示条 */}
+          {isExtractingInsights && (
+            <div
+              data-testid="workbench-page-insights-panel-text-extracting"
+              className="px-4 py-1.5 bg-brand-blue/10 border-b border-brand-blue/20 flex items-center gap-2 text-[11px] text-brand-blue shrink-0 animate-pulse"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-ping" />
+              <span>✦ AI 正在结合上下文提炼关键结论与待办...</span>
+            </div>
+          )}
 
           {/* 洞察卡片滚动列表 */}
           <div
@@ -489,6 +972,17 @@ export const InMeetingWorkbench: React.FC = () => {
             )}
           </div>
 
+          {/* 提问中加载指示 */}
+          {isAsking && (
+            <div
+              data-testid="workbench-page-insights-panel-div-asking-indicator"
+              className="px-4 py-1.5 bg-brand-blue/10 border-t border-brand-blue/20 flex items-center gap-2 text-[11px] text-brand-blue shrink-0 animate-pulse"
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-ping" />
+              <span>✦ 听序正在依据全场逐字稿思考分析，请稍候...</span>
+            </div>
+          )}
+
           {/* 底部提问输入框 */}
           <form
             onSubmit={handleAskQuestion}
@@ -498,14 +992,15 @@ export const InMeetingWorkbench: React.FC = () => {
             <input
               type="text"
               value={questionText}
+              disabled={isAsking}
               onChange={(e) => setQuestionText(e.target.value)}
-              placeholder="向听序提问本场会议（如：大家就排期达成一致了吗？）"
+              placeholder={isAsking ? '正在生成回答...' : '向听序提问本场会议（如：大家就排期达成一致了吗？）'}
               data-testid="workbench-page-insights-panel-input-ask-question"
-              className="flex-1 px-3 py-2 text-xs bg-canvas border border-border-subtle rounded-md focus:outline-none focus:border-brand-blue text-text-primary placeholder:text-text-tertiary"
+              className="flex-1 px-3 py-2 text-xs bg-canvas border border-border-subtle rounded-md focus:outline-none focus:border-brand-blue text-text-primary placeholder:text-text-tertiary disabled:opacity-60"
             />
             <button
               type="submit"
-              disabled={isAsking}
+              disabled={isAsking || !questionText.trim()}
               data-testid="workbench-page-insights-panel-btn-send-question"
               className="px-3.5 py-2 text-xs bg-brand-blue text-white rounded-md hover:bg-brand-blue-hover transition-colors font-medium shrink-0 disabled:opacity-50"
             >
@@ -517,7 +1012,7 @@ export const InMeetingWorkbench: React.FC = () => {
         {/* 右侧逐字稿：双轨实时转写流 (46%) */}
         <section
           data-testid="workbench-page-transcript-panel-container"
-          className="w-[46%] flex flex-col bg-subtle overflow-hidden"
+          className="w-[46%] flex flex-col bg-subtle overflow-hidden relative"
         >
           {/* 逐字稿顶部信息与搜索 */}
           <div className="px-4 py-2.5 border-b border-border-subtle bg-canvas flex items-center justify-between gap-3 shrink-0">
@@ -530,11 +1025,46 @@ export const InMeetingWorkbench: React.FC = () => {
               </span>
               <span
                 data-testid="workbench-page-transcript-panel-badge-channel-source"
-                className="px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue text-[10px] font-mono flex items-center gap-1"
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 ${
+                  micStatus === 'denied' || micStatus === 'error'
+                    ? 'bg-status-danger/10 text-status-danger'
+                    : asrStatus === 'connected'
+                    ? 'bg-status-success-bg text-status-success'
+                    : 'bg-brand-blue-subtle text-brand-blue'
+                }`}
               >
-                <span className={`w-1.5 h-1.5 rounded-full ${rmsLevel > 0.05 ? 'bg-emerald-400 animate-ping' : 'bg-brand-blue'}`} />
-                真实麦克风拾取中
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    micStatus === 'denied' || micStatus === 'error'
+                      ? 'bg-status-danger'
+                      : rmsLevel > 0.05
+                      ? 'bg-emerald-400 animate-ping'
+                      : 'bg-brand-blue'
+                  }`}
+                />
+                {micStatus === 'denied'
+                  ? '麦克风权限受阻'
+                  : micStatus === 'error'
+                  ? '麦克风异常'
+                  : asrStatus === 'connected'
+                  ? '实时转写已就绪'
+                  : asrStatus === 'connecting'
+                  ? '转写引擎连接中...'
+                  : '麦克风拾音中'}
               </span>
+
+              {/* 麦克风物理音量指示跳动条 */}
+              {status === 'RECORDING' && micStatus === 'recording' && (
+                <div
+                  title="实时麦克风音量能量"
+                  className="w-12 h-1.5 rounded-full bg-subtle overflow-hidden flex items-center border border-border-subtle"
+                >
+                  <div
+                    className="h-full bg-emerald-500 transition-all duration-75"
+                    style={{ width: `${Math.min(100, Math.round(rmsLevel * 250))}%` }}
+                  />
+                </div>
+              )}
             </div>
 
             <input
@@ -547,18 +1077,73 @@ export const InMeetingWorkbench: React.FC = () => {
             />
           </div>
 
+          {/* 麦克风或 ASR 真实异常提示条 */}
+          {micError && (
+            <div
+              data-testid="workbench-page-transcript-panel-alert-mic-error"
+              className="m-3 p-2.5 rounded bg-status-danger/10 border border-status-danger/30 text-status-danger text-xs flex items-center justify-between"
+            >
+              <span>⚠️ {micError}</span>
+            </div>
+          )}
+
+          {asrError && (
+            <div
+              data-testid="workbench-page-transcript-panel-alert-asr-error"
+              className="m-3 p-2.5 rounded bg-status-warning-bg border border-status-warning-border text-status-warning text-xs flex items-center justify-between"
+            >
+              <span>⚠️ {asrError}</span>
+              <button
+                type="button"
+                data-testid="workbench-page-transcript-panel-btn-dismiss-asr-error"
+                onClick={() => setAsrError('')}
+                className="text-text-tertiary hover:text-text-primary px-1.5 py-0.5 rounded text-xs font-bold transition-colors"
+                title="关闭提示"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
+          {/* 逐字稿高亮依据提示条 */}
+          {highlightedTranscriptId && (
+            <div
+              data-testid="workbench-page-transcript-panel-text-highlight-hint"
+              className="px-4 py-1.5 bg-brand-blue-subtle/80 text-brand-blue border-b border-brand-blue/30 flex items-center justify-between text-xs animate-fadeIn"
+            >
+              <div className="flex items-center gap-1.5 font-medium">
+                <span>📍</span>
+                <span>已定位并高亮洞察依据发言（3秒后自动恢复）</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHighlightedTranscriptId(null)}
+                className="text-text-tertiary hover:text-brand-blue text-[11px] px-1"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {/* 逐字稿滚动段落列表 */}
           <div
             ref={transcriptListRef}
+            onScroll={handleTranscriptScroll}
             data-testid="workbench-page-transcript-panel-list-segments"
             className="flex-1 overflow-y-auto p-4 space-y-3"
           >
             {filteredTranscripts.length === 0 && !interimText ? (
               <div
                 data-testid="workbench-page-transcript-panel-empty-state"
-                className="h-full flex items-center justify-center text-text-tertiary text-xs"
+                className="h-full flex flex-col items-center justify-center text-text-tertiary text-xs space-y-2"
               >
-                等待麦克风与系统音频输入...
+                {micStatus === 'denied' ? (
+                  <span className="text-status-danger">请在系统设置中允许听序使用麦克风以开启实时转写</span>
+                ) : asrStatus === 'connected' ? (
+                  <span>🎙️ 麦克风已开启，请开始发言，语音将实时转写为文字...</span>
+                ) : (
+                  <span>等待麦克风与系统音频输入...</span>
+                )}
               </div>
             ) : (
               <>
@@ -567,6 +1152,7 @@ export const InMeetingWorkbench: React.FC = () => {
                     key={segment.id}
                     segment={segment}
                     isHighlighted={highlightedTranscriptId === segment.id}
+                    onRenameSpeaker={renameSpeaker}
                   />
                 ))}
                 {interimText && (
@@ -582,6 +1168,22 @@ export const InMeetingWorkbench: React.FC = () => {
               </>
             )}
           </div>
+
+          {/* 逐字稿向上翻阅时的悬浮吸底按钮 */}
+          {isUserScrolledUp && (
+            <button
+              type="button"
+              data-testid="workbench-page-transcript-panel-btn-scroll-bottom"
+              onClick={() => {
+                setIsUserScrolledUp(false);
+                scrollToBottom(true);
+              }}
+              className="absolute bottom-12 right-6 px-3 py-1.5 rounded-full bg-brand-blue text-white text-xs shadow-md hover:bg-brand-blue-hover flex items-center gap-1.5 transition-all z-10 font-medium cursor-pointer"
+            >
+              <span>↓</span>
+              <span>回到最新发言</span>
+            </button>
+          )}
 
           {/* 逐字稿底部统计 */}
           <div className="px-4 py-2 border-t border-border-subtle bg-canvas flex items-center justify-between text-[11px] text-text-tertiary shrink-0">

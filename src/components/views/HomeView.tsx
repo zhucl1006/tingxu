@@ -3,13 +3,18 @@ import { useMeetingStore } from '../../store/useMeetingStore';
 import { formatSeconds } from '../../utils/formatTime';
 
 export const HomeView: React.FC = () => {
-  const { startMeeting, setCurrentRoute, historyMeetings, tasks, toggleTask } = useMeetingStore();
-  const [newTitle, setNewTitle] = useState('季度业务复盘与 AI 工具链规划');
+  const { startMeeting, setCurrentRoute, historyMeetings, tasks, toggleTask, setActiveSummaryMeeting } = useMeetingStore();
+  const [newTitle, setNewTitle] = useState('');
 
   const pendingTasks = tasks.filter((t) => !t.completed);
 
   const handleStartNewMeeting = () => {
-    startMeeting(newTitle);
+    let finalTitle = newTitle.trim();
+    if (!finalTitle) {
+      const now = new Date();
+      finalTitle = `会议记录 ${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    }
+    startMeeting(finalTitle);
     setCurrentRoute('record');
   };
 
@@ -98,32 +103,63 @@ export const HomeView: React.FC = () => {
           </div>
 
           <div className="space-y-3">
-            {historyMeetings.map((m) => (
+            {historyMeetings.length === 0 ? (
               <div
-                key={m.id}
-                data-testid={`home-page-card-history-${m.id}`}
-                className="p-4 rounded-xl bg-panel border border-border-subtle hover:border-brand-blue/40 transition-all space-y-2.5 cursor-pointer"
-                onClick={() => setCurrentRoute('search')}
+                data-testid="home-page-empty-history"
+                className="p-8 rounded-xl bg-panel border border-border-subtle text-center space-y-2 text-text-tertiary"
               >
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-text-primary">{m.title}</h3>
-                  <span className="text-[11px] text-text-tertiary font-mono">{m.date}</span>
-                </div>
-
-                <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">
-                  {m.summary}
+                <div className="text-2xl">📋</div>
+                <div className="text-xs font-semibold text-text-secondary">暂无历史会议记录</div>
+                <p className="text-[11px] max-w-sm mx-auto">
+                  您目前尚未录制过任何会议。点击上方【进入会中双栏看板】即可开启第一场会议记录，结束时会自动在本地归档并建立全文索引。
                 </p>
-
-                <div className="flex items-center justify-between pt-2 border-t border-border-subtle text-[11px] text-text-tertiary">
-                  <div className="flex items-center gap-3">
-                    <span className="font-mono tabular-nums">⏱ {formatSeconds(m.durationSeconds)}</span>
-                    <span>✓ {m.decisionsCount} 项结论</span>
-                    <span>☑ {m.tasksCount} 项待办</span>
-                  </div>
-                  <span className="text-brand-blue font-medium">查看纪要全文 →</span>
-                </div>
               </div>
-            ))}
+            ) : (
+              historyMeetings.map((m) => (
+                <div
+                  key={m.id}
+                  data-testid={`home-page-card-history-${m.id}`}
+                  className="p-4 rounded-xl bg-panel border border-border-subtle hover:border-brand-blue/40 transition-all space-y-2.5 cursor-pointer"
+                  onClick={() => setActiveSummaryMeeting(m)}
+                >
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-xs font-bold text-text-primary hover:text-brand-blue transition-colors">
+                        {m.title}
+                      </h3>
+                      <span className="text-[11px] text-text-tertiary font-mono">{m.date}</span>
+                    </div>
+
+                    {/* 参会人员 */}
+                    {m.speakers && m.speakers.length > 0 && (
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        {m.speakers.map((sp, idx) => (
+                          <span
+                            key={idx}
+                            className="px-1.5 py-0.2 rounded text-[10px] bg-subtle text-text-secondary border border-border-subtle"
+                          >
+                            👤 {sp}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    <p className="text-xs text-text-secondary leading-relaxed line-clamp-2">
+                      {m.summary}
+                    </p>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-border-subtle text-[11px] text-text-tertiary">
+                      <div className="flex items-center gap-3">
+                        <span className="font-mono tabular-nums">⏱ {formatSeconds(m.durationSeconds)}</span>
+                        <span>✓ {m.decisionsCount} 项结论</span>
+                        <span>☑ {m.tasksCount} 项待办</span>
+                      </div>
+                      <span className="text-brand-blue font-medium hover:underline">
+                        查看纪要与脑图 →
+                      </span>
+                    </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
@@ -167,6 +203,24 @@ export const HomeView: React.FC = () => {
                     <span className="truncate">{task.meetingTitle}</span>
                   </div>
                 </div>
+
+                {/* 定位到会议 */}
+                <button
+                  type="button"
+                  data-testid={`home-page-task-btn-locate-${task.id}`}
+                  onClick={() => {
+                    const targetMeeting = historyMeetings.find(
+                      (m) => (task.meetingId && m.id === task.meetingId) || m.title === task.meetingTitle
+                    );
+                    if (targetMeeting) {
+                      setActiveSummaryMeeting(targetMeeting, task.evidenceSegmentId);
+                    }
+                  }}
+                  className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded text-[10px] bg-panel border border-border-subtle hover:border-brand-blue/30 text-brand-blue font-medium transition-all"
+                  title="定位到该待办来源会议记录"
+                >
+                  📍
+                </button>
               </div>
             ))}
 
