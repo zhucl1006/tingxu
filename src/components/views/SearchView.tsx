@@ -89,7 +89,7 @@ export const SearchView: React.FC = () => {
   }, [query, historyMeetings]);
 
   const handleExportMarkdown = (title: string, summary: string) => {
-    const mdContent = `# ${title}\n\n## 会议概述\n${summary}\n\n## 隐私与存储声明\n本纪要由听序（Tingxu）在本地安全导出，完全保护个人隐私主权，无任何云端正文留存。\n`;
+    const mdContent = `# ${title}\n\n## 会议概述\n${summary}\n\n## 隐私与存储声明\n本纪要由听序在本地安全导出，完全保护个人隐私主权，无任何云端正文留存。\n`;
     const blob = new Blob([mdContent], { type: 'text/markdown;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');

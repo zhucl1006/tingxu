@@ -10,6 +10,13 @@ export const SettingsView: React.FC = () => {
     renameSpeakerProfile,
     deleteSpeakerProfile,
     clearSpeakerProfiles,
+    voiceprintSettings,
+    setVoiceprintPresetMode,
+    updateVoiceprintSettings,
+    resetVoiceprintSettings,
+    appearanceSettings,
+    setAppearanceSettings,
+    resetAppearanceSettings,
   } = useMeetingStore();
   const [gatewayUrl, setGatewayUrl] = useState('http://localhost:3201');
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
@@ -62,6 +69,226 @@ export const SettingsView: React.FC = () => {
         <p className="text-xs text-text-secondary mt-1">
           管理底层媒体采集、自建 AI Gateway 路由与隐私数据配置
         </p>
+      </div>
+
+      {/* 界面外观与排版样式配置 (T03 / Plan 013) */}
+      <div
+        data-testid="settings-page-section-appearance"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-5"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <span>🎨 界面外观与排版样式</span>
+            </h2>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              自定义应用主题、正文字号阶梯、字体风格与间距密度，修改即时生效并持久化到本机
+            </p>
+          </div>
+
+          <button
+            type="button"
+            data-testid="settings-page-appearance-btn-reset-default"
+            onClick={resetAppearanceSettings}
+            className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-secondary hover:text-text-primary transition-colors"
+          >
+            恢复默认外观
+          </button>
+        </div>
+
+        {/* 实时预览卡片 */}
+        <div
+          data-testid="settings-page-appearance-card-preview"
+          className="p-4 rounded-lg bg-subtle border border-border-subtle space-y-2.5"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-text-tertiary">排版实时预览</span>
+            <span
+              data-testid="settings-page-appearance-preview-badge-decision"
+              className="px-2 py-0.5 rounded text-[11px] font-semibold bg-status-success-bg text-status-success"
+            >
+              已决策 · 听序技术规范
+            </span>
+          </div>
+          <p
+            data-testid="settings-page-appearance-preview-text-transcript"
+            className="text-text-primary leading-relaxed"
+          >
+            这是一段会中逐字稿与实时洞察的预览样章。系统将保持 Local-First 隐私主权与不可覆盖的人工编辑保护。
+          </p>
+        </div>
+
+        {/* 主题选择 */}
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">主题模式</label>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-theme-system"
+              onClick={() => setAppearanceSettings({ theme: 'system' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.theme === 'system'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              💻 跟随系统
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-theme-light"
+              onClick={() => setAppearanceSettings({ theme: 'light' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.theme === 'light'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              ☀️ 浅色明亮
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-theme-dark"
+              onClick={() => setAppearanceSettings({ theme: 'dark' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.theme === 'dark'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              🌙 深色暗黑
+            </button>
+          </div>
+        </div>
+
+        {/* 字号阶梯 */}
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">正文字号大小</label>
+          <div className="grid grid-cols-4 gap-2">
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-size-small"
+              onClick={() => setAppearanceSettings({ fontSize: 'small' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.fontSize === 'small'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              紧凑 (12px)
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-size-medium"
+              onClick={() => setAppearanceSettings({ fontSize: 'medium' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.fontSize === 'medium'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              标准 (14px)
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-size-large"
+              onClick={() => setAppearanceSettings({ fontSize: 'large' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.fontSize === 'large'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              舒适 (16px)
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-size-xlarge"
+              onClick={() => setAppearanceSettings({ fontSize: 'xlarge' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.fontSize === 'xlarge'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              醒目 (18px)
+            </button>
+          </div>
+        </div>
+
+        {/* 字体风格 */}
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">字体风格</label>
+          <div className="grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-family-sans"
+              onClick={() => setAppearanceSettings({ fontFamily: 'sans' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.fontFamily === 'sans'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              现代黑体 (Sans)
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-family-serif"
+              onClick={() => setAppearanceSettings({ fontFamily: 'serif' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium font-serif transition-colors ${
+                appearanceSettings.fontFamily === 'serif'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              典雅阅读 (Serif)
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-font-family-mono"
+              onClick={() => setAppearanceSettings({ fontFamily: 'mono' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium font-mono transition-colors ${
+                appearanceSettings.fontFamily === 'mono'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              极客等宽 (Mono)
+            </button>
+          </div>
+        </div>
+
+        {/* 排版密度 */}
+        <div className="space-y-2">
+          <label className="block text-xs font-medium text-text-secondary">阅读密度</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-density-comfortable"
+              onClick={() => setAppearanceSettings({ density: 'comfortable' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.density === 'comfortable'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              舒适宽松 (间距适度)
+            </button>
+            <button
+              type="button"
+              data-testid="settings-page-appearance-btn-density-compact"
+              onClick={() => setAppearanceSettings({ density: 'compact' })}
+              className={`px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                appearanceSettings.density === 'compact'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              紧凑高密 (一屏容纳更多)
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* 音频设备设置 */}
@@ -275,6 +502,200 @@ export const SettingsView: React.FC = () => {
             ))}
           </div>
         )}
+      </div>
+
+      {/* 声纹聚类与说话人分离参数配置 (T11/UX) */}
+      <div
+        data-testid="settings-page-section-voiceprint-params"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-5"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <span>🎛️ 声纹聚类与说话人分离参数</span>
+              <span className="text-[11px] font-normal px-2 py-0.5 rounded-full bg-subtle text-text-secondary border border-border-subtle">
+                {voiceprintSettings.presetMode === 'single'
+                  ? '单人专注模式'
+                  : voiceprintSettings.presetMode === 'balanced'
+                  ? '标准推荐模式'
+                  : voiceprintSettings.presetMode === 'sensitive'
+                  ? '多人激辩模式'
+                  : '自定义微调'}
+              </span>
+            </h2>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              根据参会场景灵活调整聚类阈值与惯性阻尼。若发现单人说话频繁被拆分为多个人，建议切换为“单人专注模式”或提高惯性阻尼。
+            </p>
+          </div>
+
+          <button
+            type="button"
+            data-testid="settings-page-btn-reset-voiceprint-params"
+            onClick={resetVoiceprintSettings}
+            className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-secondary hover:text-text-primary transition-colors"
+          >
+            恢复默认配置
+          </button>
+        </div>
+
+        {/* 预设模式快捷选择 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button
+            type="button"
+            data-testid="settings-page-btn-preset-single"
+            onClick={() => setVoiceprintPresetMode('single')}
+            className={`p-3 rounded-lg border text-left transition-all ${
+              voiceprintSettings.presetMode === 'single'
+                ? 'bg-brand-blue/10 border-brand-blue ring-1 ring-brand-blue/30'
+                : 'bg-subtle border-border-subtle hover:border-brand-blue/50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-text-primary">单人 / 演讲模式</span>
+              {voiceprintSettings.presetMode === 'single' && (
+                <span className="text-[10px] text-brand-blue font-semibold">当前生效</span>
+              )}
+            </div>
+            <p className="text-[11px] text-text-secondary mt-1">
+              超强连续性惯性，专治一人说话因语调起伏、麦克风移动被误拆为多人的情况。
+            </p>
+          </button>
+
+          <button
+            type="button"
+            data-testid="settings-page-btn-preset-balanced"
+            onClick={() => setVoiceprintPresetMode('balanced')}
+            className={`p-3 rounded-lg border text-left transition-all ${
+              voiceprintSettings.presetMode === 'balanced'
+                ? 'bg-brand-blue/10 border-brand-blue ring-1 ring-brand-blue/30'
+                : 'bg-subtle border-border-subtle hover:border-brand-blue/50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-text-primary">标准多人会议 (推荐)</span>
+              {voiceprintSettings.presetMode === 'balanced' && (
+                <span className="text-[10px] text-brand-blue font-semibold">当前生效</span>
+              )}
+            </div>
+            <p className="text-[11px] text-text-secondary mt-1">
+              均衡相似度与发言人连续性，适用于 2-6 人常规会议与日常讨论。
+            </p>
+          </button>
+
+          <button
+            type="button"
+            data-testid="settings-page-btn-preset-sensitive"
+            onClick={() => setVoiceprintPresetMode('sensitive')}
+            className={`p-3 rounded-lg border text-left transition-all ${
+              voiceprintSettings.presetMode === 'sensitive'
+                ? 'bg-brand-blue/10 border-brand-blue ring-1 ring-brand-blue/30'
+                : 'bg-subtle border-border-subtle hover:border-brand-blue/50'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-text-primary">多人激烈交替模式</span>
+              {voiceprintSettings.presetMode === 'sensitive' && (
+                <span className="text-[10px] text-brand-blue font-semibold">当前生效</span>
+              )}
+            </div>
+            <p className="text-[11px] text-text-secondary mt-1">
+              高敏感度，快速捕捉发言人频繁抢话与交替，适用于头脑风暴或答辩。
+            </p>
+          </button>
+        </div>
+
+        {/* 细粒度参数滑块调节 */}
+        <div className="space-y-4 pt-2 border-t border-border-subtle">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-text-primary">
+                余弦相似度聚类阈值 (Similarity Threshold)
+              </span>
+              <span
+                data-testid="settings-page-text-similarity-value"
+                className="font-mono font-bold text-brand-blue tabular-nums"
+              >
+                {voiceprintSettings.similarityThreshold.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.45"
+              max="0.75"
+              step="0.01"
+              data-testid="settings-page-slider-similarity"
+              value={voiceprintSettings.similarityThreshold}
+              onChange={(e) =>
+                updateVoiceprintSettings({ similarityThreshold: parseFloat(e.target.value) })
+              }
+              className="w-full accent-brand-blue cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-text-tertiary">
+              <span>0.45 宽松 (更易合为一个发言人)</span>
+              <span>0.75 严格 (更易拆分为不同发言人)</span>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-text-primary">
+                连续发言惯性阻尼阈值 (Continuity Damping)
+              </span>
+              <span
+                data-testid="settings-page-text-continuity-value"
+                className="font-mono font-bold text-brand-blue tabular-nums"
+              >
+                {voiceprintSettings.continuityThreshold.toFixed(2)}
+              </span>
+            </div>
+            <input
+              type="range"
+              min="0.38"
+              max="0.65"
+              step="0.01"
+              data-testid="settings-page-slider-continuity"
+              value={voiceprintSettings.continuityThreshold}
+              onChange={(e) =>
+                updateVoiceprintSettings({ continuityThreshold: parseFloat(e.target.value) })
+              }
+              className="w-full accent-brand-blue cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-text-tertiary">
+              <span>0.38 强惯性 (同一人停顿后继续说话不易被错分)</span>
+              <span>0.65 弱惯性 (更敏感响应发言人切换)</span>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-medium text-text-primary">
+                新发言人最小有效句长 (Min Duration)
+              </span>
+              <span
+                data-testid="settings-page-text-duration-value"
+                className="font-mono font-bold text-brand-blue tabular-nums"
+              >
+                {voiceprintSettings.minClusterDurationMs} ms
+              </span>
+            </div>
+            <input
+              type="range"
+              min="800"
+              max="3000"
+              step="100"
+              data-testid="settings-page-slider-duration"
+              value={voiceprintSettings.minClusterDurationMs}
+              onChange={(e) =>
+                updateVoiceprintSettings({ minClusterDurationMs: parseInt(e.target.value, 10) })
+              }
+              className="w-full accent-brand-blue cursor-pointer"
+            />
+            <div className="flex justify-between text-[10px] text-text-tertiary">
+              <span>800ms (允许短促插话新建角色)</span>
+              <span>3000ms (短句全继承前人，防止语气助词新建角色)</span>
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* 账号与隐私数据主权 */}

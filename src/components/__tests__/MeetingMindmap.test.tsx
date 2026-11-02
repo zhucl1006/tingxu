@@ -86,6 +86,40 @@ describe('MeetingMindmap - 会议思维导图组件 (TDD)', () => {
     expect(screen.getByText('• 周五前打通所有门禁')).toBeInTheDocument();
   });
 
+  it('渲染双向发散平衡树结构、SVG 曲线连接层与时码小气泡 (讯飞听见模式)', () => {
+    const onSeekMock = vi.fn();
+    render(<MeetingMindmap meeting={mockMeeting} onSeekTimestamp={onSeekMock} />);
+
+    // 1. 验证双向发散容器 (左翼与右翼)
+    expect(screen.getByTestId('meeting-mindmap-side-left')).toBeInTheDocument();
+    expect(screen.getByTestId('meeting-mindmap-side-right')).toBeInTheDocument();
+
+    // 2. 验证 SVG 平滑贝塞尔曲线连线层
+    expect(screen.getByTestId('meeting-mindmap-svg-curves')).toBeInTheDocument();
+
+    // 3. 验证时码小气泡渲染与点击穿透
+    const timePill = screen.getByTestId('meeting-mindmap-badge-time-node-decision-0');
+    expect(timePill).toBeInTheDocument();
+    expect(timePill.textContent).toContain('01:20');
+
+    fireEvent.click(timePill);
+    expect(onSeekMock).toHaveBeenCalledWith('01:20');
+  });
+
+  it('支持全屏展开与退出全屏操作', () => {
+    render(<MeetingMindmap meeting={mockMeeting} />);
+
+    const fullscreenBtn = screen.getByTestId('meeting-mindmap-btn-fullscreen');
+    expect(fullscreenBtn).toBeInTheDocument();
+
+    fireEvent.click(fullscreenBtn);
+    expect(screen.getByTestId('meeting-mindmap-container')).toHaveClass('fixed');
+
+    // 再次点击退出全屏
+    fireEvent.click(fullscreenBtn);
+    expect(screen.getByTestId('meeting-mindmap-container')).not.toHaveClass('fixed');
+  });
+
   it('支持缩放调节控制器', () => {
     render(<MeetingMindmap meeting={mockMeeting} />);
 

@@ -135,6 +135,63 @@ export interface HistoryMeeting {
   transcripts?: TranscriptSegment[];
 }
 
+export type ThemeMode = 'system' | 'light' | 'dark';
+export type FontSizeScale = 'small' | 'medium' | 'large' | 'xlarge';
+export type FontFamilyStyle = 'sans' | 'serif' | 'mono';
+export type ContentDensity = 'comfortable' | 'compact';
+
+export interface UiAppearanceSettings {
+  theme: ThemeMode;
+  fontSize: FontSizeScale;
+  fontFamily: FontFamilyStyle;
+  density: ContentDensity;
+}
+
+export const DEFAULT_APPEARANCE_SETTINGS: UiAppearanceSettings = {
+  theme: 'system',
+  fontSize: 'medium',
+  fontFamily: 'sans',
+  density: 'comfortable',
+};
+
+// 声纹聚类与说话人分离参数配置
+export type VoiceprintPresetMode = 'single' | 'balanced' | 'sensitive' | 'custom';
+
+export interface VoiceprintConfigSettings {
+  presetMode: VoiceprintPresetMode;
+  similarityThreshold: number; // 聚类相似度阈值 (0.45 ~ 0.75，默认 0.58)
+  continuityThreshold: number; // 发言人连续性惯性阻尼阈值 (0.40 ~ 0.65，默认 0.48)
+  minClusterDurationMs: number; // 创建新说话人最短有效时长 (800 ~ 3000ms，默认 1200ms)
+}
+
+export const DEFAULT_VOICEPRINT_SETTINGS: VoiceprintConfigSettings = {
+  presetMode: 'balanced',
+  similarityThreshold: 0.58,
+  continuityThreshold: 0.48,
+  minClusterDurationMs: 1200,
+};
+
+export const VOICEPRINT_PRESET_CONFIGS: Record<
+  Exclude<VoiceprintPresetMode, 'custom'>,
+  Omit<VoiceprintConfigSettings, 'presetMode'>
+> = {
+  single: {
+    similarityThreshold: 0.52,
+    continuityThreshold: 0.42,
+    minClusterDurationMs: 2000,
+  },
+  balanced: {
+    similarityThreshold: 0.58,
+    continuityThreshold: 0.48,
+    minClusterDurationMs: 1200,
+  },
+  sensitive: {
+    similarityThreshold: 0.65,
+    continuityThreshold: 0.54,
+    minClusterDurationMs: 800,
+  },
+};
+
 export interface MeetingState {
   status: MeetingStatus;
   meetingId: string | null;
@@ -188,6 +245,17 @@ export interface MeetingState {
   // 网关地址
   gatewayUrl: string;
   setGatewayUrl: (url: string) => void;
+
+  // 界面外观与排版样式
+  appearanceSettings: UiAppearanceSettings;
+  setAppearanceSettings: (settings: Partial<UiAppearanceSettings>) => void;
+  resetAppearanceSettings: () => void;
+
+  // 声纹识别与说话人分离参数配置
+  voiceprintSettings: VoiceprintConfigSettings;
+  setVoiceprintPresetMode: (mode: VoiceprintPresetMode) => void;
+  updateVoiceprintSettings: (settings: Partial<VoiceprintConfigSettings>) => void;
+  resetVoiceprintSettings: () => void;
 
   // Actions
   startMeeting: (title?: string) => void;

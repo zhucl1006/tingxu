@@ -36,6 +36,7 @@ export interface SpeakerClusterNode {
 
 export interface SpeakerClustererOptions {
   similarityThreshold?: number;
+  continuityThreshold?: number;
   minClusterDurationMs?: number;
   maxSpeakers?: number;
   profileMatchThreshold?: number;
@@ -63,22 +64,48 @@ export interface AssignSpeakerResult {
 }
 
 export class OnlineSpeakerClusterer {
-  private readonly similarityThreshold: number;
-  private readonly minClusterDurationMs: number;
-  private readonly maxSpeakers: number;
-  private readonly profileMatchThreshold: number;
-  private readonly profileMarginThreshold: number;
-  private readonly requiredConsecutiveMatches: number;
+  private similarityThreshold: number;
+  private continuityThreshold: number;
+  private minClusterDurationMs: number;
+  private maxSpeakers: number;
+  private profileMatchThreshold: number;
+  private profileMarginThreshold: number;
+  private requiredConsecutiveMatches: number;
   private clusters: SpeakerClusterNode[] = [];
   private lastAssignedSpeakerId: string | null = null;
 
   constructor(options?: SpeakerClustererOptions) {
-    this.similarityThreshold = options?.similarityThreshold ?? 0.62;
+    this.similarityThreshold = options?.similarityThreshold ?? 0.58;
+    this.continuityThreshold = options?.continuityThreshold ?? 0.48;
     this.minClusterDurationMs = options?.minClusterDurationMs ?? 1200;
     this.maxSpeakers = options?.maxSpeakers ?? 12;
     this.profileMatchThreshold = options?.profileMatchThreshold ?? 0.72;
     this.profileMarginThreshold = options?.profileMarginThreshold ?? 0.06;
     this.requiredConsecutiveMatches = options?.requiredConsecutiveMatches ?? 2;
+  }
+
+  public updateOptions(options: Partial<SpeakerClustererOptions>): void {
+    if (typeof options.similarityThreshold === 'number') {
+      this.similarityThreshold = options.similarityThreshold;
+    }
+    if (typeof options.continuityThreshold === 'number') {
+      this.continuityThreshold = options.continuityThreshold;
+    }
+    if (typeof options.minClusterDurationMs === 'number') {
+      this.minClusterDurationMs = options.minClusterDurationMs;
+    }
+    if (typeof options.maxSpeakers === 'number') {
+      this.maxSpeakers = options.maxSpeakers;
+    }
+    if (typeof options.profileMatchThreshold === 'number') {
+      this.profileMatchThreshold = options.profileMatchThreshold;
+    }
+    if (typeof options.profileMarginThreshold === 'number') {
+      this.profileMarginThreshold = options.profileMarginThreshold;
+    }
+    if (typeof options.requiredConsecutiveMatches === 'number') {
+      this.requiredConsecutiveMatches = options.requiredConsecutiveMatches;
+    }
   }
 
   public assign(input: AssignSpeakerInput): AssignSpeakerResult {
@@ -160,9 +187,19 @@ export class OnlineSpeakerClusterer {
       return this.createNewCluster(embedding, durationMs, 0.94, input.knownProfiles);
     }
 
-    // 4. 与已有说话人质心比对余弦相似度
+    // 4. 与已有说话人质心比对余弦相似度（具备发言人连续性阻尼）
     const best = this.findBestMatch(embedding);
-    if (best && (best.similarity >= this.similarityThreshold || this.clusters.length >= this.maxSpeakers)) {
+    const isContinuityMatch =
+      best &&
+      best.cluster.speakerId === this.lastAssignedSpeakerId &&
+      best.similarity >= this.continuityThreshold;
+
+    if (
+      best &&
+      (best.similarity >= this.similarityThreshold ||
+        isContinuityMatch ||
+        this.clusters.length >= this.maxSpeakers)
+    ) {
       this.updateCentroid(best.cluster, embedding, durationMs);
       best.cluster.segmentCount += 1;
       best.cluster.lastConfidence = Number(Math.min(0.99, Math.max(0.55, best.similarity)).toFixed(2));

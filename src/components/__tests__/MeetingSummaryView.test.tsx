@@ -152,4 +152,52 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     expect(useMeetingStore.getState().currentRoute).toBe('home');
     expect(useMeetingStore.getState().activeSummaryMeeting).toBeNull();
   });
+
+  it('应该支持讯飞听见同款卡片看板与层级大纲视图切换 (Cards vs Outline)', () => {
+    render(<MeetingSummaryView />);
+
+    // 默认展示卡片看板
+    expect(screen.getByTestId('summary-page-btn-mode-cards')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-btn-mode-outline')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-topic-cards-container')).toBeInTheDocument();
+
+    // 切换至大纲模式
+    fireEvent.click(screen.getByTestId('summary-page-btn-mode-outline'));
+    expect(screen.getByTestId('summary-page-structured-outline')).toBeInTheDocument();
+
+    // 切回卡片模式
+    fireEvent.click(screen.getByTestId('summary-page-btn-mode-cards'));
+    expect(screen.getByTestId('summary-page-topic-cards-container')).toBeInTheDocument();
+  });
+
+  it('应该支持左右双栏工作台联动：点击时码气泡触发右侧逐字稿高亮与播放器控制器', () => {
+    render(<MeetingSummaryView />);
+
+    // 左右双栏容器必须存在
+    expect(screen.getByTestId('summary-page-panel-left')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-panel-right')).toBeInTheDocument();
+
+    // 播放器控制器
+    expect(screen.getByTestId('summary-page-audio-player')).toBeInTheDocument();
+
+    // 点击决策卡片中的时间戳小气泡
+    const timePill = screen.getByTestId('summary-pill-time-seg_1');
+    expect(timePill).toBeInTheDocument();
+    fireEvent.click(timePill);
+
+    // 验证右侧逐字稿该行获得高亮状态
+    const targetTranscriptRow = screen.getByTestId('summary-page-row-transcript-seg_1');
+    expect(targetTranscriptRow).toHaveClass('ring-2');
+  });
+
+  it('应该渲染分步行动流时间线（Step 1/2/3）与讯飞同款加粗高亮键名标签', () => {
+    render(<MeetingSummaryView />);
+
+    // 分步执行行动流
+    expect(screen.getByTestId('summary-page-section-action-steps')).toBeInTheDocument();
+    expect(screen.getByText('第一步：跟进全链路门禁联调')).toBeInTheDocument();
+
+    // 键名高亮标签
+    expect(screen.getByText('【核心要点】：')).toBeInTheDocument();
+  });
 });

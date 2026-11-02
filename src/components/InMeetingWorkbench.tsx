@@ -437,6 +437,9 @@ export const InMeetingWorkbench: React.FC = () => {
     registerSpeakerProfile,
     markProfileMatched,
     dismissTentativeMatch,
+    appearanceSettings,
+    setAppearanceSettings,
+    voiceprintSettings,
   } = useMeetingStore();
 
   const [activeFilter, setActiveFilter] = useState<'all' | InsightType>('all');
@@ -463,6 +466,47 @@ export const InMeetingWorkbench: React.FC = () => {
     speakerKey: string;
     displayName: string;
   } | null>(null);
+
+  const FONT_SIZES = ['small', 'medium', 'large', 'xlarge'] as const;
+  const FONT_SIZE_LABELS: Record<string, string> = {
+    small: '紧凑 12px (-2px)',
+    medium: '标准 14px',
+    large: '舒适 16px (+2px)',
+    xlarge: '醒目 18px (+4px)',
+  };
+
+  const handleIncreaseFontSize = () => {
+    const currentIndex = FONT_SIZES.indexOf(appearanceSettings.fontSize);
+    if (currentIndex < FONT_SIZES.length - 1) {
+      setAppearanceSettings({ fontSize: FONT_SIZES[currentIndex + 1] });
+    }
+  };
+
+  const handleDecreaseFontSize = () => {
+    const currentIndex = FONT_SIZES.indexOf(appearanceSettings.fontSize);
+    if (currentIndex > 0) {
+      setAppearanceSettings({ fontSize: FONT_SIZES[currentIndex - 1] });
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey) {
+        if (e.key === '=' || e.key === '+') {
+          e.preventDefault();
+          handleIncreaseFontSize();
+        } else if (e.key === '-' || e.key === '_') {
+          e.preventDefault();
+          handleDecreaseFontSize();
+        } else if (e.key === '0') {
+          e.preventDefault();
+          setAppearanceSettings({ fontSize: 'medium' });
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [appearanceSettings.fontSize, setAppearanceSettings]);
 
   // 初始化加载音频输入设备列表
   useEffect(() => {
@@ -503,17 +547,25 @@ export const InMeetingWorkbench: React.FC = () => {
     new SentenceAudioBuffer({ sampleRate: 16000, maxDurationSeconds: 60 })
   );
   const embeddingEngineRef = useRef<LocalSpeakerEmbeddingEngine>(new LocalSpeakerEmbeddingEngine());
-  const speakerClustererRef = useRef<OnlineSpeakerClusterer>(new OnlineSpeakerClusterer());
-  const slidingWindowRef = useRef<SlidingWindowAccumulator>(
-    new SlidingWindowAccumulator({ minCharsThreshold: 60, maxSilenceSeconds: 12 })
+  const speakerClustererRef = useRef<OnlineSpeakerClusterer>(
+    new OnlineSpeakerClusterer({
+      similarityThreshold: voiceprintSettings.similarityThreshold,
+      continuityThreshold: voiceprintSettings.continuityThreshold,
+      minClusterDurationMs: voiceprintSettings.minClusterDurationMs,
+    })
   );
 
-  const handleRenameSpeakerUnified = useCallback(
-    (speakerIdOrOldName: string, newName: string) => {
-      speakerClustererRef.current.renameSpeaker(speakerIdOrOldName, newName);
-      renameSpeaker(speakerIdOrOldName, newName);
-    },
-    [renameSpeaker]
+  // 监听并实时更新会中在线声纹聚类器参数 (T11)
+  useEffect(() => {
+    speakerClustererRef.current.updateOptions({
+      similarityThreshold: voiceprintSettings.similarityThreshold,
+      continuityThreshold: voiceprintSettings.continuityThreshold,
+      minClusterDurationMs: voiceprintSettings.minClusterDurationMs,
+    });
+  }, [voiceprintSettings]);
+
+  const slidingWindowRef = useRef<SlidingWindowAccumulator>(
+    new SlidingWindowAccumulator({ minCharsThreshold: 60, maxSilenceSeconds: 12 })
   );
 
   const commitVoiceprintEnrollment = useCallback(
@@ -534,6 +586,21 @@ export const InMeetingWorkbench: React.FC = () => {
       });
     },
     [registerSpeakerProfile]
+  );
+
+  const handleRenameSpeakerUnified = useCallback(
+    (speakerIdOrOldName: string, newName: string, alsoEnrollVoiceprint = true) => {
+      const cleanName = newName.trim();
+      if (!cleanName) return;
+      speakerClustererRef.current.renameSpeaker(speakerIdOrOldName, cleanName);
+      renameSpeaker(speakerIdOrOldName, cleanName);
+
+      // 无论在逐字稿中还是控制台重命名，只要改为了明确的参会人姓名，自动同步注册为本地声纹与参会人档案
+      if (alsoEnrollVoiceprint) {
+        commitVoiceprintEnrollment(speakerIdOrOldName, cleanName, true);
+      }
+    },
+    [renameSpeaker, commitVoiceprintEnrollment]
   );
 
   const handleConfirmTentativeMatch = useCallback(
@@ -1133,6 +1200,36 @@ export const InMeetingWorkbench: React.FC = () => {
             </button>
           )}
 
+          {/* 快捷字号缩放胶囊 */}
+          <div className="flex items-center bg-panel border border-border-subtle rounded-md px-1 py-0.5 text-xs">
+            <button
+              type="button"
+              data-testid="workbench-page-header-btn-font-decrease"
+              disabled={appearanceSettings.fontSize === 'small'}
+              onClick={handleDecreaseFontSize}
+              title="缩小字号 (Cmd/Ctrl + -)"
+              className="px-1.5 py-0.5 hover:bg-subtle text-text-secondary hover:text-text-primary rounded disabled:opacity-40 transition-colors font-medium text-[11px]"
+            >
+              A-
+            </button>
+            <span
+              data-testid="workbench-page-header-badge-font-size"
+              className="px-1.5 text-[11px] text-text-tertiary select-none font-mono"
+            >
+              {FONT_SIZE_LABELS[appearanceSettings.fontSize] || '标准 14px'}
+            </span>
+            <button
+              type="button"
+              data-testid="workbench-page-header-btn-font-increase"
+              disabled={appearanceSettings.fontSize === 'xlarge'}
+              onClick={handleIncreaseFontSize}
+              title="放大字号 (Cmd/Ctrl + +)"
+              className="px-1.5 py-0.5 hover:bg-subtle text-text-secondary hover:text-text-primary rounded disabled:opacity-40 transition-colors font-medium text-[11px]"
+            >
+              A+
+            </button>
+          </div>
+
           <button
             type="button"
             data-testid="workbench-page-header-btn-minimize-to-pill"
@@ -1182,7 +1279,7 @@ export const InMeetingWorkbench: React.FC = () => {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && headerSpeakerDraft.trim()) {
                   const cleanName = headerSpeakerDraft.trim();
-                  handleRenameSpeakerUnified(editingHeaderSpeaker.key, cleanName);
+                  handleRenameSpeakerUnified(editingHeaderSpeaker.key, cleanName, false);
                   if (rememberSpeakerVoice) {
                     if (voiceprintConsentAt) {
                       commitVoiceprintEnrollment(editingHeaderSpeaker.key, cleanName, true);
@@ -1229,7 +1326,7 @@ export const InMeetingWorkbench: React.FC = () => {
                 onClick={() => {
                   if (headerSpeakerDraft.trim()) {
                     const cleanName = headerSpeakerDraft.trim();
-                    handleRenameSpeakerUnified(editingHeaderSpeaker.key, cleanName);
+                    handleRenameSpeakerUnified(editingHeaderSpeaker.key, cleanName, false);
                     if (rememberSpeakerVoice) {
                       if (voiceprintConsentAt) {
                         commitVoiceprintEnrollment(editingHeaderSpeaker.key, cleanName, true);

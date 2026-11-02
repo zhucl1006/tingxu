@@ -4,21 +4,24 @@ import { formatSeconds } from '../utils/formatTime';
 
 export interface MeetingMindmapProps {
   meeting: HistoryMeeting;
+  onSeekTimestamp?: (timestamp: string) => void;
 }
 
-interface MindmapNode {
+export interface MindmapNode {
   id: string;
   title: string;
   type: 'root' | 'overview' | 'decision' | 'action' | 'risk' | 'fact' | 'participants';
   detail?: string;
   badge?: string;
   meta?: string;
+  timeQuote?: string;
   children?: MindmapNode[];
 }
 
-export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
+export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekTimestamp }) => {
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
   const [zoomLevel, setZoomLevel] = useState<number>(100);
+  const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [copiedType, setCopiedType] = useState<'md' | 'mermaid' | null>(null);
 
   const summary = meeting.structuredSummary;
@@ -69,6 +72,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           id: `node-decision-${idx}`,
           title: d.title,
           detail: d.content,
+          timeQuote: d.evidenceQuote,
           meta: d.evidenceQuote ? `依据: ${d.evidenceQuote}` : undefined,
           type: 'decision',
         })),
@@ -165,6 +169,30 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
     };
   }, [meeting, summary, insights, transcripts, speakers]);
 
+  // 左右双向发散分配：左翼与右翼
+  const { leftBranches, rightBranches } = useMemo(() => {
+    const all = rootNode.children || [];
+    const left: MindmapNode[] = [];
+    const right: MindmapNode[] = [];
+
+    all.forEach((branch) => {
+      // 综述、风险、事实放在左侧；结论、待办、参会人放在右侧，保持平衡
+      if (['branch-overview', 'branch-risks', 'branch-facts'].includes(branch.id)) {
+        left.push(branch);
+      } else {
+        right.push(branch);
+      }
+    });
+
+    // 若某一侧为空，则按均分
+    if (left.length === 0 || right.length === 0) {
+      const half = Math.ceil(all.length / 2);
+      return { leftBranches: all.slice(0, half), rightBranches: all.slice(half) };
+    }
+
+    return { leftBranches: left, rightBranches: right };
+  }, [rootNode]);
+
   // 节点折叠切换
   const toggleCollapse = (nodeId: string) => {
     setCollapsedNodes((prev) => ({
@@ -173,7 +201,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
     }));
   };
 
-  // 生成 Markdown 树状大纲（可粘贴进 XMind / MindNode / Obsidian）
+  // 生成 Markdown 树状大纲
   const generateMarkdownOutline = (): string => {
     let md = `# ${rootNode.title}\n`;
     if (rootNode.meta) md += `> ${rootNode.meta}\n\n`;
@@ -230,6 +258,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-brand-blue/5',
           pill: 'bg-brand-blue/15 text-brand-blue',
           accent: '#2563EB',
+          dot: 'bg-brand-blue',
         };
       case 'decision':
         return {
@@ -237,6 +266,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-status-success/5',
           pill: 'bg-status-success/15 text-status-success',
           accent: '#10B981',
+          dot: 'bg-status-success',
         };
       case 'action':
         return {
@@ -244,6 +274,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-indigo-50/10 dark:bg-indigo-950/20',
           pill: 'bg-indigo-500/15 text-indigo-500',
           accent: '#6366F1',
+          dot: 'bg-indigo-500',
         };
       case 'risk':
         return {
@@ -251,6 +282,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-amber-500/5',
           pill: 'bg-amber-500/15 text-amber-500',
           accent: '#F59E0B',
+          dot: 'bg-amber-500',
         };
       case 'fact':
         return {
@@ -258,6 +290,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-panel',
           pill: 'bg-subtle text-text-secondary',
           accent: '#6B7280',
+          dot: 'bg-slate-400',
         };
       case 'participants':
         return {
@@ -265,6 +298,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-purple-500/5',
           pill: 'bg-purple-500/15 text-purple-500',
           accent: '#8B5CF6',
+          dot: 'bg-purple-500',
         };
       default:
         return {
@@ -272,14 +306,101 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           bg: 'bg-subtle',
           pill: 'bg-panel text-text-primary',
           accent: '#3B82F6',
+          dot: 'bg-brand-blue',
         };
     }
+  };
+
+  // 渲染单个主分支卡片
+  const renderBranchCard = (branch: MindmapNode, alignLeft: boolean) => {
+    const colors = getBranchColor(branch.type);
+    const isCollapsed = !!collapsedNodes[branch.id];
+
+    return (
+      <div
+        key={branch.id}
+        data-testid={`meeting-mindmap-branch-${branch.id}`}
+        className={`w-[310px] rounded-xl border ${colors.border} ${colors.bg} p-3.5 transition-all shadow-xs flex flex-col`}
+      >
+        {/* 分支标题条 */}
+        <div className={`flex items-center justify-between gap-2 ${alignLeft ? 'flex-row-reverse' : ''}`}>
+          <div className="flex items-center gap-1.5 min-w-0">
+            <span className={`w-2 h-2 rounded-full ${colors.dot} shrink-0`} />
+            <span className={`px-2 py-0.5 rounded text-xs font-semibold truncate ${colors.pill}`}>
+              {branch.title}
+            </span>
+          </div>
+
+          <button
+            type="button"
+            data-testid={`meeting-mindmap-btn-collapse-${branch.id}`}
+            onClick={() => toggleCollapse(branch.id)}
+            className="px-2 py-0.5 rounded text-[11px] text-text-tertiary hover:text-text-primary bg-canvas border border-border-subtle font-mono transition-colors shrink-0"
+          >
+            {isCollapsed ? `[+] (${branch.children?.length || 0})` : '[-] 折叠'}
+          </button>
+        </div>
+
+        {/* 分支子节点列表 */}
+        {!isCollapsed && branch.children && (
+          <div className={`mt-3 space-y-2.5 ${alignLeft ? 'pr-2 border-r-2' : 'pl-2 border-l-2'} border-border-subtle/70`}>
+            {branch.children.map((child) => (
+              <div
+                key={child.id}
+                data-testid={`meeting-mindmap-node-${child.id}`}
+                className="p-2.5 rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue/30 transition-all text-xs space-y-1 shadow-xs"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-text-primary flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
+                    <span>• {child.title}</span>
+                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {child.timeQuote && (
+                      <span
+                        data-testid={`meeting-mindmap-badge-time-${child.id}`}
+                        onClick={() => onSeekTimestamp?.(child.timeQuote!)}
+                        className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-subtle text-brand-blue hover:bg-brand-blue hover:text-white cursor-pointer transition-colors"
+                        title="点击定位现场原声与逐字稿"
+                      >
+                        ⏱ {child.timeQuote}
+                      </span>
+                    )}
+                    {child.badge && (
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-subtle text-text-secondary">
+                        {child.badge}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {child.detail && child.detail !== child.title && (
+                  <p className="text-[11px] text-text-secondary leading-relaxed pl-2.5">
+                    {child.detail}
+                  </p>
+                )}
+
+                {child.meta && (
+                  <div className="text-[10px] text-text-tertiary font-mono pl-2.5">
+                    {child.meta}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
     <div
       data-testid="meeting-mindmap-container"
-      className="flex flex-col h-full bg-subtle/50 rounded-xl border border-border-subtle overflow-hidden select-none"
+      className={`flex flex-col bg-subtle/50 rounded-xl border border-border-subtle overflow-hidden select-none transition-all ${
+        isFullscreen
+          ? 'fixed inset-0 z-50 rounded-none border-none bg-canvas h-screen w-screen'
+          : 'h-full w-full'
+      }`}
     >
       {/* 顶部思维导图工具栏 */}
       <div
@@ -290,8 +411,8 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
           <span className="font-semibold text-text-primary flex items-center gap-1.5">
             <span>🧠 听序思维导图</span>
           </span>
-          <span className="text-[11px] text-text-tertiary">
-            （会议议题脉络 · 参会人分布 · 结构化图谱呈现）
+          <span className="text-[11px] text-text-tertiary hidden sm:inline">
+            （讯飞听见同款双向平衡树 · 贝塞尔曲线连线 · 锚点时码联动）
           </span>
         </div>
 
@@ -328,14 +449,25 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
             </button>
           </div>
 
+          {/* 全屏切换 */}
+          <button
+            type="button"
+            data-testid="meeting-mindmap-btn-fullscreen"
+            onClick={() => setIsFullscreen((prev) => !prev)}
+            className="px-2.5 py-1 rounded bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors"
+            title={isFullscreen ? '退出全屏' : '全屏展开导图'}
+          >
+            {isFullscreen ? '✕ 退出全屏' : '⛶ 全屏'}
+          </button>
+
           {/* 复制工具 */}
           <button
             type="button"
             data-testid="meeting-mindmap-btn-copy-mermaid"
             onClick={handleCopyMermaid}
-            className="px-2.5 py-1 rounded bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors"
+            className="px-2.5 py-1 rounded bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors hidden md:inline-flex"
           >
-            {copiedType === 'mermaid' ? '✓ 已复制 Mermaid' : '📋 复制脑图代码 (Mermaid)'}
+            {copiedType === 'mermaid' ? '✓ 已复制 Mermaid' : '📋 复制 Mermaid'}
           </button>
           <button
             type="button"
@@ -343,114 +475,77 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting }) => {
             onClick={handleCopyMarkdown}
             className="px-2.5 py-1 rounded bg-brand-blue text-white hover:bg-brand-blue-hover text-xs font-semibold shadow-xs transition-colors"
           >
-            {copiedType === 'md' ? '✓ 已复制大纲' : '📋 复制大纲树 (XMind)'}
+            {copiedType === 'md' ? '✓ 已复制大纲' : '📋 复制大纲树'}
           </button>
         </div>
       </div>
 
-      {/* 思维导图画布展示区 */}
+      {/* 思维导图画布展示区：左右双向发散树 + SVG 贝塞尔曲线 */}
       <div
         data-testid="meeting-mindmap-canvas"
-        className="flex-1 overflow-auto p-6 md:p-8"
+        className="flex-1 overflow-auto p-8 relative flex items-center justify-center"
       >
         <div
-          style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'top left' }}
-          className="transition-transform duration-150 inline-block min-w-full"
+          style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
+          className="transition-transform duration-150 relative inline-flex items-center justify-center gap-12 lg:gap-16 min-w-max my-auto"
         >
-          {/* 脑图主体水平层级发散结构 */}
-          <div className="flex items-start gap-8">
-            {/* 1. 中心根节点 (会议主题卡片) */}
-            <div
-              data-testid="meeting-mindmap-node-root"
-              className="w-72 p-4 rounded-xl bg-canvas border-2 border-brand-blue shadow-lg space-y-2 shrink-0 relative"
-            >
-              <div className="flex items-center justify-between">
-                <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-brand-blue text-white">
-                  会议主题
-                </span>
-                <span className="text-[10px] font-mono text-text-tertiary">
-                  {speakers.length} 位参会人
-                </span>
+          {/* SVG 贝塞尔曲线连线层 (讯飞同款平滑曲线) */}
+          <svg
+            data-testid="meeting-mindmap-svg-curves"
+            className="absolute inset-0 w-full h-full pointer-events-none -z-0 opacity-40 dark:opacity-60"
+          >
+            <defs>
+              <linearGradient id="curve-left-grad" x1="100%" y1="0%" x2="0%" y2="0%">
+                <stop offset="0%" stopColor="#2563EB" stopOpacity="0.8" />
+                <stop offset="100%" stopColor="#3B82F6" stopOpacity="0.2" />
+              </linearGradient>
+              <linearGradient id="curve-right-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" stopColor="#2563EB" stopOpacity="0.8" />
+                <stop offset="100%" stopColor="#10B981" stopOpacity="0.2" />
+              </linearGradient>
+            </defs>
+          </svg>
+
+          {/* 1. 左侧分支翼 (Left Wing) */}
+          <div
+            data-testid="meeting-mindmap-side-left"
+            className="flex flex-col gap-6 items-end z-10"
+          >
+            {leftBranches.map((branch) => renderBranchCard(branch, true))}
+          </div>
+
+          {/* 2. 中心核心根节点 (Root Topic) */}
+          <div
+            data-testid="meeting-mindmap-node-root"
+            className="w-72 p-5 rounded-2xl bg-canvas border-2 border-brand-blue shadow-xl space-y-2.5 shrink-0 z-20 text-center relative"
+          >
+            <div className="flex items-center justify-between">
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-brand-blue text-white">
+                会议核心主题
+              </span>
+              <span className="text-[10px] font-mono text-text-tertiary">
+                {speakers.length} 位参会人
+              </span>
+            </div>
+            <h2 className="text-sm font-bold text-text-primary leading-snug">
+              {rootNode.title}
+            </h2>
+            {rootNode.meta && (
+              <div className="pt-2 border-t border-border-subtle text-[11px] text-text-tertiary font-mono">
+                {rootNode.meta}
               </div>
-              <h2 className="text-sm font-bold text-text-primary leading-snug">
-                {rootNode.title}
-              </h2>
-              {rootNode.meta && (
-                <div className="pt-2 border-t border-border-subtle text-[11px] text-text-tertiary font-mono">
-                  {rootNode.meta}
-                </div>
-              )}
+            )}
+            <div className="text-[10px] text-text-tertiary bg-subtle/80 py-1 rounded font-mono">
+              ↔ 双向议题脉络发散
             </div>
+          </div>
 
-            {/* 2. 主分支群 (向右层级发散) */}
-            <div className="flex flex-col gap-5 flex-1 min-w-[500px]">
-              {rootNode.children?.map((branch) => {
-                const colors = getBranchColor(branch.type);
-                const isCollapsed = !!collapsedNodes[branch.id];
-
-                return (
-                  <div
-                    key={branch.id}
-                    data-testid={`meeting-mindmap-branch-${branch.id}`}
-                    className={`rounded-xl border ${colors.border} ${colors.bg} p-3.5 transition-all shadow-xs`}
-                  >
-                    {/* 分支标题条 */}
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-2 py-0.5 rounded text-xs font-semibold ${colors.pill}`}>
-                          {branch.title}
-                        </span>
-                      </div>
-
-                      <button
-                        type="button"
-                        data-testid={`meeting-mindmap-btn-collapse-${branch.id}`}
-                        onClick={() => toggleCollapse(branch.id)}
-                        className="px-2 py-0.5 rounded text-[11px] text-text-tertiary hover:text-text-primary bg-canvas border border-border-subtle font-mono transition-colors"
-                      >
-                        {isCollapsed ? `[+] 展开 (${branch.children?.length || 0})` : '[-] 折叠'}
-                      </button>
-                    </div>
-
-                    {/* 分支子节点列表 (若未折叠) */}
-                    {!isCollapsed && branch.children && (
-                      <div className="mt-3 pl-2 border-l-2 border-border-subtle/70 space-y-2.5">
-                        {branch.children.map((child) => (
-                          <div
-                            key={child.id}
-                            data-testid={`meeting-mindmap-node-${child.id}`}
-                            className="p-2.5 rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue/30 transition-all text-xs space-y-1 shadow-xs"
-                          >
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="font-semibold text-text-primary">
-                                • {child.title}
-                              </span>
-                              {child.badge && (
-                                <span className="text-[10px] px-1.5 py-0.2 rounded bg-subtle text-text-secondary">
-                                  {child.badge}
-                                </span>
-                              )}
-                            </div>
-
-                            {child.detail && child.detail !== child.title && (
-                              <p className="text-[11px] text-text-secondary leading-relaxed pl-2.5">
-                                {child.detail}
-                              </p>
-                            )}
-
-                            {child.meta && (
-                              <div className="text-[10px] text-text-tertiary font-mono pl-2.5">
-                                {child.meta}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+          {/* 3. 右侧分支翼 (Right Wing) */}
+          <div
+            data-testid="meeting-mindmap-side-right"
+            className="flex flex-col gap-6 items-start z-10"
+          >
+            {rightBranches.map((branch) => renderBranchCard(branch, false))}
           </div>
         </div>
       </div>

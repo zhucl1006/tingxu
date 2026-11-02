@@ -10,10 +10,14 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "trayIcon": {
+      "iconPath": "icons/32x32.png",
+      "tooltip": "听序 — AI 会议助手"
+    },
     "windows": [
       {
         "label": "main",
-        "title": "听序 Tingxu — AI 会议助手",
+        "title": "听序 — AI 会议助手",
         "width": 1200,
         "height": 800,
         "minWidth": 900,

@@ -11,6 +11,12 @@ import {
   HistoryMeeting,
   SpeakerVoiceprintProfile,
   RegisterSpeakerProfileInput,
+  UiAppearanceSettings,
+  DEFAULT_APPEARANCE_SETTINGS,
+  VoiceprintConfigSettings,
+  DEFAULT_VOICEPRINT_SETTINGS,
+  VoiceprintPresetMode,
+  VOICEPRINT_PRESET_CONFIGS,
 } from '../types/meeting';
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
 import { l2Normalize } from '../audio/speakerEmbeddingEngine';
@@ -101,6 +107,62 @@ function loadStoredVoiceprintConsent(): number | null {
   return null;
 }
 
+function loadStoredAppearanceSettings(): UiAppearanceSettings {
+  if (typeof window === 'undefined') return { ...DEFAULT_APPEARANCE_SETTINGS };
+  try {
+    const raw = localStorage.getItem('tingxu_ui_appearance');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          ...DEFAULT_APPEARANCE_SETTINGS,
+          ...parsed,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取外观配置失败:', e);
+  }
+  return { ...DEFAULT_APPEARANCE_SETTINGS };
+}
+
+function saveStoredAppearanceSettings(settings: UiAppearanceSettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_ui_appearance', JSON.stringify(settings));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化外观配置失败:', e);
+  }
+}
+
+function loadStoredVoiceprintSettings(): VoiceprintConfigSettings {
+  if (typeof window === 'undefined') return { ...DEFAULT_VOICEPRINT_SETTINGS };
+  try {
+    const raw = localStorage.getItem('tingxu_voiceprint_settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          ...DEFAULT_VOICEPRINT_SETTINGS,
+          ...parsed,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取声纹参数配置失败:', e);
+  }
+  return { ...DEFAULT_VOICEPRINT_SETTINGS };
+}
+
+function saveStoredVoiceprintSettings(settings: VoiceprintConfigSettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_voiceprint_settings', JSON.stringify(settings));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化声纹参数配置失败:', e);
+  }
+}
+
 function saveStoredVoiceprintConsent(consentAt: number | null) {
   if (typeof window === 'undefined') return;
   try {
@@ -156,6 +218,8 @@ const initialMeetingState = {
   voiceprintConsentAt: loadStoredVoiceprintConsent(),
   isGeneratingSummary: false,
   gatewayUrl: 'http://localhost:3201',
+  appearanceSettings: loadStoredAppearanceSettings(),
+  voiceprintSettings: loadStoredVoiceprintSettings(),
 };
 
 export const useMeetingStore = create<MeetingState>((set, get) => ({
@@ -352,10 +416,11 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   endMeeting: async () => {
+    if (get().isGeneratingSummary) return;
     const { meetingId, title, elapsedSeconds, insights, transcripts, historyMeetings, tasks, gatewayUrl } = get();
 
-    // 只有当没有 meetingId，或者既没有录制秒数也没有任何逐字稿内容时，才视为空会议退出
-    if (!meetingId || (elapsedSeconds === 0 && transcripts.length === 0)) {
+    // 只有当没有 meetingId，或者录制时间极短 (<3s) 且没有任何逐字稿内容时，视为空白误触安全退出，不创建多余归档
+    if (!meetingId || (elapsedSeconds < 3 && transcripts.length === 0)) {
       set({ status: 'ENDED', currentRoute: 'home' });
       return;
     }
@@ -514,7 +579,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         evidenceSegmentId: i.evidenceSegmentId,
       }));
 
-    const updatedHistory = [newHistory, ...historyMeetings];
+    // 过滤掉同 id 会议，杜绝重复写入
+    const cleanOldHistory = historyMeetings.filter((m) => m.id !== meetingId);
+    const updatedHistory = [newHistory, ...cleanOldHistory];
     const updatedTasks = [...newTasks, ...tasks];
     saveStoredHistoryMeetings(updatedHistory);
     saveStoredTasks(updatedTasks);
@@ -856,5 +923,49 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
           : t
       ),
     }));
+  },
+
+  setAppearanceSettings: (partial: Partial<UiAppearanceSettings>) => {
+    const next = { ...get().appearanceSettings, ...partial };
+    saveStoredAppearanceSettings(next);
+    set({ appearanceSettings: next });
+  },
+
+  resetAppearanceSettings: () => {
+    saveStoredAppearanceSettings({ ...DEFAULT_APPEARANCE_SETTINGS });
+    set({ appearanceSettings: { ...DEFAULT_APPEARANCE_SETTINGS } });
+  },
+
+  setVoiceprintPresetMode: (mode: VoiceprintPresetMode) => {
+    let nextSettings: VoiceprintConfigSettings;
+    if (mode === 'custom') {
+      nextSettings = { ...get().voiceprintSettings, presetMode: 'custom' };
+    } else {
+      const config = VOICEPRINT_PRESET_CONFIGS[mode];
+      nextSettings = {
+        presetMode: mode,
+        similarityThreshold: config.similarityThreshold,
+        continuityThreshold: config.continuityThreshold,
+        minClusterDurationMs: config.minClusterDurationMs,
+      };
+    }
+    saveStoredVoiceprintSettings(nextSettings);
+    set({ voiceprintSettings: nextSettings });
+  },
+
+  updateVoiceprintSettings: (partial: Partial<VoiceprintConfigSettings>) => {
+    const current = get().voiceprintSettings;
+    const nextSettings: VoiceprintConfigSettings = {
+      ...current,
+      ...partial,
+      presetMode: partial.presetMode ?? 'custom',
+    };
+    saveStoredVoiceprintSettings(nextSettings);
+    set({ voiceprintSettings: nextSettings });
+  },
+
+  resetVoiceprintSettings: () => {
+    saveStoredVoiceprintSettings({ ...DEFAULT_VOICEPRINT_SETTINGS });
+    set({ voiceprintSettings: { ...DEFAULT_VOICEPRINT_SETTINGS } });
   },
 }));

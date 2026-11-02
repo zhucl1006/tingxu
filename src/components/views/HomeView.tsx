@@ -31,7 +31,7 @@ export const HomeView: React.FC = () => {
       {/* 顶部欢迎区 */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-bold text-text-primary tracking-tight">会议工作台</h1>
+          <h1 className="text-xl font-bold text-text-primary tracking-tight">听序工作台</h1>
           <p className="text-xs text-text-secondary mt-1">
             极简无感录制 · 本地优先存储 · 增量洞察自动提炼
           </p>

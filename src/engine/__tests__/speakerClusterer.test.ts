@@ -197,4 +197,54 @@ describe('OnlineSpeakerClusterer 会内在线声纹聚类测试 (T06)', () => {
     expect(s2.matchedProfileId).toBeNull();
     expect(s2.tentativeProfileId).toBeNull();
   });
+
+  it('单人说话场景下即便语调起伏（相似度在 0.50~0.57 之间波动），也应依托连续性阻尼归入同一发言人', () => {
+    const clusterer = new OnlineSpeakerClusterer();
+
+    // 句子 1：正常音调
+    const r1 = clusterer.assign({
+      embedding: makeBasisEmbedding(10, 0.01),
+      durationMs: 2500,
+    });
+    expect(r1.speakerId).toBe('spk_1');
+    expect(r1.displayName).toBe('发言人 1');
+
+    // 构造一个与 basis 10 相似度约为 0.52 的特征向量（模拟单人语调起伏或喷麦）
+    const vecA = makeBasisEmbedding(10, 0.0);
+    const vecB = makeBasisEmbedding(20, 0.0);
+    const blended = l2Normalize(vecA.map((v, i) => v * 0.52 + vecB[i] * 0.48));
+
+    // 句子 2：同一人语调变化，持续时长 1.8s
+    const r2 = clusterer.assign({
+      embedding: blended,
+      durationMs: 1800,
+    });
+    // 依赖连续性阻尼，不会被错误分裂为 发言人 2
+    expect(r2.speakerId).toBe('spk_1');
+    expect(r2.displayName).toBe('发言人 1');
+    expect(r2.isNewSpeaker).toBe(false);
+    expect(clusterer.getSpeakers()).toHaveLength(1);
+  });
+
+  it('updateOptions 应能动态更新聚类参数并即时影响后续判定', () => {
+    const clusterer = new OnlineSpeakerClusterer();
+    clusterer.updateOptions({
+      similarityThreshold: 0.52,
+      continuityThreshold: 0.42,
+      minClusterDurationMs: 2000,
+    });
+
+    const r1 = clusterer.assign({
+      embedding: makeBasisEmbedding(5, 0.01),
+      durationMs: 2500,
+    });
+    expect(r1.speakerId).toBe('spk_1');
+
+    // 1500ms 句长在 2000ms 阈值下，即便特征差异较大也会因短于有效阈值而继承上一个 speaker
+    const r2 = clusterer.assign({
+      embedding: makeBasisEmbedding(30, 0.01),
+      durationMs: 1500,
+    });
+    expect(r2.speakerId).toBe('spk_1');
+  });
 });

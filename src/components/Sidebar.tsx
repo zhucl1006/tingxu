@@ -1,6 +1,7 @@
 import React from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { NavRoute } from '../types/meeting';
+import { TingxuLogo } from './TingxuLogo';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -38,13 +39,18 @@ export const Sidebar: React.FC = () => {
         >
           <div
             data-testid="app-sidebar-div-logo"
-            className="w-8 h-8 rounded-lg bg-brand-blue flex items-center justify-center text-white font-bold text-sm shadow-sm"
+            className="shrink-0 flex items-center justify-center"
           >
-            听
+            <TingxuLogo size={32} />
           </div>
           <div>
-            <div className="text-sm font-bold tracking-tight text-text-primary">听序</div>
-            <div className="text-[10px] font-mono tracking-wider text-text-tertiary">TINGXU · AI</div>
+            <div className="text-sm font-bold tracking-tight text-text-primary flex items-center gap-1.5">
+              <span>听序</span>
+              <span className="text-[10px] px-1.5 py-0.2 rounded font-sans font-medium bg-brand-blue-subtle text-brand-blue border border-brand-blue/20">
+                AI
+              </span>
+            </div>
+            <div className="text-[10px] font-sans tracking-wide text-text-tertiary">会议助手</div>
           </div>
         </div>
 

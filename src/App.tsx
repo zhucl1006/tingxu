@@ -1,9 +1,11 @@
 import React, { useEffect } from 'react';
 import { useMeetingStore } from './store/useMeetingStore';
+import { useAppearance } from './hooks/useAppearance';
 import { AppLayout } from './components/AppLayout';
 import { FloatingPill } from './components/FloatingPill';
 
 export const App: React.FC = () => {
+  useAppearance();
   const { activeWindow, setActiveWindow, tickTimer, status } = useMeetingStore();
 
   // 检查 URL 参数或 Tauri 窗口 label

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
+import { TingxuLogo } from './TingxuLogo';
 
 export const LoginModal: React.FC = () => {
   const { isLoginModalOpen, setIsLoginModalOpen, loginUser, currentUser } = useMeetingStore();
@@ -113,11 +114,11 @@ export const LoginModal: React.FC = () => {
         )}
 
         <div className="flex items-center gap-3 mb-5">
-          <div className="w-10 h-10 rounded-lg bg-brand-blue/15 text-brand-blue flex items-center justify-center font-bold text-lg">
-            听
+          <div className="shrink-0 flex items-center justify-center">
+            <TingxuLogo size={38} />
           </div>
           <div>
-            <h2 className="text-base font-bold text-text-primary">登录听序 Tingxu</h2>
+            <h2 className="text-base font-bold text-text-primary">登录听序</h2>
             <p className="text-xs text-text-secondary">开启极简无感 AI 会议记录</p>
           </div>
         </div>
