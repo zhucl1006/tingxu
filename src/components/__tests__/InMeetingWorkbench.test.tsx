@@ -1,8 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { InMeetingWorkbench } from '../InMeetingWorkbench';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { RealAudioCapture } from '../../audio/realAudioCapture';
+import { LocalSpeakerEmbeddingEngine } from '../../audio/speakerEmbeddingEngine';
+import { SentenceAudioBuffer } from '../../audio/sentenceAudioBuffer';
 
 describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
   beforeEach(() => {
@@ -226,6 +228,19 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
     ).toBeInTheDocument();
   });
 
+  it('014：本场问答遵循隔离网关配置，不调用固定旧端口', async () => {
+    const original = global.fetch;
+    const request = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: { answer: '本地回放' } }) });
+    global.fetch = request;
+    useMeetingStore.getState().setGatewayUrl('http://127.0.0.1:3214');
+    try {
+      render(<InMeetingWorkbench />);
+      fireEvent.change(screen.getByTestId('workbench-page-insights-panel-input-ask-question'), { target: { value: '测试' } });
+      await act(async () => { fireEvent.click(screen.getByTestId('workbench-page-insights-panel-btn-send-question')); });
+      expect(request.mock.calls.some(([url]) => url === 'http://127.0.0.1:3214/gateway/v1/meeting-chat')).toBe(true);
+    } finally { global.fetch = original; useMeetingStore.getState().setGatewayUrl('http://localhost:3201'); }
+  });
+
   it('支持选择麦克风音频输入设备热切换与 QA 规范合规', async () => {
     vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([
       { deviceId: 'mic-device-bt', label: 'AirPods Pro 蓝牙耳机' },
@@ -362,4 +377,246 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
     expect(useMeetingStore.getState().speakerProfiles).toHaveLength(1);
     expect(useMeetingStore.getState().speakerProfiles[0].displayName).toBe('张总 (CEO)');
   });
+
+  it('支持拾音模式切换（扬声器外放开会/仅麦克风）、免驱系统内录与收音排查指南交互', async () => {
+    render(<InMeetingWorkbench />);
+
+    // 1. 验证默认拾音模式为 speaker_meeting（扬声器外放开会，关闭回声消除）
+    const captureModeSelect = screen.getByTestId(
+      'workbench-page-transcript-panel-select-capture-mode'
+    ) as HTMLSelectElement;
+    expect(captureModeSelect).toBeInTheDocument();
+    expect(captureModeSelect.value).toBe('speaker_meeting');
+
+    // 切换为仅麦克风
+    act(() => {
+      fireEvent.change(captureModeSelect, { target: { value: 'mic_only' } });
+    });
+    expect(captureModeSelect.value).toBe('mic_only');
+
+    // 2. 验证系统内录按钮
+    const sysAudioBtn = screen.getByTestId(
+      'workbench-page-transcript-panel-btn-toggle-system-audio'
+    );
+    expect(sysAudioBtn).toHaveTextContent('开启系统内录');
+
+    // 3. 验证排查指南入口与弹窗
+    const helpBtn = screen.getByTestId(
+      'workbench-page-transcript-panel-btn-audio-troubleshoot'
+    );
+    expect(helpBtn).toBeInTheDocument();
+
+    // 点击打开排查指南
+    act(() => {
+      fireEvent.click(helpBtn);
+    });
+
+    const helpModal = screen.getByTestId(
+      'workbench-page-transcript-panel-modal-audio-help'
+    );
+    expect(helpModal).toBeInTheDocument();
+    expect(helpModal).toHaveTextContent('场景一：使用电脑扬声器开会');
+    expect(helpModal).toHaveTextContent('场景二：戴耳机开会');
+
+    // 点击弹窗中的快捷一键切换外放开会按钮
+    const switchSpeakerBtn = screen.getByTestId(
+      'workbench-page-transcript-panel-btn-help-switch-speaker'
+    );
+    act(() => {
+      fireEvent.click(switchSpeakerBtn);
+    });
+    expect(captureModeSelect.value).toBe('speaker_meeting');
+    // 弹窗自动关闭
+    expect(
+      screen.queryByTestId('workbench-page-transcript-panel-modal-audio-help')
+    ).toBeNull();
+  });
+});
+
+describe('014 final先显示，身份后补齐', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  it('声纹未完成也显示final，重复final不重复插入，离开会议后推理不写新会话', async () => {
+    useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().startMeeting('synthetic');
+    const socket = { readyState: 1, send: vi.fn(), close: vi.fn(),
+      onopen: null as (() => void) | null, onmessage: null as ((event: { data: string }) => void) | null,
+      onerror: null as (() => void) | null, onclose: null as (() => void) | null };
+    vi.stubGlobal('WebSocket', vi.fn(() => socket));
+    vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+    vi.spyOn(RealAudioCapture.prototype, 'start').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'stop').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValue();
+    vi.spyOn(SentenceAudioBuffer.prototype, 'sliceByTimeMs').mockReturnValue(new Float32Array(32000));
+    let resolveEmbedding: ((value: number[] | null) => void) | undefined;
+    vi.spyOn(LocalSpeakerEmbeddingEngine.prototype, 'embedSamples').mockImplementation(() => new Promise(resolve => { resolveEmbedding = resolve; }));
+    const view = render(<InMeetingWorkbench />);
+    await act(async () => { socket.onopen?.(); });
+    const data = JSON.stringify({ type: 'FINAL', protocolVersion: 2, taskId: 'task', utteranceId: 't0',
+      source: 'mic', revision: 1, beginTimeMs: 0, endTimeMs: 2000,
+      sentence: { text: '最终文字立即显示', timestamp: '00:00:00', beginTimeMs: 0, endTimeMs: 2000 } });
+    await act(async () => { socket.onmessage?.({ data }); });
+    expect(screen.getByText('最终文字立即显示')).toBeInTheDocument();
+    expect(useMeetingStore.getState().transcripts).toHaveLength(1);
+    await act(async () => { socket.onmessage?.({ data }); });
+    expect(useMeetingStore.getState().transcripts).toHaveLength(1);
+    view.unmount();
+    useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().startMeeting('another');
+    await act(async () => { resolveEmbedding?.(new Array<number>(192).fill(0.1)); });
+    expect(useMeetingStore.getState().transcripts).toEqual([]);
+  });
+
+  it('暂停时连接保持到尾句与FINISHED，确认后停止且保留正文', async () => {
+    useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().startMeeting('synthetic');
+    const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
+      onmessage: null as ((event: { data: string }) => void) | null };
+    vi.stubGlobal('WebSocket', vi.fn(() => socket));
+    vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+    vi.spyOn(RealAudioCapture.prototype, 'start').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'stop').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValue();
+    render(<InMeetingWorkbench />);
+    await act(async () => { socket.onopen?.(); });
+    await act(async () => { fireEvent.click(screen.getByTestId('workbench-page-header-btn-pause-record')); });
+    expect(socket.close).not.toHaveBeenCalled();
+    expect(socket.send).toHaveBeenCalledWith(JSON.stringify({ type: 'FINISH' }));
+    await act(async () => {
+      socket.onmessage?.({ data: JSON.stringify({ type: 'FINAL', protocolVersion: 2, taskId: 'task', utteranceId: 't0',
+        source: 'mic', revision: 1, beginTimeMs: null, endTimeMs: null,
+        sentence: { text: '暂停前的尾句', timestamp: '00:00:00' } }) });
+      socket.onmessage?.({ data: JSON.stringify({ type: 'FINISHED', outcome: 'complete' }) });
+    });
+    expect(screen.getByText('暂停前的尾句')).toBeInTheDocument();
+    expect(useMeetingStore.getState().isDrainingAsr).toBe(false);
+    expect(socket.close).toHaveBeenCalled();
+  });
+
+  it('声纹超时后本会话停止新推理，不累计不可取消的原生任务', async () => {
+    vi.useFakeTimers();
+    try {
+      useMeetingStore.getState().resetMeeting(); useMeetingStore.getState().startMeeting('synthetic');
+      const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
+        onmessage: null as ((event: { data: string }) => void) | null };
+      vi.stubGlobal('WebSocket', vi.fn(() => socket));
+      vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+      vi.spyOn(RealAudioCapture.prototype, 'start').mockResolvedValue();
+      vi.spyOn(RealAudioCapture.prototype, 'stop').mockResolvedValue();
+      vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValue();
+      vi.spyOn(SentenceAudioBuffer.prototype, 'sliceByTimeMs').mockReturnValue(new Float32Array(32000));
+      const embed = vi.spyOn(LocalSpeakerEmbeddingEngine.prototype, 'embedSamples').mockImplementation(() => new Promise(() => {}));
+      render(<InMeetingWorkbench />);
+      await act(async () => { socket.onopen?.(); });
+      await act(async () => {
+        for (let i = 0; i < 3; i++) socket.onmessage?.({ data: JSON.stringify({ type: 'FINAL', protocolVersion: 2,
+          taskId: 'task', utteranceId: `t${i}`, revision: 1, source: 'mic', beginTimeMs: i * 2000, endTimeMs: (i + 1) * 2000,
+          sentence: { text: `第${i}句`, timestamp: '00:00:00' } }) });
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(6100); });
+      expect(embed).toHaveBeenCalledTimes(1);
+      expect(useMeetingStore.getState().transcripts).toHaveLength(3);
+      expect(useMeetingStore.getState().transcripts.every(s => s.speakerStatus === 'unknown')).toBe(true);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('草稿更新合并刷新，final即时替换且取消待刷新的草稿', async () => {
+    vi.useFakeTimers();
+    try {
+      useMeetingStore.getState().resetMeeting(); useMeetingStore.getState().startMeeting('synthetic');
+      const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
+        onmessage: null as ((event: { data: string }) => void) | null };
+      vi.stubGlobal('WebSocket', vi.fn(() => socket));
+      vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+      vi.spyOn(RealAudioCapture.prototype, 'start').mockResolvedValue();
+      vi.spyOn(RealAudioCapture.prototype, 'stop').mockResolvedValue();
+      vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValue();
+      render(<InMeetingWorkbench />);
+      await act(async () => { socket.onopen?.(); });
+      const send = (type: 'INTERIM' | 'FINAL', revision: number, text: string) => socket.onmessage?.({ data: JSON.stringify({
+        type, protocolVersion: 2, taskId: 'task', utteranceId: 't0', revision, source: 'mic', beginTimeMs: null, endTimeMs: null,
+        text, sentence: { text, timestamp: '00:00:00' },
+      }) });
+      act(() => { send('INTERIM', 1, '初稿'); send('INTERIM', 2, '修订'); });
+      expect(screen.getByTestId('workbench-page-transcript-panel-text-interim-content')).toHaveTextContent('初稿');
+      act(() => { send('FINAL', 3, '定稿'); });
+      expect(screen.getByText('定稿')).toBeInTheDocument();
+      await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+      expect(screen.queryByTestId('workbench-page-transcript-panel-div-interim')).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('ASR已确认但设备stop尚未完成时不可恢复，旧stop只能执行一次', async () => {
+    useMeetingStore.getState().resetMeeting(); useMeetingStore.getState().startMeeting('synthetic');
+    const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
+      onmessage: null as ((event: { data: string }) => void) | null };
+    vi.stubGlobal('WebSocket', vi.fn(() => socket));
+    vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+    vi.spyOn(RealAudioCapture.prototype, 'start').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValue();
+    let release: (() => void) | undefined;
+    const stop = vi.spyOn(RealAudioCapture.prototype, 'stop').mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    render(<InMeetingWorkbench />);
+    await act(async () => { socket.onopen?.(); });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('workbench-page-header-btn-pause-record'));
+      socket.onmessage?.({ data: JSON.stringify({ type: 'FINISHED', outcome: 'complete' }) });
+    });
+    act(() => { useMeetingStore.getState().resumeMeeting(); });
+    expect(useMeetingStore.getState().status).toBe('PAUSED');
+    await act(async () => { release?.(); });
+    expect(stop).toHaveBeenCalledTimes(1);
+    act(() => { useMeetingStore.getState().resumeMeeting(); });
+    expect(useMeetingStore.getState().status).toBe('RECORDING');
+    stop.mockResolvedValue();
+  });
+
+  it('手动开启系统内录尚未完成时暂停，须等待该启动后再释放设备', async () => {
+    useMeetingStore.getState().resetMeeting(); useMeetingStore.getState().startMeeting('synthetic');
+    const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
+      onmessage: null as ((event: { data: string }) => void) | null };
+    vi.stubGlobal('WebSocket', vi.fn(() => socket));
+    vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+    vi.spyOn(RealAudioCapture.prototype, 'start').mockResolvedValue();
+    const stop = vi.spyOn(RealAudioCapture.prototype, 'stop').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'stopSystemAudioCapture').mockResolvedValue();
+    let release: (() => void) | undefined;
+    vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValueOnce()
+      .mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    render(<InMeetingWorkbench />);
+    await act(async () => { socket.onopen?.(); });
+    await act(async () => { fireEvent.click(screen.getByTestId('workbench-page-transcript-panel-btn-toggle-system-audio')); });
+    act(() => { fireEvent.click(screen.getByTestId('workbench-page-transcript-panel-btn-toggle-system-audio')); });
+    await act(async () => {
+      fireEvent.click(screen.getByTestId('workbench-page-header-btn-pause-record'));
+      socket.onmessage?.({ data: JSON.stringify({ type: 'FINISHED', outcome: 'complete' }) });
+    });
+    expect(stop).not.toHaveBeenCalled();
+    act(() => { useMeetingStore.getState().resumeMeeting(); });
+    expect(useMeetingStore.getState().status).toBe('PAUSED');
+    await act(async () => { release?.(); });
+    expect(stop).toHaveBeenCalledTimes(1);
+  });
+  it('慢握手超过50块只落本地，READY后的首块建立采样偏移，毫秒句时码正确取整', async () => {
+    useMeetingStore.getState().resetMeeting(); useMeetingStore.getState().startMeeting('015 clock');
+    const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
+      onmessage: null as ((event: { data: string }) => void) | null };
+    vi.stubGlobal('WebSocket', vi.fn(() => socket));
+    vi.spyOn(RealAudioCapture, 'getAvailableMicrophones').mockResolvedValue([]);
+    let push!: (chunk: ArrayBuffer) => void;
+    vi.spyOn(RealAudioCapture.prototype, 'start').mockImplementation(function(this: RealAudioCapture) {
+      push = (this as unknown as { options: { onAudioChunk: (c: ArrayBuffer) => void } }).options.onAudioChunk;
+      return Promise.resolve();
+    });
+    vi.spyOn(RealAudioCapture.prototype, 'stop').mockResolvedValue();
+    vi.spyOn(RealAudioCapture.prototype, 'startSystemAudioCapture').mockResolvedValue();
+    render(<InMeetingWorkbench />); await act(async () => { socket.onopen?.(); });
+    act(() => { for (let i = 0; i < 60; i++) push(new ArrayBuffer(3200)); });
+    expect(socket.send).not.toHaveBeenCalled();
+    act(() => { socket.onmessage?.({ data: JSON.stringify({ type: 'STATUS', status: 'READY' }) }); push(new ArrayBuffer(3200)); });
+    expect(socket.send).toHaveBeenCalledTimes(1);
+    await act(async () => { socket.onmessage?.({ data: JSON.stringify({ type: 'FINAL', protocolVersion: 2, taskId: 'task', utteranceId: 'u', revision: 1, source: 'mic', beginTimeMs: 234, endTimeMs: 834, sentence: { text: '采样时钟', timestamp: '00:00:00' } }) }); });
+    const segment = useMeetingStore.getState().transcripts[0];
+    expect(segment.recordingBeginMs).toBe(6234); expect(segment.timestamp).toBe('00:06');
+  });
+
 });

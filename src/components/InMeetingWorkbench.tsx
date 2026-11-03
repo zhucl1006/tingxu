@@ -1,9 +1,12 @@
+import { getLocalRecording } from '../audio/localRecording';
 import React, { useState, useRef, useEffect, memo, useCallback, useMemo } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
-import { RealAudioCapture } from '../audio/realAudioCapture';
-import { RealStreamingAsrClient } from '../audio/realStreamingAsrClient';
+import { RealAudioCapture, CaptureMode } from '../audio/realAudioCapture';
+import { RealStreamingAsrClient, streamingAsrUrl } from '../audio/realStreamingAsrClient';
+import { TranscriptEventState } from '../audio/transcriptEventState';
+import { InterimTextStabilizer } from '../audio/interimTextStabilizer';
 import { SentenceAudioBuffer } from '../audio/sentenceAudioBuffer';
 import { LocalSpeakerEmbeddingEngine } from '../audio/speakerEmbeddingEngine';
 import { OnlineSpeakerClusterer } from '../engine/speakerClusterer';
@@ -311,11 +314,12 @@ const TranscriptRow = memo<TranscriptRowProps>(({
               >
                 {segment.speaker}
               </span>
+              {segment.speakerStatus === 'pending' && <span data-testid={`workbench-page-transcript-panel-badge-speaker-pending-${segment.id}`} className="text-[10px] text-text-secondary">说话人识别中</span>}
               {typeof segment.speakerConfidence === 'number' && (
                 <span
                   data-testid={`workbench-page-transcript-panel-badge-speaker-confidence-${segment.id}`}
                   className="text-[10px] px-1 py-0.2 rounded bg-brand-blue-subtle text-brand-blue font-mono tabular-nums"
-                  title="端侧声纹聚类置信度"
+                  title={`端侧声纹相似度 ${Math.round(segment.speakerConfidence * 100)}%：算法基于发音生物特征计算，90% 以上代表极高确定性，确认属于该发言人`}
                 >
                   声纹 {Math.round(segment.speakerConfidence * 100)}%
                 </span>
@@ -373,10 +377,6 @@ const TranscriptRow = memo<TranscriptRowProps>(({
             </div>
           )}
 
-          <span className="text-[10px] px-1 py-0.2 rounded bg-panel text-text-secondary">
-            {segment.channel === 'mic' ? '本人麦克风' : '对方声卡'}
-          </span>
-
           {isHighlighted && (
             <span
               data-testid={`workbench-page-transcript-panel-badge-evidence-${segment.id}`}
@@ -432,6 +432,9 @@ export const InMeetingWorkbench: React.FC = () => {
     addInsight,
     addTranscriptSegment,
     isGeneratingSummary,
+    isDrainingAsr,
+    audioDeviceStop,
+    asrDrainWarning,
     renameSpeaker,
     voiceprintConsentAt,
     registerSpeakerProfile,
@@ -448,6 +451,7 @@ export const InMeetingWorkbench: React.FC = () => {
   const [isAsking, setIsAsking] = useState(false);
   const [rmsLevel, setRmsLevel] = useState(0);
   const [interimText, setInterimText] = useState('');
+  const [interimParts, setInterimParts] = useState({ stable: '', unstable: '' });
   const [micStatus, setMicStatus] = useState<'idle' | 'recording' | 'denied' | 'error'>('idle');
   const [micError, setMicError] = useState<string>('');
   const [asrStatus, setAsrStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
@@ -456,6 +460,10 @@ export const InMeetingWorkbench: React.FC = () => {
   const [isExtractingInsights, setIsExtractingInsights] = useState(false);
   const [availableMics, setAvailableMics] = useState<Array<{ deviceId: string; label: string }>>([]);
   const [selectedMicId, setSelectedMicId] = useState<string>('');
+  const [auxDeviceId, setAuxDeviceId] = useState<string>('');
+  const [captureMode, setCaptureMode] = useState<CaptureMode>('speaker_meeting');
+  const [isSystemAudioActive, setIsSystemAudioActive] = useState<boolean>(false);
+  const [showAudioHelpModal, setShowAudioHelpModal] = useState<boolean>(false);
   const [editingHeaderSpeaker, setEditingHeaderSpeaker] = useState<{
     key: string;
     name: string;
@@ -508,12 +516,22 @@ export const InMeetingWorkbench: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [appearanceSettings.fontSize, setAppearanceSettings]);
 
-  // 初始化加载音频输入设备列表
+  // 初始化加载音频输入设备列表并自动侦测 Teams/内录辅助设备
   useEffect(() => {
     RealAudioCapture.getAvailableMicrophones()
-      .then((mics) => setAvailableMics(mics))
+      .then((mics) => {
+        setAvailableMics(mics);
+        const autoAux = mics.find(
+          (d) =>
+            d.deviceId !== selectedMicId &&
+            /teams|blackhole|virtual|内录|loopback/i.test(d.label)
+        );
+        if (autoAux) {
+          setAuxDeviceId(autoAux.deviceId);
+        }
+      })
       .catch(() => {});
-  }, []);
+  }, [selectedMicId]);
 
   // 提取本场所有参会人实体（保留稳定 speakerId 与颜色圆点，支持一键改名）
   const speakerRoster = useMemo(() => {
@@ -543,6 +561,7 @@ export const InMeetingWorkbench: React.FC = () => {
   const transcriptListRef = useRef<HTMLDivElement>(null);
   const audioCaptureRef = useRef<RealAudioCapture | null>(null);
   const asrClientRef = useRef<RealStreamingAsrClient | null>(null);
+  const systemAudioOperationRef = useRef<Promise<void> | null>(null);
   const sentenceBufferRef = useRef<SentenceAudioBuffer>(
     new SentenceAudioBuffer({ sampleRate: 16000, maxDurationSeconds: 60 })
   );
@@ -718,7 +737,7 @@ export const InMeetingWorkbench: React.FC = () => {
             ? currentInsights[currentInsights.length - 1].title
             : undefined;
 
-        const res = await fetch('http://localhost:3201/gateway/v1/live-insights', {
+        const res = await fetch(`${useMeetingStore.getState().gatewayUrl}/gateway/v1/live-insights`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -792,93 +811,168 @@ export const InMeetingWorkbench: React.FC = () => {
     }
   }, []);
 
-  // 监听 status 切换，真实驱动物理麦克风采集与流式 ASR 传输
+  // 切换拾音模式（扬声器外放开会 / 仅个人麦克风）
+  const handleSwitchCaptureMode = useCallback(async (newMode: CaptureMode) => {
+    setCaptureMode(newMode);
+    if (audioCaptureRef.current) {
+      try {
+        await audioCaptureRef.current.setCaptureMode(newMode);
+        setMicError('');
+      } catch (err: any) {
+        setMicError(`切换拾音模式失败: ${err.message || '音频模式无法切换'}`);
+      }
+    }
+  }, []);
+
+  // 切换系统声音内录（免驱本地混音，用于戴耳机开会场景）
+  const handleToggleSystemAudio = useCallback(async () => {
+    const capture = audioCaptureRef.current;
+    const state = useMeetingStore.getState();
+    if (!capture || systemAudioOperationRef.current || state.status !== 'RECORDING' || state.isDrainingAsr || state.audioDeviceStop) return;
+    const stopping = isSystemAudioActive;
+    const operation = stopping ? capture.stopSystemAudioCapture() : capture.startSystemAudioCapture();
+    systemAudioOperationRef.current = operation;
+    try {
+      await operation;
+      if (audioCaptureRef.current !== capture || useMeetingStore.getState().status !== 'RECORDING') return;
+      setIsSystemAudioActive(!stopping);
+      setMicError('');
+    } catch {
+      if (audioCaptureRef.current === capture) setMicError(stopping ? '停止系统内录失败，请暂停并检查音频设备' : '开启系统内录失败，请检查录制权限');
+    } finally {
+      if (systemAudioOperationRef.current === operation) systemAudioOperationRef.current = null;
+    }
+  }, [isSystemAudioActive]);
+
+  // 排空期间保持同一会话存活，停止回调先冻结新音频，最终文字仍可进入本场。
+  const captureActive = status === 'RECORDING' || isDrainingAsr;
   useEffect(() => {
-    if (status === 'RECORDING') {
+    if (captureActive) {
+      const sessionMeetingId = useMeetingStore.getState().meetingId;
+      const local = getLocalRecording(sessionMeetingId || '', useMeetingStore.getState().currentUser?.token);
+      let asrRecordingOffsetMs: number | null = null;
+      let asrReady = false;
+      const eventState = new TranscriptEventState(crypto.randomUUID());
+      const stabilizer = new InterimTextStabilizer();
+      let activeDraftId: string | null = null;
+      let draftTimer: ReturnType<typeof setTimeout> | undefined;
+      let latestDraft: { text: string; parts: { stable: string; unstable: string } } | null = null;
+      const flushDraft = () => {
+        draftTimer = undefined;
+        if (!isCurrent() || !latestDraft) return;
+        setInterimText(latestDraft.text);
+        setInterimParts(latestDraft.parts);
+      };
+      let disposed = false;
+      let acceptingAudio = true;
+      let identityQueue = Promise.resolve();
+      let queuedIdentities = 0;
+      let identityDisabled = false;
+      const isCurrent = () => !disposed && useMeetingStore.getState().meetingId === sessionMeetingId;
+
       setAsrStatus('connecting');
       setAsrError('');
       setMicStatus('recording');
       setMicError('');
 
       const asrClient = new RealStreamingAsrClient({
-        wsUrl: 'ws://localhost:3201/gateway/v1/asr/stream',
-        onInterimText: (text) => {
-          setInterimText(text);
-          if (text) {
-            setAsrError('');
-            setAsrStatus('connected');
-          }
-        },
-        onFinalSentence: (sentence) => {
-          setInterimText('');
+        wsUrl: streamingAsrUrl(useMeetingStore.getState().gatewayUrl),
+        onTranscriptEvent: (rawEvent) => {
+          if (!isCurrent()) return;
+          const event = eventState.accept(rawEvent);
+          if (!event) return;
           setAsrError('');
           setAsrStatus('connected');
-
-          const estimatedDurationMs =
-            typeof sentence.beginTimeMs === 'number' &&
-            typeof sentence.endTimeMs === 'number' &&
-            sentence.endTimeMs > sentence.beginTimeMs
-              ? sentence.endTimeMs - sentence.beginTimeMs
-              : Math.min(6000, Math.max(1200, sentence.text.length * 180));
-
-          const audioSamples =
-            typeof sentence.beginTimeMs === 'number' &&
-            typeof sentence.endTimeMs === 'number' &&
-            sentence.endTimeMs > sentence.beginTimeMs
-              ? sentenceBufferRef.current.sliceByTimeMs(sentence.beginTimeMs, sentence.endTimeMs)
-              : sentenceBufferRef.current.getRecentSamples(estimatedDurationMs);
-
-          void (async () => {
-            const embedding = await embeddingEngineRef.current.embedSamples(audioSamples, 16000);
-            const currentProfiles = useMeetingStore.getState().speakerProfiles;
-            const assigned = speakerClustererRef.current.assign({
-              embedding,
-              durationMs: estimatedDurationMs,
-              upstreamSpeakerId: sentence.speakerId,
-              knownProfiles: currentProfiles.map((p) => ({
-                profileId: p.profileId,
-                displayName: p.displayName,
-                embedding: p.embedding,
-              })),
-            });
-
-            if (assigned.autoMatchedJustNow && assigned.matchedProfileId) {
-              useMeetingStore.getState().markProfileMatched(assigned.matchedProfileId);
-              useMeetingStore.getState().renameSpeaker(assigned.speakerId, assigned.displayName);
+          if (event.type === 'INTERIM') {
+            const first = activeDraftId !== event.id;
+            if (first) {
+              stabilizer.reset();
+              if (draftTimer) clearTimeout(draftTimer);
+              draftTimer = undefined;
             }
-
-            const storedName =
-              useMeetingStore.getState().speakerNames[assigned.speakerId] || assigned.displayName;
-
-            const newSeg: TranscriptSegment = {
-              id: `seg_${Date.now()}`,
-              channel: 'mic',
-              speaker: storedName,
-              speakerId: assigned.speakerId,
-              speakerConfidence: assigned.confidence,
-              speakerColorIndex: assigned.colorIndex,
-              matchedProfileId: assigned.matchedProfileId,
-              tentativeProfileId: assigned.tentativeProfileId,
-              tentativeProfileName: assigned.tentativeProfileName,
-              beginTimeMs: sentence.beginTimeMs ?? undefined,
-              endTimeMs: sentence.endTimeMs ?? undefined,
-              text: sentence.text,
-              timestamp: sentence.timestamp || formatSeconds(useMeetingStore.getState().elapsedSeconds),
-            };
-            addTranscriptSegment(newSeg);
-
-            // 传入滑动窗口触发切片
-            const windowPayload = slidingWindowRef.current.appendSegment(
-              newSeg,
-              useMeetingStore.getState().elapsedSeconds
-            );
-            if (windowPayload) {
-              triggerLiveInsightExtraction(windowPayload);
+            activeDraftId = event.id;
+            latestDraft = { text: event.text, parts: stabilizer.update(event.text, performance.now()) };
+            if (first) flushDraft();
+            else if (!draftTimer) draftTimer = setTimeout(flushDraft, 120);
+            return;
+          }
+          if (activeDraftId === event.id) {
+            if (draftTimer) clearTimeout(draftTimer);
+            draftTimer = undefined;
+            latestDraft = null;
+            activeDraftId = null;
+            stabilizer.reset();
+            setInterimText('');
+            setInterimParts({ stable: '', unstable: '' });
+          }
+          const newSeg: TranscriptSegment = {
+            id: event.id, channel: event.source, speaker: '识别中', speakerStatus: 'pending',
+            text: event.text, beginTimeMs: event.beginTimeMs ?? undefined, endTimeMs: event.endTimeMs ?? undefined,
+            recordingBeginMs: asrRecordingOffsetMs !== null && event.beginTimeMs !== null ? asrRecordingOffsetMs + event.beginTimeMs : undefined,
+            recordingEndMs: asrRecordingOffsetMs !== null && event.endTimeMs !== null ? asrRecordingOffsetMs + event.endTimeMs : undefined,
+            timestamp: formatSeconds(Math.floor(asrRecordingOffsetMs !== null && event.beginTimeMs !== null ? (asrRecordingOffsetMs + event.beginTimeMs) / 1000 : useMeetingStore.getState().elapsedSeconds)),
+          };
+          // 正文立即落稿；身份补全永远不阻塞文字或重新触发洞察。
+          addTranscriptSegment(newSeg);
+          const windowPayload = slidingWindowRef.current.appendSegment(newSeg, useMeetingStore.getState().elapsedSeconds);
+          if (windowPayload) triggerLiveInsightExtraction(windowPayload);
+          const begin = event.beginTimeMs, end = event.endTimeMs;
+          const samples = begin !== null && end !== null && end > begin
+            ? sentenceBufferRef.current.sliceByTimeMs(begin, end) : new Float32Array(0);
+          const durationMs = samples.length / 16;
+          if (durationMs < 300 || queuedIdentities >= 16 || identityDisabled) {
+            useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
+            return;
+          }
+          queuedIdentities++;
+          identityQueue = identityQueue.then(async () => {
+            if (!isCurrent()) return;
+            if (identityDisabled) {
+              queuedIdentities--;
+              useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
+              return;
             }
-          })();
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const embedding = await Promise.race([
+                embeddingEngineRef.current.embedSamples(samples, 16000),
+                new Promise<null>(resolve => { timer = setTimeout(() => {
+                  // 原生调用不可取消；超时后熔断本会话，防止后台推理不断堆积。
+                  identityDisabled = true;
+                  resolve(null);
+                }, 2000); }),
+              ]);
+              if (!isCurrent()) return;
+              if (!embedding) {
+                useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
+                return;
+              }
+              const profiles = useMeetingStore.getState().speakerProfiles;
+              const assigned = speakerClustererRef.current.assign({ embedding, durationMs,
+                upstreamSpeakerId: event.sentence?.speakerId,
+                knownProfiles: profiles.map(p => ({ profileId: p.profileId, displayName: p.displayName, embedding: p.embedding })),
+              });
+              if (assigned.autoMatchedJustNow && assigned.matchedProfileId) {
+                useMeetingStore.getState().markProfileMatched(assigned.matchedProfileId);
+                useMeetingStore.getState().renameSpeaker(assigned.speakerId, assigned.displayName);
+              }
+              useMeetingStore.getState().updateTranscriptSpeaker(event.id, {
+                speaker: assigned.displayName, speakerId: assigned.speakerId, speakerStatus: 'assigned',
+                speakerConfidence: assigned.confidence, speakerColorIndex: assigned.colorIndex,
+                matchedProfileId: assigned.matchedProfileId, tentativeProfileId: assigned.tentativeProfileId,
+                tentativeProfileName: assigned.tentativeProfileName,
+              });
+            } catch {
+              if (isCurrent()) useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
+            } finally {
+              if (timer) clearTimeout(timer);
+              queuedIdentities--;
+            }
+          });
         },
         onStatus: (st) => {
           if (st.status === 'READY') {
+            asrReady = true;
             setAsrStatus('connected');
             setAsrError('');
           }
@@ -892,10 +986,19 @@ export const InMeetingWorkbench: React.FC = () => {
       const audioCapture = new RealAudioCapture({
         sampleRate: 16000,
         deviceId: selectedMicId || undefined,
+        auxDeviceId: auxDeviceId || undefined,
+        captureMode: captureMode,
         onRmsLevel: (rms) => setRmsLevel(rms),
         onAudioChunk: (chunk) => {
+          if (!acceptingAudio || !isCurrent()) return;
+          if (asrRecordingOffsetMs === null && asrReady && asrClient.isConnected()) asrRecordingOffsetMs = local.session.samples / 16;
+          local.session.append(chunk);
+          if (local.session.error) setMicError(local.session.error);
           sentenceBufferRef.current.appendPcm16Chunk(chunk);
-          asrClient.sendPcmChunk(chunk);
+          if (asrReady) asrClient.sendPcmChunk(chunk);
+        },
+        onSystemAudioStateChange: (active) => {
+          setIsSystemAudioActive(active);
         },
         onDeviceEnded: () => {
           // 🎧 当蓝牙耳机关闭或断开连接时，自动自愈切回系统默认麦克风
@@ -906,9 +1009,7 @@ export const InMeetingWorkbench: React.FC = () => {
               console.warn('Auto switch to default mic failed:', e);
             });
           }
-          if (asrClientRef.current) {
-            asrClientRef.current.connect().catch(() => {});
-          }
+
           setTimeout(() => {
             setMicError('');
           }, 4000);
@@ -925,19 +1026,71 @@ export const InMeetingWorkbench: React.FC = () => {
 
       asrClientRef.current = asrClient;
       audioCaptureRef.current = audioCapture;
+      let startPromise: Promise<void> = Promise.resolve();
+      let stopPromise: Promise<void> | null = null;
+      const stopCapture = () => {
+        if (stopPromise) return stopPromise;
+        // 设备全局停止不能晚于下一会话启动；等待旧启动流程结束后只停止一次。
+        stopPromise = Promise.allSettled([startPromise, systemAudioOperationRef.current]).then(() => audioCapture.stop()).catch(() => {
+          if (useMeetingStore.getState().meetingId === sessionMeetingId) {
+            useMeetingStore.setState({ asrDrainWarning: '音频设备释放异常，请检查设备状态' });
+          }
+        });
+        useMeetingStore.setState({ audioDeviceStop: stopPromise });
+        void stopPromise.then(() => {
+          if (useMeetingStore.getState().audioDeviceStop === stopPromise) useMeetingStore.setState({ audioDeviceStop: null });
+        });
+        return stopPromise;
+      };
+      let drainPromise: Promise<'complete' | 'timeout' | 'error'> | null = null;
+      const drain = () => {
+        if (drainPromise) return drainPromise;
+        acceptingAudio = false;
+        // stop可能等待原生设备；先冻结音频入口，finish不依赖设备销毁完成。
+        void stopCapture();
+        drainPromise = Promise.all([asrClient.finish(), local.session.checkpoint()]).then(([outcome]) => {
+          eventState.close();
+          // 推理不是定稿条件；排空完成后挂起标签安全降级，不等待慢模型。
+          if (isCurrent()) {
+            for (const segment of useMeetingStore.getState().transcripts) {
+              if (segment.speakerStatus === 'pending') useMeetingStore.getState().updateTranscriptSpeaker(segment.id, { speaker: '未确定', speakerStatus: 'unknown' });
+            }
+          }
+          disposed = true;
+          return outcome;
+        });
+        return drainPromise;
+      };
+      useMeetingStore.setState({ asrSessionDrain: drain });
+
 
       // 启动 WebSocket 与麦克风物理采集
       asrClient.connect().then(() => {
+        if (!isCurrent()) return;
         setAsrStatus('connected');
         setAsrError('');
       }).catch((err) => {
+        if (!isCurrent()) return;
         setAsrStatus('error');
         setAsrError(err.message || '无法连接 AI 网关流式 ASR 通道');
       });
 
-      audioCapture.start().then(() => {
+      startPromise = local.ready.then(() => {
+        if (!isCurrent() || !acceptingAudio) return;
+        if (local.session.error) setMicError(local.session.error);
+        return audioCapture.start();
+      }).then(() => {
+        if (!isCurrent() || !acceptingAudio) { void stopCapture(); return; }
         setMicStatus('recording');
+        // 戴耳机/在线会议场景：自动激活原生系统音频内录（ScreenCaptureKit），无感收录 Teams 对方声音
+        return audioCapture.startSystemAudioCapture().then(() => {
+          if (!isCurrent() || !acceptingAudio) { void stopCapture(); return; }
+          setIsSystemAudioActive(true);
+        }).catch((err) => {
+          console.info('[Workbench] 自动激活系统音频内录提示:', err);
+        });
       }).catch((err) => {
+        if (!isCurrent()) return;
         const msg = (err as Error).message;
         if (msg.includes('NotAllowedError') || msg.includes('Permission') || msg.includes('权限')) {
           setMicStatus('denied');
@@ -947,6 +1100,18 @@ export const InMeetingWorkbench: React.FC = () => {
           setMicError(msg || '麦克风设备初始化异常');
         }
       });
+      return () => {
+        disposed = true;
+        if (draftTimer) clearTimeout(draftTimer);
+        acceptingAudio = false;
+        eventState.close();
+        if (useMeetingStore.getState().asrSessionDrain === drain) useMeetingStore.setState({ asrSessionDrain: null });
+        void stopCapture();
+        asrClient.disconnect();
+        sentenceBufferRef.current.clear();
+        if (audioCaptureRef.current === audioCapture) audioCaptureRef.current = null;
+        if (asrClientRef.current === asrClient) asrClientRef.current = null;
+      };
     } else {
       if (audioCaptureRef.current) {
         audioCaptureRef.current.stop().catch(() => {});
@@ -964,19 +1129,12 @@ export const InMeetingWorkbench: React.FC = () => {
       setIsExtractingInsights(false);
       setRmsLevel(0);
       setInterimText('');
+      setInterimParts({ stable: '', unstable: '' });
       setMicStatus('idle');
       setAsrStatus('disconnected');
     }
 
-    return () => {
-      if (audioCaptureRef.current) {
-        audioCaptureRef.current.stop().catch(() => {});
-      }
-      if (asrClientRef.current) {
-        asrClientRef.current.disconnect();
-      }
-    };
-  }, [status, addTranscriptSegment, triggerLiveInsightExtraction]);
+  }, [captureActive, meetingId, addTranscriptSegment, triggerLiveInsightExtraction]);
 
   // 周期性时间窗口自动提炼：在会议进行中每隔 25 秒检查一次缓冲区，若累积字符数 >= 35 字自动触发增量段落洞察
   useEffect(() => {
@@ -1060,7 +1218,7 @@ export const InMeetingWorkbench: React.FC = () => {
     setIsAsking(true);
 
     try {
-      const res = await fetch('http://localhost:3201/gateway/v1/meeting-chat', {
+      const res = await fetch(`${useMeetingStore.getState().gatewayUrl}/gateway/v1/meeting-chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1179,10 +1337,13 @@ export const InMeetingWorkbench: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
+          {audioDeviceStop && !isDrainingAsr && <span data-testid="workbench-page-header-text-audio-stopping" className="text-xs text-text-secondary">等待音频设备释放…</span>}
+          {isDrainingAsr && <span data-testid="workbench-page-header-text-asr-draining" className="text-xs text-text-secondary">正在完成最后一句…</span>}
           {status !== 'RECORDING' ? (
             <button
               type="button"
               data-testid="workbench-page-header-btn-start-record"
+              disabled={isDrainingAsr || isGeneratingSummary || Boolean(audioDeviceStop)}
               onClick={() => (status === 'PAUSED' ? resumeMeeting() : startMeeting(title))}
               className="px-3 py-1.5 text-xs bg-status-success text-white hover:opacity-90 rounded-md font-medium transition-opacity flex items-center gap-1.5"
             >
@@ -1241,7 +1402,7 @@ export const InMeetingWorkbench: React.FC = () => {
           <button
             type="button"
             data-testid="workbench-page-header-btn-end-meeting"
-            disabled={isGeneratingSummary}
+            disabled={isGeneratingSummary || isDrainingAsr}
             onClick={endMeeting}
             className="px-3 py-1.5 text-xs bg-status-danger text-white hover:opacity-90 rounded-md font-medium transition-opacity disabled:opacity-60 flex items-center gap-1.5"
           >
@@ -1257,6 +1418,7 @@ export const InMeetingWorkbench: React.FC = () => {
         </div>
       </header>
 
+      {asrDrainWarning && <div role="status" data-testid="workbench-page-transcript-panel-text-unfinalized-warning" className="px-4 py-2 text-xs text-status-warning bg-status-warning-bg">{asrDrainWarning}</div>}
       {/* 顶部参会人快速重命名弹窗 */}
       {editingHeaderSpeaker && (
         <div
@@ -1366,7 +1528,7 @@ export const InMeetingWorkbench: React.FC = () => {
                 」开启跨会议声纹记忆。请确认以下隐私保护承诺：
               </p>
               <ul className="list-disc pl-4 space-y-1 text-[11px]">
-                <li>仅在本机提取并加密存储 192 维数学特征向量，默认不保存原始录音片段；</li>
+                <li>仅在本机提取并加密存储 192 维数学特征向量，声纹档案不另存原始片段；会议录音仅保存在本机；</li>
                 <li>声纹数据严禁上传云端、不进入大模型上下文或任何日志；</li>
                 <li>您可随时在「系统设置 → 声纹与参会人档案」中查看、导出或彻底删除。</li>
               </ul>
@@ -1590,6 +1752,56 @@ export const InMeetingWorkbench: React.FC = () => {
                   </option>
                 ))}
               </select>
+
+              {/* 拾音模式选择：外放开会全员收音 vs 仅个人麦克风 */}
+              <select
+                data-testid="workbench-page-transcript-panel-select-capture-mode"
+                value={captureMode}
+                onChange={(e) => handleSwitchCaptureMode(e.target.value as CaptureMode)}
+                className="text-[11px] px-2 py-0.5 rounded bg-subtle border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[150px] truncate"
+                title="开会时推荐使用【扬声器外放开会】，麦克风将同时拾取扬声器播放的他人声音"
+              >
+                <option value="speaker_meeting">🔊 扬声器外放开会 (全员收音)</option>
+                <option value="mic_only">🎤 仅收录个人麦克风</option>
+              </select>
+
+              {/* 戴耳机免驱系统声音内录开关 */}
+              <button
+                type="button"
+                data-testid="workbench-page-transcript-panel-btn-toggle-system-audio"
+                onClick={handleToggleSystemAudio}
+                className={`text-[11px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 ${
+                  isSystemAudioActive
+                    ? 'bg-status-success/15 border-status-success/40 text-status-success font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+                title="戴耳机开会时，实时捕获 Teams/腾讯会议中远端同事声音并转文字（实时转写，录音仅保存在本机，约每小时 220MiB）"
+              >
+                {isSystemAudioActive ? '🎧 远端声音收录中 (系统内录)' : '🎧 开启系统内录 (远端声音)'}
+              </button>
+
+              {/* 自动检测到的 Teams / 会议内录混音通道徽章 */}
+              {auxDeviceId && (
+                <span
+                  data-testid="workbench-page-transcript-panel-badge-aux-audio"
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 font-medium flex items-center gap-1 shrink-0"
+                  title="检测到会议虚拟音频设备，已开启双轨本地混音（AirPods 录自己 + Teams 录他人）"
+                >
+                  <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
+                  已混音: {availableMics.find((d) => d.deviceId === auxDeviceId)?.label || 'Teams音频'}
+                </span>
+              )}
+
+              {/* 音频收音排查指南小图标 */}
+              <button
+                type="button"
+                data-testid="workbench-page-transcript-panel-btn-audio-troubleshoot"
+                onClick={() => setShowAudioHelpModal(true)}
+                className="text-text-tertiary hover:text-brand-blue text-[11px] px-1 py-0.5 rounded transition-colors"
+                title="音频收音排查指南"
+              >
+                <span>(?)</span>
+              </button>
             </div>
 
             <input
@@ -1686,11 +1898,14 @@ export const InMeetingWorkbench: React.FC = () => {
                 {interimText && (
                   <div
                     data-testid="workbench-page-transcript-panel-div-interim"
-                    className="p-3 rounded-lg border border-brand-blue/30 bg-brand-blue/5 text-xs text-text-primary flex items-center gap-2 animate-pulse"
+                    className="p-3 rounded-lg border border-brand-blue/30 bg-brand-blue/5 text-xs text-text-primary flex items-center gap-2"
                   >
-                    <span className="w-2 h-2 rounded-full bg-brand-blue animate-ping" />
-                    <span className="text-text-secondary font-mono text-[11px]">正在转写:</span>
-                    <span className="font-medium text-brand-blue">{interimText}</span>
+                    <span aria-hidden="true" data-testid="workbench-page-transcript-panel-div-interim-dot" className="w-2 h-2 rounded-full bg-brand-blue" />
+                    <span data-testid="workbench-page-transcript-panel-text-interim-label" className="text-text-secondary font-mono text-[11px]">正在转写:</span>
+                    <span data-testid="workbench-page-transcript-panel-text-interim-content">
+                      <span data-testid="workbench-page-transcript-panel-text-interim-stable" className="text-text-primary">{interimParts.stable}</span>
+                      <span data-testid="workbench-page-transcript-panel-text-interim-unstable" className="text-text-secondary">{interimParts.unstable}</span>
+                    </span>
                   </div>
                 )}
               </>
@@ -1727,6 +1942,88 @@ export const InMeetingWorkbench: React.FC = () => {
           </div>
         </section>
       </main>
+
+      {/* 听不到对方声音排查指南弹窗 */}
+      {showAudioHelpModal && (
+        <div
+          data-testid="workbench-page-transcript-panel-modal-audio-help"
+          className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+        >
+          <div className="bg-panel border border-border-subtle rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-2 border-b border-border-subtle">
+              <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
+                <span>🎙️</span> 会议音频收音排查指南
+              </h3>
+              <button
+                type="button"
+                data-testid="workbench-page-transcript-panel-btn-close-audio-help"
+                onClick={() => setShowAudioHelpModal(false)}
+                className="text-text-secondary hover:text-text-primary text-xs px-2 py-1 rounded"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-text-secondary leading-relaxed">
+              {auxDeviceId && (
+                <div className="p-3 rounded-lg bg-brand-blue-subtle/40 border border-brand-blue/30 space-y-1">
+                  <div className="font-semibold text-brand-blue flex items-center gap-1.5">
+                    <span>⚡ 已自动接入虚拟内录通道：{availableMics.find((d) => d.deviceId === auxDeviceId)?.label || 'Teams音频'}</span>
+                  </div>
+                  <p className="text-[11px] text-text-secondary">
+                    听序已为您开启双轨本地混音：您的 AirPods 负责采集本人发言，此虚拟通道负责采集远端同事发言。
+                  </p>
+                </div>
+              )}
+
+              <div className="p-3 rounded-lg bg-bg-canvas border border-border-subtle space-y-1.5">
+                <div className="font-semibold text-text-primary flex items-center gap-1.5">
+                  <span>🔊 场景一：使用电脑扬声器开会（不戴耳机）</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-status-success/20 text-status-success font-medium">推荐最简</span>
+                </div>
+                <p>
+                  普通麦克风自带的“回声消除”机制会主动将电脑扬声器播放出来的他人声音当做噪音过滤。
+                  只需将拾音模式切换为<strong>【扬声器外放开会】</strong>，听序会自动关闭回声消除，使麦克风同时灵敏收录 Teams/腾讯会议中其他人的发言！
+                </p>
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-help-switch-speaker"
+                  onClick={() => {
+                    handleSwitchCaptureMode('speaker_meeting');
+                    setShowAudioHelpModal(false);
+                  }}
+                  className="mt-1 px-3 py-1.5 rounded bg-brand-blue text-white text-xs font-medium hover:bg-brand-blue-hover transition-colors"
+                >
+                  一键切换为【扬声器外放开会】模式
+                </button>
+              </div>
+
+              <div className="p-3 rounded-lg bg-bg-canvas border border-border-subtle space-y-1.5">
+                <div className="font-semibold text-text-primary flex items-center gap-1.5">
+                  <span>🎧 场景二：戴耳机开会（AirPods / 蓝牙 / 有线耳机）</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue font-medium">macOS 原生数字截流</span>
+                </div>
+                <p>
+                  由于声音封闭在耳机耳塞内部，外部物理麦克风无法收到声音。
+                  听序已接入 macOS 原生 ScreenCaptureKit 免驱系统音频截流技术，支持直接从系统声卡/Teams 捕获纯数字流，并与麦克风实时混音后转文字。
+                  若首次提示系统授权，请在 macOS【系统设置】→【隐私与安全性】→【屏幕与系统音频录制】中允许听序即可。
+                </p>
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-help-start-system-audio"
+                  onClick={() => {
+                    handleToggleSystemAudio();
+                    setShowAudioHelpModal(false);
+                  }}
+                  className="mt-1 px-3 py-1.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 text-xs font-medium hover:bg-brand-blue/15 transition-colors"
+                >
+                  {isSystemAudioActive ? '系统内录已处于开启状态' : '立即启动【系统声音内录】'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

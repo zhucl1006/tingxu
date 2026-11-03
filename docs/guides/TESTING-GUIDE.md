@@ -46,3 +46,10 @@
 - **用例 T-COMM-01（微信回调并发重放）**：
   - 模拟微信支付服务器向 `/payments/wechat/notify` 同时并发发送 5 次完全相同的支付成功通知。
   - **验收标准**：仅有一笔订单标记为 `PAID`，用户权益账户仅被充值一次套餐时长，其余 4 次返回 HTTP 200 并被幂等去重拦截。
+# 014 字幕稳定性回归补充
+
+新增确定性测试：Gateway `test/asr-event-contract.test.ts` 使用本机fake upstream；前端ASR client/state/stabilizer/metrics测试覆盖句ID、改短、final回改、重复与旧事件、finish超时；工作台覆盖慢声纹仍先显示正文、会话切换隔离、原生推理超时熔断、合并刷新取消及设备停止竞争；`test/e2e/asr-session-lifecycle.test.ts`验证尾句先于历史/纪要快照与计时冻结。
+
+运行时使用 `rtk npm test`、`rtk npm --prefix "gateway" test`。根测试本身已收集server和gateway测试，不要与server测试并行运行：既有admin-config测试使用固定3456端口，可能相互冲突。不得为消除冲突而杀用户服务或修改无关测试。
+
+这些测试验证协议/时序，不证明真实中文CER/DER、前缀回改降低30%、DOM延迟P95、CPU/内存、外放回声或云端实际费用。没有授权真实语料、冻结holdout及硬件采样时，上述验收保持待验证。完整命令和准入条件见计划014。

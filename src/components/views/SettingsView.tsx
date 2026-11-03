@@ -1,5 +1,14 @@
 import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
+import { streamingAsrUrl } from '../../audio/realStreamingAsrClient';
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
 
 export const SettingsView: React.FC = () => {
   const {
@@ -17,13 +26,42 @@ export const SettingsView: React.FC = () => {
     appearanceSettings,
     setAppearanceSettings,
     resetAppearanceSettings,
+    gatewayUrl,
+    setGatewayUrl,
+    storageSettings,
+    storageUsage,
+    isStorageLoading,
+    refreshStorageUsage,
+    updateStorageSettings,
+    cleanupRecordings,
   } = useMeetingStore();
-  const [gatewayUrl, setGatewayUrl] = useState('http://localhost:3201');
+  const [gatewayDraft, setGatewayDraft] = useState(gatewayUrl);
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
   const [testing, setTesting] = useState(false);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [editingProfileName, setEditingProfileName] = useState('');
   const [exportedHint, setExportedHint] = useState<string | null>(null);
+  const [confirmModal, setConfirmModal] = useState<{ open: boolean; type: 'all' | '30d'; title: string } | null>(null);
+  const [cleanupFeedback, setCleanupFeedback] = useState<string | null>(null);
+  const [isCleaning, setIsCleaning] = useState(false);
+
+  const handleExecuteCleanup = async () => {
+    if (!confirmModal) return;
+    setIsCleaning(true);
+    setCleanupFeedback(null);
+    try {
+      const res = await cleanupRecordings(
+        confirmModal.type === '30d' ? { olderThanDays: 30 } : undefined
+      );
+      setCleanupFeedback(`✓ 已清理 ${res.deletedCount} 场录音，释放 ${formatBytes(res.freedBytes)} 空间`);
+      setTimeout(() => setCleanupFeedback(null), 4000);
+    } catch (e) {
+      setCleanupFeedback(`× 清理失败: ${(e as Error).message}`);
+    } finally {
+      setIsCleaning(false);
+      setConfirmModal(null);
+    }
+  };
 
   const handleExportVoiceprints = () => {
     const safeMetadata = speakerProfiles.map((p) => ({
@@ -49,7 +87,9 @@ export const SettingsView: React.FC = () => {
     setTesting(true);
     setGatewayStatus(null);
     try {
-      const res = await fetch(`${gatewayUrl}/gateway/v1/health`);
+      streamingAsrUrl(gatewayDraft);
+      setGatewayUrl(gatewayDraft.trim());
+      const res = await fetch(`${gatewayDraft.trim()}/gateway/v1/health`);
       if (res.ok) {
         setGatewayStatus('✓ AI Gateway 智能网关连接正常，全双工转写与推理通道就绪');
       } else {
@@ -346,8 +386,12 @@ export const SettingsView: React.FC = () => {
             <input
               type="text"
               data-testid="settings-input-gateway-url"
-              value={gatewayUrl}
-              onChange={(e) => setGatewayUrl(e.target.value)}
+              value={gatewayDraft}
+              onChange={(e) => setGatewayDraft(e.target.value)}
+              onBlur={() => {
+                try { streamingAsrUrl(gatewayDraft); setGatewayUrl(gatewayDraft.trim()); }
+                catch { setGatewayStatus('× 网关地址需使用有效的 HTTP 或 HTTPS 地址'); }
+              }}
               className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
             />
             <button
@@ -698,6 +742,116 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
+      {/* 💾 本地存储与录音定期清理 (Plan 016) */}
+      <div
+        data-testid="settings-page-storage-section"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <span>💾 本地存储与录音管理</span>
+            </h2>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              录音文件（WAV/PCM）保存在本机沙箱中，每小时约 220MB；清理录音仅释放物理音频，会议逐字稿正文、智能纪要与导图永久保留
+            </p>
+          </div>
+
+          <button
+            type="button"
+            data-testid="settings-page-storage-btn-refresh"
+            onClick={() => refreshStorageUsage()}
+            disabled={isStorageLoading}
+            className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-secondary hover:text-text-primary transition-colors flex items-center gap-1.5"
+          >
+            <span>{isStorageLoading ? '正在计算...' : '🔄 刷新容量'}</span>
+          </button>
+        </div>
+
+        {/* 用量指示卡片 */}
+        <div
+          data-testid="settings-page-storage-card-usage"
+          className="p-4 rounded-lg bg-subtle border border-border-subtle flex items-center justify-between"
+        >
+          <div className="space-y-1">
+            <span className="text-[11px] text-text-tertiary">当前录音总占用</span>
+            <div
+              data-testid="settings-page-storage-text-total-bytes"
+              className="text-lg font-bold text-text-primary tabular-nums"
+            >
+              {formatBytes(storageUsage.totalBytes)}
+            </div>
+          </div>
+          <div className="text-right space-y-1">
+            <span className="text-[11px] text-text-tertiary">已留存录音场数</span>
+            <div
+              data-testid="settings-page-storage-text-recording-count"
+              className="text-sm font-semibold text-text-secondary tabular-nums"
+            >
+              {storageUsage.recordingCount} 场会议
+            </div>
+          </div>
+        </div>
+
+        {/* 自动清理策略与手动清理按钮 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-1">
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-text-secondary">
+              定期自动清理周期（仅清理音频，保留文字）
+            </label>
+            <select
+              data-testid="settings-page-storage-select-autocleanup"
+              value={String(storageSettings.autoCleanupDays)}
+              onChange={(e) => updateStorageSettings({ autoCleanupDays: Number(e.target.value) })}
+              className="w-full px-3 py-2 rounded-lg bg-canvas border border-border-subtle text-xs text-text-primary focus:outline-none focus:border-brand-blue"
+            >
+              <option value="0">不自动清理（默认，手动管理）</option>
+              <option value="7">自动清理 7 天前录音</option>
+              <option value="14">自动清理 14 天前录音</option>
+              <option value="30">自动清理 30 天前录音</option>
+              <option value="90">自动清理 90 天前录音</option>
+            </select>
+            <p className="text-[10px] text-text-tertiary">
+              开启后，每次启动听序或会议结束保存时自动执行静默瘦身。
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs font-medium text-text-secondary">
+              手动立即清理（释放磁盘空间）
+            </label>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                data-testid="settings-page-storage-btn-cleanup-30d"
+                disabled={isCleaning || storageUsage.recordingCount === 0}
+                onClick={() => setConfirmModal({ open: true, type: '30d', title: '清理 30 天前的录音' })}
+                className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle hover:border-brand-blue/50 text-xs text-text-primary disabled:opacity-50 transition-colors"
+              >
+                清理 30 天前录音
+              </button>
+              <button
+                type="button"
+                data-testid="settings-page-storage-btn-cleanup-all"
+                disabled={isCleaning || storageUsage.recordingCount === 0}
+                onClick={() => setConfirmModal({ open: true, type: 'all', title: '清理所有本地录音' })}
+                className="flex-1 px-3 py-2 rounded-lg border border-border-subtle text-status-danger hover:bg-status-danger/10 text-xs font-medium disabled:opacity-50 transition-colors"
+              >
+                清理所有录音
+              </button>
+            </div>
+            {cleanupFeedback && (
+              <p
+                data-testid="settings-page-storage-text-cleanup-feedback"
+                className="text-[11px] text-status-success font-medium"
+              >
+                {cleanupFeedback}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* 账号与隐私数据主权 */}
       <div className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4">
         <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
@@ -735,6 +889,45 @@ export const SettingsView: React.FC = () => {
           )}
         </div>
       </div>
+
+      {confirmModal?.open && (
+        <div
+          data-testid="settings-page-storage-modal-confirm"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+        >
+          <div className="bg-panel border border-border-subtle rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+            <div className="flex items-center gap-2 text-status-warning">
+              <span className="text-lg">⚠️</span>
+              <h3 className="text-sm font-bold text-text-primary">{confirmModal.title}</h3>
+            </div>
+            <p className="text-xs text-text-secondary leading-relaxed">
+              确定要执行清理吗？此操作将删除本机物理音频文件以释放磁盘空间。
+              <br />
+              <strong className="text-status-success font-medium">
+                会议逐字稿正文、智能总结、待办任务与思维导图将完整保留。
+              </strong>
+            </p>
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                data-testid="settings-page-storage-btn-modal-cancel"
+                onClick={() => setConfirmModal(null)}
+                className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs text-text-secondary hover:text-text-primary"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                data-testid="settings-page-storage-btn-modal-confirm"
+                onClick={handleExecuteCleanup}
+                className="px-3.5 py-1.5 rounded-lg bg-status-danger hover:bg-status-danger/90 text-white text-xs font-semibold"
+              >
+                确认清理
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

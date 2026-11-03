@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { HistoryMeeting } from '../types/meeting';
 import { formatSeconds } from '../utils/formatTime';
 
 export interface MeetingMindmapProps {
   meeting: HistoryMeeting;
+  onSeekSegment?: (segmentId: string) => void;
   onSeekTimestamp?: (timestamp: string) => void;
 }
 
@@ -15,14 +16,49 @@ export interface MindmapNode {
   badge?: string;
   meta?: string;
   timeQuote?: string;
+  evidenceSegmentId?: string;
   children?: MindmapNode[];
 }
 
-export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekTimestamp }) => {
+export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekTimestamp, onSeekSegment }) => {
   const [collapsedNodes, setCollapsedNodes] = useState<Record<string, boolean>>({});
   const [zoomLevel, setZoomLevel] = useState<number>(100);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [copiedType, setCopiedType] = useState<'md' | 'mermaid' | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const dragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const stop = () => { dragRef.current = null; setIsDragging(false); };
+    const move = (event: MouseEvent) => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      setPan({ x: drag.x + event.clientX - drag.startX, y: drag.y + event.clientY - drag.startY });
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', stop);
+    window.addEventListener('blur', stop);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', stop);
+      window.removeEventListener('blur', stop);
+    };
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const wheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.metaKey) return; // 保留浏览器原生捏合缩放。
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? canvas.clientHeight : 1;
+      setPan(previous => ({ x: previous.x - event.deltaX * unit, y: previous.y - event.deltaY * unit }));
+    };
+    canvas.addEventListener('wheel', wheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', wheel);
+  }, []);
 
   const summary = meeting.structuredSummary;
   const insights = meeting.insights || [];
@@ -62,6 +98,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
       title: d.title,
       content: d.content,
       evidenceQuote: d.timestamp,
+      evidenceSegmentId: d.evidenceSegmentId,
     }));
     if (decisions.length > 0) {
       branches.push({
@@ -72,7 +109,8 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
           id: `node-decision-${idx}`,
           title: d.title,
           detail: d.content,
-          timeQuote: d.evidenceQuote,
+          timeQuote: transcripts.find(t => t.id === d.evidenceSegmentId)?.timestamp || d.evidenceQuote,
+          evidenceSegmentId: d.evidenceSegmentId,
           meta: d.evidenceQuote ? `依据: ${d.evidenceQuote}` : undefined,
           type: 'decision',
         })),
@@ -85,6 +123,8 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
       content: a.content,
       assignee: '待确认',
       dueDate: '尽快推进',
+      evidenceSegmentId: a.evidenceSegmentId,
+      evidenceQuote: a.timestamp,
     }));
     if (actions.length > 0) {
       branches.push({
@@ -95,6 +135,8 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
           id: `node-action-${idx}`,
           title: a.title,
           detail: ('content' in a ? (a as any).content : undefined) || a.title,
+          evidenceSegmentId: a.evidenceSegmentId,
+          timeQuote: transcripts.find(t => t.id === a.evidenceSegmentId)?.timestamp || a.evidenceQuote,
           badge: a.assignee ? `👤 ${a.assignee}` : undefined,
           meta: a.dueDate ? `📅 期限: ${a.dueDate}` : undefined,
           type: 'action',
@@ -357,14 +399,15 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
                   </span>
                   <div className="flex items-center gap-1 shrink-0">
                     {child.timeQuote && (
-                      <span
+                      <button
+                        type="button"
                         data-testid={`meeting-mindmap-badge-time-${child.id}`}
-                        onClick={() => onSeekTimestamp?.(child.timeQuote!)}
+                        onClick={() => child.evidenceSegmentId && onSeekSegment ? onSeekSegment(child.evidenceSegmentId) : onSeekTimestamp?.(child.timeQuote!)}
                         className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-subtle text-brand-blue hover:bg-brand-blue hover:text-white cursor-pointer transition-colors"
                         title="点击定位现场原声与逐字稿"
                       >
                         ⏱ {child.timeQuote}
-                      </span>
+                      </button>
                     )}
                     {child.badge && (
                       <span className="text-[10px] px-1.5 py-0.2 rounded bg-subtle text-text-secondary">
@@ -411,8 +454,8 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
           <span className="font-semibold text-text-primary flex items-center gap-1.5">
             <span>🧠 听序思维导图</span>
           </span>
-          <span className="text-[11px] text-text-tertiary hidden sm:inline">
-            （讯飞听见同款双向平衡树 · 贝塞尔曲线连线 · 锚点时码联动）
+          <span data-testid="summary-page-mindmap-text-navigation-help" className="text-[11px] text-text-tertiary hidden sm:inline">
+            拖动画布查看 · 滚轮平移 · ↺ 回到中心
           </span>
         </div>
 
@@ -441,9 +484,10 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
             <button
               type="button"
               data-testid="meeting-mindmap-btn-zoom-reset"
-              onClick={() => setZoomLevel(100)}
+              onClick={() => { dragRef.current = null; setIsDragging(false); setZoomLevel(100); setPan({ x: 0, y: 0 }); }}
               className="text-[10px] text-text-tertiary hover:text-text-primary ml-1"
-              title="重置 100%"
+              title="回到中心并重置缩放"
+              aria-label="回到中心并重置缩放"
             >
               ↺
             </button>
@@ -482,12 +526,32 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
 
       {/* 思维导图画布展示区：左右双向发散树 + SVG 贝塞尔曲线 */}
       <div
+        ref={canvasRef}
         data-testid="meeting-mindmap-canvas"
-        className="flex-1 overflow-auto p-8 relative flex items-center justify-center"
+        role="region"
+        aria-label="会议思维导图画布，拖动或使用方向键平移"
+        tabIndex={0}
+        onMouseDown={(event) => {
+          if (event.button !== 0 || (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, [role="button"]'))) return;
+          event.preventDefault();
+          event.currentTarget.focus({ preventScroll: true });
+          dragRef.current = { x: pan.x, y: pan.y, startX: event.clientX, startY: event.clientY };
+          setIsDragging(true);
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          const step = event.shiftKey ? 100 : 40;
+          const direction = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[event.key];
+          if (!direction) return;
+          event.preventDefault();
+          setPan(previous => ({ x: previous.x + direction[0], y: previous.y + direction[1] }));
+        }}
+        className={`flex-1 min-h-0 overflow-hidden relative outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand-blue ${isDragging ? 'cursor-grabbing' : 'cursor-grab'}`}
       >
         <div
-          style={{ transform: `scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
-          className="transition-transform duration-150 relative inline-flex items-center justify-center gap-12 lg:gap-16 min-w-max my-auto"
+          data-testid="summary-page-mindmap-div-content"
+          style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
+          className="absolute left-1/2 top-1/2 inline-flex items-center justify-center gap-12 lg:gap-16 w-max"
         >
           {/* SVG 贝塞尔曲线连线层 (讯飞同款平滑曲线) */}
           <svg

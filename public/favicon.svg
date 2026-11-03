@@ -1,24 +1,24 @@
 <svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="txLightBg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stopColor="#FFFFFF" />
-      <stop offset="60%" stopColor="#F8FAFC" />
-      <stop offset="100%" stopColor="#EFF6FF" />
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="60%" stop-color="#F8FAFC" />
+      <stop offset="100%" stop-color="#EFF6FF" />
     </linearGradient>
     <linearGradient id="txLightBorder" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stopColor="#BFDBFE" />
-      <stop offset="50%" stopColor="#93C5FD" />
-      <stop offset="100%" stopColor="#C7D2FE" />
+      <stop offset="0%" stop-color="#BFDBFE" />
+      <stop offset="50%" stop-color="#93C5FD" />
+      <stop offset="100%" stop-color="#C7D2FE" />
     </linearGradient>
     <linearGradient id="txWaveClearOuter" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stopColor="#0284C7" />
-      <stop offset="50%" stopColor="#2563EB" />
-      <stop offset="100%" stopColor="#1D4ED8" />
+      <stop offset="0%" stop-color="#0284C7" />
+      <stop offset="50%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#1D4ED8" />
     </linearGradient>
     <linearGradient id="txWaveClearMid" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stopColor="#3B82F6" />
-      <stop offset="60%" stopColor="#2563EB" />
-      <stop offset="100%" stopColor="#4F46E5" />
+      <stop offset="0%" stop-color="#3B82F6" />
+      <stop offset="60%" stop-color="#2563EB" />
+      <stop offset="100%" stop-color="#4F46E5" />
     </linearGradient>
   </defs>
   <rect x="1.5" y="1.5" width="61" height="61" rx="17" fill="url(#txLightBg)" stroke="url(#txLightBorder)" stroke-width="1.5" />

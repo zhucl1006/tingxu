@@ -297,3 +297,27 @@
     }
   }
   ```
+# 014 流式 ASR v2 补充契约（2026-11-02）
+
+现有 `/gateway/v1/asr/stream` 保留二进制16kHz/PCM16音频。以下为已实现的增量契约，不表示STS、租约和双轨授权已接通。
+
+| 字段 | 约束 |
+|---|---|
+| type | INTERIM / FINAL |
+| protocolVersion | 2 |
+| taskId / utteranceId | 非空字符串；客户端分别限制128字符；句ID在同一任务内稳定 |
+| revision | 正整数，同一句递增；final后不再接受自动修订 |
+| source | mic / system；当前混合采集仍标mic，system留给后续分轨 |
+| beginTimeMs / endTimeMs | 非负音频毫秒或null；结束不早于开始；缺失不可猜为缓冲尾部 |
+| text | INTERIM文本；可整体改写或变短 |
+| sentence | FINAL对象，保留text/speaker/speakerId/timestamp/句时间；words为已验证的字text与起止毫秒 |
+
+句起点出现/缺失变化时优先关联当前活动句；无可用时间且活动句已结束时，无法可靠判断重复来自哪句，不以文字内容猜测。因此无时间重复上游final仍存在协议能力限制，真实供应商需进一步探针。
+
+客户端可在仍保持WebSocket连接时发送 `{"type":"FINISH"}`。此后新音频不再接受；已接收队列等待task-started后排空，发送上游finish-task。网关转发最后FINAL后回 `{"type":"FINISHED","outcome":"complete"}`；超时/异常分别为timeout/error。客户端只有明确complete才认定成功排空；意外FINISHED会关闭连接并提示。
+
+旧客户端可继续使用旧字段；新工作台要求protocolVersion=2，不支持的网关明确提示升级。FINISHED之前不关闭下游；客户端断线与正常排空不是同一状态。错误消息固定且不含原始供应商响应。当前入口缺会议租约/并发授权是既有能力缺口，014双轨阶段在补齐前不准入。
+
+### GET /v1/auth/session（计划015）
+
+本机原生媒体身份校验，只读、Bearer必填。仅从已验签且未过期JWT取得身份，忽略query中的userId；成功200 `{code:0,data:{userId,expiresAt}}`，失败401通用中文提示；Cache-Control:no-store。无会议标题、文本或音频数据。现有控制面容器需要更新到含此接口的源码后，首次绑定才可用；旧容器404时客户端明确降级为无录音，不绕过鉴权。

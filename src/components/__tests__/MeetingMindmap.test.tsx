@@ -140,6 +140,50 @@ describe('MeetingMindmap - 会议思维导图组件 (TDD)', () => {
     expect(screen.getByText('100%')).toBeInTheDocument();
   });
 
+  it('按住画布拖动可平移，释放后停止，重置同时恢复位置与缩放', () => {
+    render(<MeetingMindmap meeting={mockMeeting} />);
+    const canvas = screen.getByTestId('meeting-mindmap-canvas');
+    const content = screen.getByTestId('meeting-mindmap-node-root').parentElement!;
+    const original = content.style.transform;
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 180, clientY: 145 });
+    expect(content.style.transform).not.toBe(original);
+    expect(content.style.transform).toContain('80px, 45px');
+    fireEvent.mouseUp(window);
+    fireEvent.mouseMove(window, { clientX: 240, clientY: 190 });
+    expect(content.style.transform).toContain('80px, 45px');
+    fireEvent.click(screen.getByTestId('meeting-mindmap-btn-zoom-in'));
+    fireEvent.click(screen.getByTestId('meeting-mindmap-btn-zoom-reset'));
+    expect(content.style.transform).toContain('0px, 0px');
+    expect(screen.getByText('100%')).toBeInTheDocument();
+  });
+
+  it('拖动节点正文可查看，折叠按钮和时间锚点不启动拖动，失焦终止拖动', () => {
+    const seek = vi.fn();
+    render(<MeetingMindmap meeting={mockMeeting} onSeekTimestamp={seek} />);
+    const content = screen.getByTestId('meeting-mindmap-node-root').parentElement!;
+    const initial = content.style.transform;
+    const collapse = screen.getByTestId('meeting-mindmap-btn-collapse-branch-decisions');
+    fireEvent.mouseDown(collapse, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 50, clientY: 50 });
+    expect(content.style.transform).toBe(initial);
+    fireEvent.click(collapse);
+    expect(screen.queryByText('• 周五前打通所有门禁')).toBeNull();
+    fireEvent.click(collapse);
+    const time = screen.getByTestId('meeting-mindmap-badge-time-node-decision-0');
+    fireEvent.mouseDown(time, { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 50, clientY: 50 });
+    fireEvent.click(time);
+    expect(seek).toHaveBeenCalledWith('01:20');
+    expect(content.style.transform).toBe(initial);
+    fireEvent.mouseDown(screen.getByTestId('meeting-mindmap-node-root'), { button: 0, clientX: 10, clientY: 10 });
+    fireEvent.mouseMove(window, { clientX: 50, clientY: 50 });
+    expect(content.style.transform).toContain('40px, 40px');
+    fireEvent.blur(window);
+    fireEvent.mouseMove(window, { clientX: 90, clientY: 90 });
+    expect(content.style.transform).toContain('40px, 40px');
+  });
+
   it('支持一键复制 Markdown 大纲树与 Mermaid 脑图代码', async () => {
     const writeTextMock = vi.fn().mockResolvedValue(undefined);
     Object.assign(navigator, {
@@ -159,4 +203,33 @@ describe('MeetingMindmap - 会议思维导图组件 (TDD)', () => {
     fireEvent.click(copyMdBtn);
     expect(writeTextMock.mock.calls[1][0]).toContain('# 季末业务复盘与 AI 工具链规划');
   });
+
+  it('滚轮与方向键平移，不拦截捏合缩放或按钮按键，缩放后拖动距离仍按屏幕像素', () => {
+    render(<MeetingMindmap meeting={mockMeeting} />);
+    const canvas = screen.getByTestId('meeting-mindmap-canvas');
+    const content = screen.getByTestId('summary-page-mindmap-div-content');
+    fireEvent.wheel(canvas, { deltaX: 20, deltaY: 40 });
+    expect(content.style.transform).toContain('-20px, -40px');
+    fireEvent.wheel(canvas, { deltaX: 20, deltaY: 40, ctrlKey: true });
+    expect(content.style.transform).toContain('-20px, -40px');
+    fireEvent.keyDown(canvas, { key: 'ArrowLeft' });
+    expect(content.style.transform).toContain('20px, -40px');
+    fireEvent.click(screen.getByTestId('meeting-mindmap-btn-zoom-in'));
+    fireEvent.mouseDown(canvas, { button: 0, clientX: 100, clientY: 100 });
+    fireEvent.mouseMove(window, { clientX: 150, clientY: 150 });
+    fireEvent.mouseUp(window);
+    expect(content.style.transform).toContain('70px, 10px');
+    expect(content.style.transform).toContain('scale(1.1)');
+    fireEvent.mouseDown(canvas, { button: 2, clientX: 0, clientY: 0 });
+    fireEvent.mouseMove(window, { clientX: 100, clientY: 100 });
+    expect(content.style.transform).toContain('70px, 10px');
+  });
+  it('普通引用按证据ID跳转，时间按钮显示关联逐字稿时码', () => {
+    const onSeekSegment=vi.fn(); const onSeekTimestamp=vi.fn();
+    const meeting: HistoryMeeting={...mockMeeting, structuredSummary:{suggestedTitle:'x',overview:'x',decisions:[{title:'ID证据',content:'x',evidenceSegmentId:'seg15',evidenceQuote:'今年30项任务'}],actions:[],risks:[],facts:[]},transcripts:[{id:'seg15',speaker:'a',channel:'mic',text:'x',timestamp:'00:15',recordingBeginMs:15000}]};
+    render(<MeetingMindmap meeting={meeting} onSeekSegment={onSeekSegment} onSeekTimestamp={onSeekTimestamp}/>);
+    const badge=screen.getByTestId('meeting-mindmap-badge-time-node-decision-0');
+    expect(badge).toHaveTextContent('00:15');fireEvent.click(badge);expect(onSeekSegment).toHaveBeenCalledWith('seg15');expect(onSeekTimestamp).not.toHaveBeenCalled();
+  });
+
 });

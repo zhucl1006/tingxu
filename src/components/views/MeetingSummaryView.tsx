@@ -1,16 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { formatSeconds } from '../../utils/formatTime';
+import { MeetingAudioPlayer, type MeetingAudioHandle } from '../MeetingAudioPlayer';
+import { parseTimecode, segmentPlaybackSeconds, playingSegment } from '../../utils/transcriptTime';
 import { MeetingMindmap } from '../MeetingMindmap';
 
 export const MeetingSummaryView: React.FC = () => {
   const {
+    currentUser,
     activeSummaryMeeting,
     setActiveSummaryMeeting,
     activeTargetSegmentId,
     setCurrentRoute,
     renameSpeaker,
     registerSpeakerProfile,
+    cleanupRecordings,
   } = useMeetingStore();
 
   const [activeTab, setActiveTab] = useState<'summary' | 'mindmap' | 'transcripts'>('summary');
@@ -19,24 +23,25 @@ export const MeetingSummaryView: React.FC = () => {
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [newSpeakerName, setNewSpeakerName] = useState('');
 
-  // 模拟播放器状态
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentPlaybackSeconds, setCurrentPlaybackSeconds] = useState(0);
-  const [playbackRate, setPlaybackRate] = useState<number>(1.0);
+  const playerRef = useRef<MeetingAudioHandle>(null);
+  const [playingSegmentId, setPlayingSegmentId] = useState<string | null>(null);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
+  const [seekRequest, setSeekRequest] = useState<{ seconds: number; revision: number }>();
+  const [seekRevision, setSeekRevision] = useState(0);
+  useEffect(() => { setSelectedSegmentId(null); setPlayingSegmentId(null); setSeekRequest(undefined); setActiveTab('summary'); }, [activeSummaryMeeting?.id]);
 
   const transcriptsContainerRef = useRef<HTMLDivElement>(null);
 
   // 监听选中段落，联动滚动与高亮
   useEffect(() => {
-    const targetId = activeTargetSegmentId || selectedSegmentId;
+    const targetId = selectedSegmentId || activeTargetSegmentId;
     if (targetId) {
       const el = document.getElementById(`summary-seg-${targetId}`);
       if (el && typeof el.scrollIntoView === 'function') {
         el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }
     }
-  }, [activeTargetSegmentId, selectedSegmentId]);
+  }, [activeTargetSegmentId, selectedSegmentId, activeTab, seekRevision]);
 
   if (!activeSummaryMeeting) {
     return (
@@ -194,23 +199,23 @@ export const MeetingSummaryView: React.FC = () => {
     setNewSpeakerName('');
   };
 
-  // 点击左侧时码小气泡，联动右侧定位并更新播放器进度
+  // 引用只按证据 ID 定位，普通正文绝不提取数字猜时间。
   const handleSeekSegment = (segmentId?: string, timeStr?: string) => {
-    if (segmentId) {
-      setSelectedSegmentId(segmentId);
-    }
-    // 若匹配时码，转换为秒数模拟播放
-    if (timeStr) {
-      const parts = timeStr.replace(/[^0-9:]/g, '').split(':').map(Number);
-      if (parts.length === 2) {
-        setCurrentPlaybackSeconds(parts[0] * 60 + parts[1]);
-      } else if (parts.length === 3) {
-        setCurrentPlaybackSeconds(parts[0] * 3600 + parts[1] * 60 + parts[2]);
-      }
+    const explicitTime = segmentId ? null : parseTimecode(timeStr);
+    const segment = segmentId ? transcripts.find(t => t.id === segmentId)
+      : explicitTime !== null ? [...transcripts].reverse().find(t => {
+        const start = segmentPlaybackSeconds(t); return start !== null && start <= explicitTime;
+      }) : undefined;
+    if (segment) setSelectedSegmentId(segment.id);
+    setActiveTab('summary'); setSeekRevision(r => r + 1);
+    const seconds = segmentId ? segmentPlaybackSeconds(segment) : explicitTime;
+    if (seconds !== null) {
+      setSeekRequest({ seconds, revision: seekRevision + 1 });
+      playerRef.current?.seek(seconds);
     }
   };
 
-  const currentHighlightId = selectedSegmentId || activeTargetSegmentId;
+  const currentHighlightId = playingSegmentId || selectedSegmentId || activeTargetSegmentId;
 
   return (
     <div
@@ -427,6 +432,7 @@ export const MeetingSummaryView: React.FC = () => {
           <div className="flex-1 p-6">
             <MeetingMindmap
               meeting={meeting}
+              onSeekSegment={id => handleSeekSegment(id)}
               onSeekTimestamp={(timeStr) => handleSeekSegment(undefined, timeStr)}
             />
           </div>
@@ -462,9 +468,7 @@ export const MeetingSummaryView: React.FC = () => {
                       >
                         👤 {t.speaker}
                       </span>
-                      <span className="font-mono text-[11px] text-text-tertiary tabular-nums">
-                        {t.timestamp}
-                      </span>
+                      <button type="button" data-testid={`summary-page-transcript-btn-seek-${t.id}`} onClick={() => handleSeekSegment(t.id)} className="font-mono text-[11px] text-brand-blue tabular-nums">{t.timestamp}</button>
                     </div>
                     <p className="text-xs text-text-primary leading-relaxed">{t.text}</p>
                   </div>
@@ -475,10 +479,10 @@ export const MeetingSummaryView: React.FC = () => {
         ) : (
           /* 讯飞听见同款双栏联动工作台 (左侧卡片/大纲 + 右侧逐字稿与原声播放器) */
           <div className="flex-1 overflow-hidden flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-border-subtle">
-            {/* 左栏：智能纪要看板 (56% 宽) */}
+            {/* 左栏：智能纪要占桌面宽度的三分之二 */}
             <div
               data-testid="summary-page-panel-left"
-              className="flex-1 md:w-[56%] overflow-y-auto p-6 space-y-6"
+              className="flex-1 min-w-0 md:flex-none md:w-2/3 overflow-y-auto p-6 space-y-6"
             >
               {/* 1. 全局主旨综述 */}
               <div
@@ -770,13 +774,13 @@ export const MeetingSummaryView: React.FC = () => {
               )}
             </div>
 
-            {/* 右栏：全息证据库（逐字稿 + 播放器控制器，44% 宽） */}
+            {/* 右栏：录音与逐字稿占桌面宽度的三分之一 */}
             <div
               data-testid="summary-page-panel-right"
-              className="flex-1 md:w-[44%] flex flex-col bg-subtle/40 overflow-hidden"
+              className="flex-1 min-w-0 md:flex-none md:w-1/3 flex flex-col bg-subtle/40 overflow-hidden"
             >
               {/* 右栏顶部标签条 */}
-              <div className="px-4 py-2.5 bg-canvas border-b border-border-subtle flex items-center justify-between text-xs shrink-0">
+              <div className="px-4 py-2.5 bg-canvas border-b border-border-subtle flex flex-wrap gap-1 items-center justify-between text-xs shrink-0">
                 <div className="flex items-center gap-2">
                   <span className="font-bold text-text-primary flex items-center gap-1.5">
                     <span>🎙️ 现场录音与逐字稿</span>
@@ -826,9 +830,9 @@ export const MeetingSummaryView: React.FC = () => {
                           >
                             👤 {t.speaker}
                           </span>
-                          <span className="font-mono text-[10px] text-text-tertiary tabular-nums">
+                          <button type="button" data-testid={`summary-page-transcript-btn-seek-${t.id}`} onClick={() => handleSeekSegment(t.id)} className="font-mono text-[10px] text-brand-blue tabular-nums" aria-label={`定位 ${t.timestamp}`}>
                             {t.timestamp}
-                          </span>
+                          </button>
                         </div>
                         <p className="text-xs text-text-secondary leading-relaxed">{t.text}</p>
                       </div>
@@ -837,85 +841,9 @@ export const MeetingSummaryView: React.FC = () => {
                 )}
               </div>
 
-              {/* 底部原生/模拟音频播放控制器 (讯飞同款底部控制台) */}
-              <div
-                data-testid="summary-page-audio-player"
-                className="p-3 bg-canvas border-t border-border-subtle flex flex-col gap-2 shrink-0 select-none shadow-xs"
-              >
-                {/* 进度条 */}
-                <div className="flex items-center gap-3 text-xs font-mono text-text-tertiary">
-                  <span className="tabular-nums text-[11px]">
-                    {formatSeconds(currentPlaybackSeconds)}
-                  </span>
-                  <div className="flex-1 h-1.5 bg-subtle rounded-full overflow-hidden relative cursor-pointer">
-                    <div
-                      style={{
-                        width: `${Math.min(
-                          100,
-                          (currentPlaybackSeconds / Math.max(1, meeting.durationSeconds)) * 100
-                        )}%`,
-                      }}
-                      className="h-full bg-brand-blue transition-all"
-                    />
-                  </div>
-                  <span className="tabular-nums text-[11px]">
-                    {formatSeconds(meeting.durationSeconds)}
-                  </span>
-                </div>
-
-                {/* 控制按钮与倍速 */}
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      data-testid="summary-page-btn-audio-play"
-                      onClick={() => setIsPlaying(!isPlaying)}
-                      className="px-3 py-1 rounded-md bg-brand-blue text-white text-xs font-semibold hover:bg-brand-blue-hover transition-colors flex items-center gap-1"
-                    >
-                      <span>{isPlaying ? '⏸ 暂停' : '▶ 播放'}</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCurrentPlaybackSeconds((s) => Math.max(0, s - 15))
-                      }
-                      className="px-2 py-1 rounded bg-subtle border border-border-subtle hover:bg-hover text-xs text-text-secondary font-mono"
-                      title="后退 15 秒"
-                    >
-                      -15s
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setCurrentPlaybackSeconds((s) =>
-                          Math.min(meeting.durationSeconds, s + 15)
-                        )
-                      }
-                      className="px-2 py-1 rounded bg-subtle border border-border-subtle hover:bg-hover text-xs text-text-secondary font-mono"
-                      title="快进 15 秒"
-                    >
-                      +15s
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-1 text-[11px] font-mono">
-                    {[1.0, 1.25, 1.5, 2.0].map((rate) => (
-                      <button
-                        key={rate}
-                        type="button"
-                        onClick={() => setPlaybackRate(rate)}
-                        className={`px-1.5 py-0.5 rounded transition-colors ${
-                          playbackRate === rate
-                            ? 'bg-brand-blue text-white font-bold'
-                            : 'text-text-tertiary hover:text-text-primary'
-                        }`}
-                      >
-                        {rate}x
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
+              <MeetingAudioPlayer ref={playerRef} meetingId={meeting.id} recording={meeting.recording} token={currentUser?.token} warning={meeting.recordingWarning} seekTo={seekRequest}
+                onTime={seconds => setPlayingSegmentId(playingSegment(transcripts, seconds))}
+                onDeleteRecording={() => { if (meeting.recording) void cleanupRecordings({ targetIds: [meeting.recording.id] }); }} />
             </div>
           </div>
         )}

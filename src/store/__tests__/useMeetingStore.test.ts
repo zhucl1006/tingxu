@@ -2,6 +2,16 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { useMeetingStore } from '../useMeetingStore';
 
 describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
+  it('014：重复final幂等，身份补全不覆盖已手工命名的片段', () => {
+    const store = useMeetingStore.getState(); store.startMeeting('synthetic');
+    const segment = { id: 'fixed', speaker: '识别中', channel: 'mic' as const, timestamp: '00:00:00', text: '文字保持' };
+    store.addTranscriptSegment(segment); store.addTranscriptSegment(segment);
+    expect(useMeetingStore.getState().transcripts).toHaveLength(1);
+    store.renameSpeaker('识别中', '用户命名');
+    store.updateTranscriptSpeaker('fixed', { speaker: '算法结果', speakerId: 'spk_1', speakerStatus: 'assigned' });
+    expect(useMeetingStore.getState().transcripts[0].speaker).toBe('用户命名');
+    expect(useMeetingStore.getState().transcripts[0].text).toBe('文字保持');
+  });
   beforeEach(() => {
     useMeetingStore.getState().resetMeeting();
   });
@@ -373,5 +383,47 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     // 4. 支持单条删除与全部清空
     store.deleteSpeakerProfile(profile1!.profileId);
     expect(useMeetingStore.getState().speakerProfiles).toHaveLength(0);
+  });
+
+  it('016：本地录音存储管理与自动/手动清理，保留文字纪要 (TDD)', async () => {
+    const { vi } = await import('vitest');
+    const store = useMeetingStore.getState();
+    expect(store.storageSettings.autoCleanupDays).toBe(0);
+
+    store.updateStorageSettings({ autoCleanupDays: 30 });
+    expect(useMeetingStore.getState().storageSettings.autoCleanupDays).toBe(30);
+
+    const mockMeeting = {
+      id: 'm-cleanup-1',
+      title: '要被清理录音的会议',
+      date: '2026-10-01',
+      durationSeconds: 120,
+      summary: '重要纪要内容保留',
+      decisionsCount: 1,
+      tasksCount: 0,
+      recording: { id: 'rec-cleanup-uuid-1', samples: 32000, sampleRate: 16000 },
+      transcripts: [{ id: 't1', speaker: 'Alice', text: '文字必须保留', timestamp: '00:01', channel: 'mic' as const }],
+    };
+    useMeetingStore.setState({ historyMeetings: [mockMeeting] });
+
+    const localMedia = await import('../../audio/localRecording');
+    const pruneSpy = vi.spyOn(localMedia, 'pruneLocalRecordings').mockResolvedValue({
+      freedBytes: 1048576,
+      deletedCount: 1,
+      deletedIds: ['rec-cleanup-uuid-1'],
+    });
+
+    const res = await useMeetingStore.getState().cleanupRecordings({ targetIds: ['rec-cleanup-uuid-1'] });
+    expect(res.deletedCount).toBe(1);
+
+    const updatedMeetings = useMeetingStore.getState().historyMeetings;
+    expect(updatedMeetings).toHaveLength(1);
+    expect(updatedMeetings[0].id).toBe('m-cleanup-1');
+    expect(updatedMeetings[0].recording).toBeUndefined();
+    expect(updatedMeetings[0].recordingWarning).toContain('本地录音已清理');
+    expect(updatedMeetings[0].transcripts).toHaveLength(1);
+    expect(updatedMeetings[0].summary).toBe('重要纪要内容保留');
+
+    pruneSpy.mockRestore();
   });
 });

@@ -166,6 +166,22 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         return;
       }
 
+      // 原生本地媒体只读身份绑定；不接收调用方指定的账号。
+      if (req.method === 'GET' && pathname === '/v1/auth/session') {
+        try {
+          const header = req.headers.authorization;
+          if (!header?.startsWith('Bearer ')) throw new Error('unauthorized');
+          const identity = authService.verifyJwt(header.slice(7));
+          if (typeof identity.userId !== 'string' || !Number.isFinite(identity.exp) || identity.exp <= Date.now() / 1000) throw new Error('unauthorized');
+          res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ code: 0, data: { userId: identity.userId, expiresAt: identity.exp } }));
+        } catch {
+          res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+          res.end(JSON.stringify({ code: 401, message: '请重新登录' }));
+        }
+        return;
+      }
+
       // 4. 查询时长余额 (GET /v1/billing/balance)
       if (req.method === 'GET' && pathname === '/v1/billing/balance') {
         let userId = url.searchParams.get('userId');

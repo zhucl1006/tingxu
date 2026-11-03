@@ -2,3 +2,7 @@ pub mod atomic_disk;
 pub mod device;
 pub mod resampler;
 pub mod ring_buffer;
+pub mod system_audio;
+pub mod recording;
+pub mod playback;
+pub mod recording_commands;

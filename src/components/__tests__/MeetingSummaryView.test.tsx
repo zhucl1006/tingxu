@@ -1,8 +1,11 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MeetingSummaryView } from '../views/MeetingSummaryView';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { HistoryMeeting } from '../../types/meeting';
+
+const mediaRelease = vi.fn();
+vi.mock('../../audio/localRecording', async importOriginal => ({ ...await importOriginal<typeof import('../../audio/localRecording')>(), openLocalMedia: vi.fn(async () => ({ url: 'tingxu-media://localhost/synthetic', release: mediaRelease })) }));
 
 describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 (TDD)', () => {
   const mockMeeting: HistoryMeeting = {
@@ -97,6 +100,12 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     expect(screen.getByText('跟进全链路门禁联调')).toBeDefined();
     expect(screen.getByText('弱网环境连接自愈风险')).toBeDefined();
     expect(screen.getByText('本地 SQLite 存储已就绪')).toBeDefined();
+  });
+
+  it('桌面总结占2/3，录音与逐字稿占1/3，长文本不撑破分栏', () => {
+    render(<MeetingSummaryView />);
+    expect(screen.getByTestId('summary-page-panel-left')).toHaveClass('md:w-2/3', 'md:flex-none', 'min-w-0');
+    expect(screen.getByTestId('summary-page-panel-right')).toHaveClass('md:w-1/3', 'md:flex-none', 'min-w-0');
   });
 
   it('应该支持点击切换到【听序思维导图】选项卡并展示特色脑图分支', () => {
@@ -200,4 +209,19 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     // 键名高亮标签
     expect(screen.getByText('【核心要点】：')).toBeInTheDocument();
   });
+  it('证据ID定位15秒，引用数字不作时码，播放高亮不强抢滚动', async () => {
+    vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => {});
+    vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => {});
+    const meeting = { ...mockMeeting, recording: { id: 'media', samples: 3200000, sampleRate: 16000 }, transcripts: mockMeeting.transcripts!.map((t, i) => ({ ...t, recordingBeginMs: i ? 80000 : 15000, recordingEndMs: i ? 90000 : 20000 })) };
+    useMeetingStore.setState({ activeSummaryMeeting: meeting, currentUser: { userId: 'owner', phone: '', token: 'token' } });
+    render(<MeetingSummaryView />);
+    const audio = screen.getByTestId('summary-page-audio-player-media') as HTMLAudioElement;
+    await waitFor(() => expect(audio).toHaveAttribute('src'));
+    Object.defineProperty(audio, 'duration', { configurable: true, value: 100 }); fireEvent.loadedMetadata(audio);
+    fireEvent.click(screen.getByTestId('summary-page-transcript-btn-seek-seg_1')); expect(audio.currentTime).toBe(15);
+    const scroll = vi.spyOn(Element.prototype, 'scrollIntoView'); scroll.mockClear();
+    audio.currentTime = 81; fireEvent.timeUpdate(audio);
+    expect(screen.getByTestId('summary-page-row-transcript-seg_2')).toHaveClass('bg-brand-blue/10'); expect(scroll).not.toHaveBeenCalled();
+  });
+
 });

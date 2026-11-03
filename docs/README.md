@@ -8,6 +8,8 @@
 
 ## 项目概述
 
+当前开发记录：[计划014：混音说话人与ASR稳定性](./plans/014-mixed-audio-speakers-and-asr-stability.md)、[实施基线与门禁](./research/014-asr-baseline-and-decisions.md)。字幕协议与时序已有实现；双轨与真实声纹模型仍需后续门禁，不代表整项计划已完成。
+
 **听序（Tingxu / 代号 tingxu-desktop）** 是一款运行在 Windows 与 macOS 桌面的极简无感 AI 会议助手（类似 Granola / 讯飞听见）。  
 无需向 Teams、腾讯会议、飞书等软件添加任何虚拟参会机器人，通过纯本地免驱音频捕获、流式 ASR 直连、自建 AI Gateway 调度大模型与本地优先（Local-First）存储体系，为个人办公用户（优先服务产品经理与项目经理）提供会中实时字幕、增量结构化洞察、本场问答追溯以及会后高精纪要与待办提取。
 

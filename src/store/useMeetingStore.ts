@@ -17,9 +17,13 @@ import {
   DEFAULT_VOICEPRINT_SETTINGS,
   VoiceprintPresetMode,
   VOICEPRINT_PRESET_CONFIGS,
+  StorageSettings,
+  DEFAULT_STORAGE_SETTINGS,
 } from '../types/meeting';
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
 import { l2Normalize } from '../audio/speakerEmbeddingEngine';
+
+import { finishLocalRecording, clearLocalMedia, deleteLocalMedia, getRecordingStorageUsage, pruneLocalRecordings } from '../audio/localRecording';
 
 const patchApplier = new InsightPatchApplier();
 
@@ -194,8 +198,41 @@ function loadStoredUser(): UserProfile | null {
   return null;
 }
 
+// 存储与录音自动清理配置持久化
+function loadStoredStorageSettings(): StorageSettings {
+  if (typeof window === 'undefined') return { ...DEFAULT_STORAGE_SETTINGS };
+  try {
+    const raw = localStorage.getItem('tingxu_storage_settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (typeof parsed?.autoCleanupDays === 'number') {
+        return {
+          autoCleanupDays: parsed.autoCleanupDays,
+          lastCleanupAt: parsed.lastCleanupAt,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取存储清理配置失败:', e);
+  }
+  return { ...DEFAULT_STORAGE_SETTINGS };
+}
+
+function saveStoredStorageSettings(settings: StorageSettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_storage_settings', JSON.stringify(settings));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化存储清理配置失败:', e);
+  }
+}
+
 const initialMeetingState = {
   status: 'IDLE' as MeetingStatus,
+  asrSessionDrain: null,
+  audioDeviceStop: null,
+  isDrainingAsr: false,
+  asrDrainWarning: null,
   meetingId: null as string | null,
   title: '未命名会议',
   elapsedSeconds: 0,
@@ -220,6 +257,9 @@ const initialMeetingState = {
   gatewayUrl: 'http://localhost:3201',
   appearanceSettings: loadStoredAppearanceSettings(),
   voiceprintSettings: loadStoredVoiceprintSettings(),
+  storageSettings: loadStoredStorageSettings(),
+  storageUsage: { totalBytes: 0, recordingCount: 0 },
+  isStorageLoading: false,
 };
 
 export const useMeetingStore = create<MeetingState>((set, get) => ({
@@ -238,18 +278,23 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   loginUser: (user: UserProfile) => {
+    if (get().currentUser?.userId !== user.userId) clearLocalMedia();
     if (typeof window !== 'undefined') {
       localStorage.setItem('tingxu_user_session', JSON.stringify(user));
     }
     set({ currentUser: user, isLoginModalOpen: false });
     get().refreshUserBalance();
+    void get().refreshStorageUsage();
+    void get().runAutoCleanupIfNeeded();
   },
 
   logoutUser: () => {
+    if (get().status === 'RECORDING') void get().pauseMeeting();
+    clearLocalMedia();
     if (typeof window !== 'undefined') {
       localStorage.removeItem('tingxu_user_session');
     }
-    set({ currentUser: null, quotaMinutes: 0 });
+    set({ currentUser: null, quotaMinutes: 0, activeSummaryMeeting: null });
   },
 
   setQuotaMinutes: (minutes: number) => {
@@ -278,6 +323,69 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     } catch (e) {
       console.warn('[MeetingStore] 刷新时长余额失败:', (e as Error).message);
     }
+    void get().refreshStorageUsage();
+    void get().runAutoCleanupIfNeeded();
+  },
+
+  refreshStorageUsage: async () => {
+    set({ isStorageLoading: true });
+    try {
+      const token = get().currentUser?.token;
+      const usage = await getRecordingStorageUsage(token);
+      set({ storageUsage: usage });
+    } finally {
+      set({ isStorageLoading: false });
+    }
+  },
+
+  updateStorageSettings: (settings: Partial<StorageSettings>) => {
+    const updated = { ...get().storageSettings, ...settings };
+    saveStoredStorageSettings(updated);
+    set({ storageSettings: updated });
+    if (typeof updated.autoCleanupDays === 'number' && updated.autoCleanupDays > 0) {
+      void get().runAutoCleanupIfNeeded();
+    }
+  },
+
+  cleanupRecordings: async (options?: { olderThanDays?: number; targetIds?: string[] }) => {
+    const token = get().currentUser?.token;
+    const olderThanSecs = options?.olderThanDays ? options.olderThanDays * 86400 : undefined;
+    const res = await pruneLocalRecordings({
+      token,
+      olderThanSecs,
+      targetIds: options?.targetIds,
+    });
+    if (res.deletedIds && res.deletedIds.length > 0) {
+      const deletedSet = new Set(res.deletedIds);
+      const newHistory = get().historyMeetings.map((m) => {
+        if (m.recording && deletedSet.has(m.recording.id)) {
+          return {
+            ...m,
+            recording: undefined,
+            recordingWarning: '本地录音已清理释放空间，会议文字纪要完整保留',
+          };
+        }
+        return m;
+      });
+      saveStoredHistoryMeetings(newHistory);
+      const active = get().activeSummaryMeeting;
+      const newActive = active && active.recording && deletedSet.has(active.recording.id)
+        ? { ...active, recording: undefined, recordingWarning: '本地录音已清理释放空间，会议文字纪要完整保留' }
+        : active;
+      set({ historyMeetings: newHistory, activeSummaryMeeting: newActive });
+    }
+    void get().refreshStorageUsage();
+    return res;
+  },
+
+  runAutoCleanupIfNeeded: async () => {
+    const days = get().storageSettings.autoCleanupDays;
+    if (!days || days <= 0) return;
+    const now = Date.now();
+    await get().cleanupRecordings({ olderThanDays: days });
+    const updated = { ...get().storageSettings, lastCleanupAt: now };
+    saveStoredStorageSettings(updated);
+    set({ storageSettings: updated });
   },
 
   toggleTask: (id: string) => {
@@ -291,10 +399,13 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   startMeeting: (title = '新会议讨论') => {
+    if (get().isDrainingAsr || get().isGeneratingSummary || get().audioDeviceStop) return;
     const currentQuota = get().quotaMinutes || 0;
     const initialSec = currentQuota * 60;
     set({
       status: 'RECORDING',
+      asrSessionDrain: null,
+      asrDrainWarning: null,
       meetingId: `mtg_${Date.now()}`,
       title,
       elapsedSeconds: 0,
@@ -307,14 +418,19 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     });
   },
 
-  pauseMeeting: () => {
-    if (get().status === 'RECORDING') {
-      set({ status: 'PAUSED' });
-    }
+  pauseMeeting: async () => {
+    const { status, meetingId, asrSessionDrain, isDrainingAsr } = get();
+    if (status !== 'RECORDING' || isDrainingAsr) return;
+    set({ status: 'PAUSED', isDrainingAsr: Boolean(asrSessionDrain) });
+    if (!asrSessionDrain) return;
+    let outcome: 'complete' | 'timeout' | 'error' = 'error';
+    try { outcome = await asrSessionDrain(); } catch { /* 失败不升级草稿 */ }
+    if (get().meetingId !== meetingId) return;
+    set({ isDrainingAsr: false, asrDrainWarning: outcome === 'complete' ? null : '部分内容未定稿，请核对最后一句' });
   },
 
   resumeMeeting: () => {
-    if (get().status === 'PAUSED') {
+    if (get().status === 'PAUSED' && !get().isDrainingAsr && !get().isGeneratingSummary && !get().audioDeviceStop) {
       set({ status: 'RECORDING' });
     }
   },
@@ -361,6 +477,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
           ? {
               ...t,
               speaker: cleanNew,
+              speakerManuallyNamed: true,
               tentativeProfileId: null,
               tentativeProfileName: null,
             }
@@ -416,16 +533,23 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   endMeeting: async () => {
-    if (get().isGeneratingSummary) return;
+    if (get().isGeneratingSummary || get().isDrainingAsr || get().status === 'ENDED') return;
+    const currentMeetingId = get().meetingId;
+    const drain = get().asrSessionDrain;
+    set({ isGeneratingSummary: true, status: 'PAUSED', isDrainingAsr: Boolean(drain) });
+    if (drain) {
+      let outcome: 'complete' | 'timeout' | 'error' = 'error';
+      try { outcome = await drain(); } catch { /* 仍归档已定稿内容 */ }
+      if (get().meetingId !== currentMeetingId) return;
+      set({ isDrainingAsr: false, asrDrainWarning: outcome === 'complete' ? null : '部分内容未定稿，请核对最后一句' });
+    }
+    const localAudio = currentMeetingId ? await finishLocalRecording(currentMeetingId) : {};
+    // 在排空之后取快照，尾句不会被旧数组漏掉；等待期间计时已经冻结。
     const { meetingId, title, elapsedSeconds, insights, transcripts, historyMeetings, tasks, gatewayUrl } = get();
-
-    // 只有当没有 meetingId，或者录制时间极短 (<3s) 且没有任何逐字稿内容时，视为空白误触安全退出，不创建多余归档
-    if (!meetingId || (elapsedSeconds < 3 && transcripts.length === 0)) {
-      set({ status: 'ENDED', currentRoute: 'home' });
+    if (!meetingId || (elapsedSeconds < 3 && transcripts.length === 0 && !localAudio.recording)) {
+      set({ status: 'ENDED', currentRoute: 'home', isGeneratingSummary: false });
       return;
     }
-
-    set({ isGeneratingSummary: true });
 
     let finalTitle = title;
     let structuredSummary: any = undefined;
@@ -551,6 +675,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     // 组装结构化历史会议
     const newHistory: HistoryMeeting = {
       id: meetingId,
+      recording: localAudio.recording,
+      recordingWarning: localAudio.warning,
       title: finalTitle,
       date: timeSuffix,
       durationSeconds: elapsedSeconds,
@@ -597,6 +723,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       currentRoute: 'summary',
     });
 
+    void get().refreshStorageUsage();
+    void get().runAutoCleanupIfNeeded();
+
     // 真实向商业控制面结算扣减本次会议消耗的时长
     const currentUser = get().currentUser;
     if (currentUser && elapsedSeconds > 0) {
@@ -637,6 +766,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
   addTranscriptSegment: (segment: TranscriptSegment) => {
     set((state) => {
+      if (state.transcripts.some(existing => existing.id === segment.id)) return state;
       const mappedSpeaker =
         (segment.speakerId && state.speakerNames[segment.speakerId]) || segment.speaker;
       const nextSpeakerNames =
@@ -648,6 +778,17 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
         transcripts: [...state.transcripts, { ...segment, speaker: mappedSpeaker }],
       };
     });
+  },
+
+  updateTranscriptSpeaker: (id, patch) => {
+    set(state => ({
+      transcripts: state.transcripts.map(segment => {
+        if (segment.id !== id) return segment;
+        const name = segment.speakerManuallyNamed ? segment.speaker :
+          (patch.speakerId && state.speakerNames[patch.speakerId]) || patch.speaker;
+        return { ...segment, ...patch, speaker: name };
+      }),
+    }));
   },
 
   addInsight: (insight) => {
@@ -746,6 +887,10 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   resetMeeting: () => {
     set({
       status: 'IDLE',
+      asrSessionDrain: null,
+      isDrainingAsr: false,
+      asrDrainWarning: null,
+      isGeneratingSummary: false,
       meetingId: null,
       title: '未命名会议',
       elapsedSeconds: 0,
@@ -757,7 +902,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     });
   },
 
-  deleteHistoryMeeting: (id: string) => {
+  deleteHistoryMeeting: async (id: string) => {
+    const media = get().historyMeetings.find(m => m.id === id)?.recording;
+    if (media) await deleteLocalMedia(media.id, get().currentUser?.token);
     set((state) => {
       const newHistory = state.historyMeetings.filter((m) => m.id !== id);
       const newTasks = state.tasks.filter((t) => t.meetingId !== id);
@@ -772,7 +919,10 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     });
   },
 
-  clearAllHistory: () => {
+  clearAllHistory: async () => {
+    for (const meeting of get().historyMeetings) {
+      if (meeting.recording) await deleteLocalMedia(meeting.recording.id, get().currentUser?.token);
+    }
     saveStoredHistoryMeetings([]);
     saveStoredTasks([]);
     set({

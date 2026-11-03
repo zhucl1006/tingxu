@@ -142,7 +142,7 @@ export const HomeView: React.FC = () => {
                           onClick={(e) => {
                             e.stopPropagation();
                             if (window.confirm(`确定删除《${m.title}》会议记录吗？删除后本地数据无法恢复。`)) {
-                              deleteHistoryMeeting(m.id);
+                              void deleteHistoryMeeting(m.id).catch(() => window.alert('录音删除失败，请检查登录状态后重试；会议记录已保留。'));
                             }
                           }}
                           className="text-text-tertiary hover:text-status-danger text-xs px-1 rounded transition-colors"

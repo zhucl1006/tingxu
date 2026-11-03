@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { formatSeconds } from '../utils/formatTime';
+import { parseTimecode, segmentPlaybackSeconds } from '../utils/transcriptTime';
 import { MeetingMindmap } from './MeetingMindmap';
 
 export const MeetingSummaryModal: React.FC = () => {
@@ -261,7 +262,15 @@ export const MeetingSummaryModal: React.FC = () => {
           {activeTab === 'mindmap' ? (
             /* 思维导图视图 */
             <div className="h-[620px] w-full">
-              <MeetingMindmap meeting={meeting} />
+              <MeetingMindmap meeting={meeting} onSeekSegment={id => { setActiveSummaryMeeting(meeting, id); setActiveTab('transcripts'); }} onSeekTimestamp={time => {
+                const seconds = parseTimecode(time);
+                if (seconds === null) return;
+                const segment = [...transcripts].reverse().find(t => {
+                  const start = segmentPlaybackSeconds(t); return start !== null && start <= seconds;
+                });
+                setActiveSummaryMeeting(meeting, segment?.id);
+                setActiveTab('transcripts');
+              }} />
             </div>
           ) : activeTab === 'summary' ? (
             <>

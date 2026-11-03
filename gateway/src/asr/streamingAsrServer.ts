@@ -35,6 +35,32 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
     let upstreamWs: WebSocket | null = null;
     let upstreamReady = false;
     const pendingPcmQueue: Buffer[] = [];
+    let finishing = false;
+    let finished = false;
+    let finishSent = false;
+    let finishTimer: ReturnType<typeof setTimeout> | undefined;
+    let activeSentence: { id: string; begin: number | null } | null = null;
+    let untimedIndex = 0;
+    let lastFinalBegin = -1;
+    const revisions = new Map<string, { revision: number; final: boolean }>();
+    const send = (value: object) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
+    };
+    const time = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+    const complete = (outcome: 'complete' | 'timeout' | 'error') => {
+      if (finished) return;
+      finished = true;
+      if (finishTimer) clearTimeout(finishTimer);
+      pendingPcmQueue.length = 0;
+      send({ type: 'FINISHED', outcome });
+      upstreamWs?.close();
+    };
+    const sendFinish = () => {
+      if (!finishing || finished || finishSent || !upstreamReady || upstreamWs?.readyState !== WebSocket.OPEN) return;
+      finishSent = true;
+      upstreamWs.send(JSON.stringify({ header: { action: 'finish-task', task_id: taskId, streaming: 'duplex' }, payload: { input: {} } }));
+    };
     const taskId = crypto.randomUUID().replace(/-/g, '');
 
     // 单元测试环境标识
@@ -103,91 +129,66 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
                 const chunk = pendingPcmQueue.shift();
                 if (chunk) upstreamWs.send(chunk);
               }
-            } else if (event === 'result-generated') {
+              sendFinish();
+            } else if (event === 'result-generated' && !finished) {
               const sentence = resp.payload?.output?.sentence;
-              if (sentence && sentence.text) {
-                if (sentence.sentence_end) {
-                  const now = new Date();
-                  const timestamp = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
-                  const beginTimeMs = typeof sentence.begin_time === 'number' ? sentence.begin_time : null;
-                  const endTimeMs = typeof sentence.end_time === 'number' ? sentence.end_time : null;
-                  const speakerId =
-                    sentence.speaker_id !== undefined && sentence.speaker_id !== null
-                      ? `spk_${Number(sentence.speaker_id) + 1}`
-                      : null;
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(
-                      JSON.stringify({
-                        type: 'FINAL',
-                        sentence: {
-                          speaker: '发言人',
-                          speakerId,
-                          text: sentence.text,
-                          timestamp,
-                          beginTimeMs,
-                          endTimeMs,
-                        },
-                      })
-                    );
-                  }
-                } else {
-                  if (ws.readyState === WebSocket.OPEN) {
-                    ws.send(
-                      JSON.stringify({
-                        type: 'INTERIM',
-                        text: sentence.text,
-                      })
-                    );
-                  }
-                }
+              if (!sentence || sentence.heartbeat === true || typeof sentence.text !== 'string' || !sentence.text || sentence.text.length > 100000) return;
+              const beginTimeMs = time(sentence.begin_time);
+              const rawEnd = time(sentence.end_time);
+              const endTimeMs = rawEnd !== null && (beginTimeMs === null || rawEnd >= beginTimeMs) ? rawEnd : null;
+              const isFinal = sentence.sentence_end === true;
+              // 有时间的句子按音频起点关联；缺时间只维护当前活动句，绝不按文字猜身份。
+              if (beginTimeMs !== null && beginTimeMs <= lastFinalBegin) return;
+              const continuesActive = activeSentence && (beginTimeMs === null || activeSentence.begin === null || activeSentence.begin === beginTimeMs);
+              const utteranceId = continuesActive ? activeSentence!.id : (beginTimeMs !== null ? `t${beginTimeMs}` : `u${++untimedIndex}`);
+              activeSentence = { id: utteranceId, begin: beginTimeMs ?? (continuesActive ? activeSentence!.begin : null) };
+              const previous = revisions.get(utteranceId);
+              if (previous?.final) return;
+              const revision = (previous?.revision ?? 0) + 1;
+              revisions.set(utteranceId, { revision, final: isFinal });
+              // 关联状态只保存近期窗口；更老的已定稿通过音频水位拒绝。
+              if (revisions.size > 512) revisions.delete(revisions.keys().next().value as string);
+              if (isFinal) {
+                if (activeSentence.begin !== null) lastFinalBegin = activeSentence.begin;
+                activeSentence = null;
               }
+              const words = Array.isArray(sentence.words) ? sentence.words.slice(0, 10000).flatMap((word: unknown) => {
+                if (!word || typeof word !== 'object') return [];
+                const w = word as Record<string, unknown>;
+                const begin = time(w.begin_time), end = time(w.end_time);
+                return typeof w.text === 'string' && begin !== null && end !== null && end >= begin
+                  ? [{ text: w.text, beginTimeMs: begin, endTimeMs: end }] : [];
+              }) : [];
+              const metadata = { protocolVersion: 2, taskId, utteranceId, revision, source: 'mic', beginTimeMs, endTimeMs };
+              if (isFinal) {
+                const speakerId = Number.isSafeInteger(sentence.speaker_id) && sentence.speaker_id >= 0 ? `spk_${sentence.speaker_id + 1}` : null;
+                send({ type: 'FINAL', ...metadata, sentence: { speaker: '发言人', speakerId,
+                  text: sentence.text, timestamp: new Date().toLocaleTimeString('en-GB', { hour12: false }), beginTimeMs, endTimeMs, words } });
+              } else {
+                send({ type: 'INTERIM', ...metadata, text: sentence.text });
+              }
+            } else if (event === 'task-finished') {
+              if (finishing) complete('complete');
             } else if (event === 'task-failed') {
-              const errMsg = resp.header?.error_message || '语音识别服务处理异常';
-              if (ws.readyState === WebSocket.OPEN) {
-                ws.send(
-                  JSON.stringify({
-                    type: 'ERROR',
-                    message: `语音识别处理异常: ${errMsg}`,
-                  })
-                );
-              }
+              send({ type: 'ERROR', message: '语音识别处理异常' });
+              complete('error');
             }
-          } catch (e) {
-            console.warn('[StreamingAsrServer] Parse upstream message error:', e);
+          } catch {
+            send({ type: 'ERROR', message: '语音识别响应格式异常' });
           }
         });
 
-        upstreamWs.on('error', (err) => {
-          console.warn('[StreamingAsrServer] Upstream ASR error:', err.message);
-          if (isTestEnv && ws.readyState === WebSocket.OPEN) {
-            ws.send(
-              JSON.stringify({
-                type: 'FINAL',
-                sentence: {
-                  speaker: '发言人',
-                  speakerId: null,
-                  text: '听序 ASR 流式测试成功。',
-                  timestamp: '00:01:00',
-                  beginTimeMs: 0,
-                  endTimeMs: 1000,
-                },
-              })
-            );
-          } else if (ws.readyState === WebSocket.OPEN) {
-            ws.send(
-              JSON.stringify({
-                type: 'ERROR',
-                message: `语音识别服务连接异常: ${err.message}`,
-              })
-            );
-          }
+        upstreamWs.on('error', () => {
+          send({ type: 'ERROR', message: '语音识别服务连接异常' });
+          complete('error');
         });
-
         upstreamWs.on('close', () => {
           upstreamReady = false;
+          if (!finished) complete('error');
         });
-      } catch (err) {
-        console.error('[StreamingAsrServer] Failed to connect upstream:', (err as Error).message);
+      } catch {
+        send({ type: 'ERROR', message: '语音识别服务连接异常' });
+        complete('error');
       }
     }
 
@@ -195,12 +196,23 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
     let totalTestBytes = 0;
 
     ws.on('message', (data: Buffer | ArrayBuffer, isBinary: boolean) => {
-      if (isBinary) {
+      if (!isBinary) {
+        try {
+          const request: unknown = JSON.parse(data.toString());
+          if (!request || typeof request !== 'object' || (request as Record<string, unknown>).type !== 'FINISH' || finishing || finished) return;
+          finishing = true;
+          finishTimer = setTimeout(() => complete('timeout'), 5000);
+          if (isMockDevKey && isTestEnv) complete('complete');
+          else sendFinish();
+        } catch { /* 无效控制消息不会改变会话状态 */ }
+        return;
+      }
+      if (isBinary && !finishing && !finished) {
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
 
         // 如果连接了真实上游 DashScope
-        if (upstreamWs && upstreamWs.readyState === WebSocket.OPEN) {
-          if (upstreamReady) {
+        if (upstreamWs) {
+          if (upstreamReady && upstreamWs.readyState === WebSocket.OPEN) {
             upstreamWs.send(buffer);
           } else {
             if (pendingPcmQueue.length < 50) {
@@ -211,7 +223,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
         }
 
         // 测试环境回退 (Vitest 离线单测)
-        if (isTestEnv) {
+        if (isTestEnv && !upstreamWs) {
           const prevMs = Math.floor((totalTestBytes / 32000) * 1000);
           testBytes += buffer.length;
           totalTestBytes += buffer.length;
@@ -219,7 +231,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
           if (testBytes >= 16000 && ws.readyState === WebSocket.OPEN) {
             ws.send(
               JSON.stringify({
-                type: 'FINAL',
+                type: 'FINAL', protocolVersion: 2, taskId, utteranceId: `mock${prevMs}`, revision: 1, source: 'mic', beginTimeMs: prevMs, endTimeMs: Math.max(prevMs + 500, nextMs),
                 sentence: {
                   speaker: '发言人',
                   speakerId: null,
@@ -237,33 +249,14 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
     });
 
     ws.on('close', () => {
-      if (upstreamWs && upstreamWs.readyState === WebSocket.OPEN) {
-        try {
-          upstreamWs.send(
-            JSON.stringify({
-              header: {
-                action: 'finish-task',
-                task_id: taskId,
-                streaming: 'duplex',
-              },
-              payload: {},
-            })
-          );
-          setTimeout(() => {
-            try {
-              upstreamWs?.close();
-            } catch {}
-          }, 300);
-        } catch {
-          upstreamWs.close();
-        }
-      }
-      upstreamWs = null;
+      finished = true;
+      if (finishTimer) clearTimeout(finishTimer);
       pendingPcmQueue.length = 0;
+      upstreamWs?.close();
+      upstreamWs = null;
     });
-
-    ws.on('error', (err) => {
-      console.warn('[StreamingAsrServer] Client ws error:', err.message);
+    ws.on('error', () => {
+      complete('error');
     });
   });
 

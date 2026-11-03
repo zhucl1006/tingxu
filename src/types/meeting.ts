@@ -32,6 +32,8 @@ export interface TranscriptSegment {
   speaker: string;
   speakerId?: string;
   speakerConfidence?: number;
+  speakerStatus?: 'pending' | 'assigned' | 'unknown';
+  speakerManuallyNamed?: boolean;
   speakerColorIndex?: number;
   matchedProfileId?: string | null;
   tentativeProfileId?: string | null;
@@ -39,6 +41,8 @@ export interface TranscriptSegment {
   channel: 'mic' | 'system';
   timestamp: string;
   timestampSeconds?: number;
+  recordingBeginMs?: number;
+  recordingEndMs?: number;
   beginTimeMs?: number;
   endTimeMs?: number;
   text: string;
@@ -120,7 +124,15 @@ export interface MeetingStructuredSummary {
   facts: SummaryFactItem[];
 }
 
+export interface RecordingReference {
+  id: string;
+  samples: number;
+  sampleRate: number;
+}
+
 export interface HistoryMeeting {
+  recording?: RecordingReference;
+  recordingWarning?: string;
   id: string;
   title: string;
   date: string;
@@ -134,6 +146,15 @@ export interface HistoryMeeting {
   insights?: InsightCard[];
   transcripts?: TranscriptSegment[];
 }
+
+export interface StorageSettings {
+  autoCleanupDays: number; // 0 = 从不清理, 7, 14, 30, 90
+  lastCleanupAt?: number;
+}
+
+export const DEFAULT_STORAGE_SETTINGS: StorageSettings = {
+  autoCleanupDays: 0,
+};
 
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type FontSizeScale = 'small' | 'medium' | 'large' | 'xlarge';
@@ -251,19 +272,35 @@ export interface MeetingState {
   setAppearanceSettings: (settings: Partial<UiAppearanceSettings>) => void;
   resetAppearanceSettings: () => void;
 
+  // 本地录音存储空间与清理策略
+  storageSettings: StorageSettings;
+  storageUsage: { totalBytes: number; recordingCount: number };
+  isStorageLoading: boolean;
+  refreshStorageUsage: () => Promise<void>;
+  updateStorageSettings: (settings: Partial<StorageSettings>) => void;
+  cleanupRecordings: (options?: { olderThanDays?: number; targetIds?: string[] }) => Promise<{ freedBytes: number; deletedCount: number; deletedIds: string[] }>;
+  runAutoCleanupIfNeeded: () => Promise<void>;
+
   // 声纹识别与说话人分离参数配置
   voiceprintSettings: VoiceprintConfigSettings;
   setVoiceprintPresetMode: (mode: VoiceprintPresetMode) => void;
   updateVoiceprintSettings: (settings: Partial<VoiceprintConfigSettings>) => void;
   resetVoiceprintSettings: () => void;
 
+  // 当前采集会话的排空回调，仅驻留内存，绝不持久化。
+  asrSessionDrain: (() => Promise<'complete' | 'timeout' | 'error'>) | null;
+  isDrainingAsr: boolean;
+  audioDeviceStop: Promise<void> | null;
+  asrDrainWarning: string | null;
   // Actions
   startMeeting: (title?: string) => void;
-  pauseMeeting: () => void;
+  pauseMeeting: () => Promise<void>;
   resumeMeeting: () => void;
-  endMeeting: () => void;
+  endMeeting: () => Promise<void>;
   tickTimer: () => void;
   addTranscriptSegment: (segment: TranscriptSegment) => void;
+  updateTranscriptSpeaker: (id: string, patch: Pick<TranscriptSegment, 'speaker'> & Partial<Pick<TranscriptSegment,
+    'speakerId' | 'speakerStatus' | 'speakerConfidence' | 'speakerColorIndex' | 'matchedProfileId' | 'tentativeProfileId' | 'tentativeProfileName'>>) => void;
   addInsight: (insight: Omit<InsightCard, 'isConfirmed' | 'isEdited'>) => void;
   applyInsightPatch: (patch: any) => void;
   confirmInsight: (id: string) => void;
@@ -273,7 +310,7 @@ export interface MeetingState {
   acceptInsightRevision: (id: string) => void;
   setHighlightedTranscriptId: (id: string | null) => void;
   setActiveWindow: (window: 'workbench' | 'floating-pill') => void;
-  deleteHistoryMeeting: (id: string) => void;
-  clearAllHistory: () => void;
+  deleteHistoryMeeting: (id: string) => Promise<void>;
+  clearAllHistory: () => Promise<void>;
   resetMeeting: () => void;
 }
