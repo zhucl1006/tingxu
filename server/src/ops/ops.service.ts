@@ -47,6 +47,17 @@ export interface PagedUsersResult {
   totalPages: number;
 }
 
+export interface AiUsageStats {
+  totalCostYuan: number;
+  todayCostYuan: number;
+  totalTokens: number;
+  totalAudioSeconds: number;
+  totalCalls: number;
+  byProvider: Record<string, any>;
+  byType: Record<string, any>;
+  recentRecords: any[];
+}
+
 export class OpsService {
   private readonly billingEngine: BillingEngine;
   private readonly requests = new Map<string, CompensationRequest>();
@@ -217,6 +228,39 @@ export class OpsService {
 
   public async getAllCompensationRequests(): Promise<CompensationRequest[]> {
     return Array.from(this.requests.values());
+  }
+
+  public async getAiUsageStats(): Promise<AiUsageStats> {
+    const defaultStats: AiUsageStats = {
+      totalCostYuan: 0,
+      todayCostYuan: 0,
+      totalTokens: 0,
+      totalAudioSeconds: 0,
+      totalCalls: 0,
+      byProvider: {},
+      byType: {},
+      recentRecords: [],
+    };
+
+    const targetUrl =
+      process.env.GATEWAY_INTERNAL_URL ||
+      (process.env.GATEWAY_URL ? process.env.GATEWAY_URL.replace(/\/$/, '') + '/internal/billing/ai-usage' : null) ||
+      'http://localhost:3201/internal/billing/ai-usage';
+
+    try {
+      const res = await fetch(targetUrl);
+
+      if (res.ok) {
+        const json = (await res.json()) as any;
+        if (json && json.code === 0 && json.data) {
+          return json.data;
+        }
+      }
+    } catch {
+      // 容错降级
+    }
+
+    return defaultStats;
   }
 
   private recordAudit(event: Omit<AuditEvent, 'eventId' | 'timestamp'>): void {

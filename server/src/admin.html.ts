@@ -354,6 +354,7 @@ export function renderAdminDashboardHtml(): string {
     <!-- 导航切换 -->
     <div class="tabs">
       <button class="tab-btn active" data-testid="admin-tab-btn-config" onclick="switchTab('config')">⚙️ 云端服务与密钥配置中心</button>
+      <button class="tab-btn" data-testid="admin-tab-btn-ai-cost" onclick="switchTab('ai-cost')">📊 AI 用量与成本大盘</button>
       <button class="tab-btn" data-testid="admin-tab-btn-users" onclick="switchTab('users')">👥 脱敏用户与时长额度</button>
       <button class="tab-btn" data-testid="admin-tab-btn-compensations" onclick="switchTab('compensations')">✍️ 补偿时长审批流</button>
       <button class="tab-btn" data-testid="admin-tab-btn-orders" onclick="switchTab('orders')">💰 微信支付与账本</button>
@@ -710,6 +711,79 @@ export function renderAdminDashboardHtml(): string {
         </tbody>
       </table>
     </div>
+
+    <!-- Tab 5: AI 用量与成本大盘 -->
+    <div id="panel-ai-cost" class="panel" style="display: none;" data-testid="admin-ai-cost-panel">
+      <div class="panel-header">
+        <div>
+          <div class="panel-title">AI 用量与实际调用成本大盘</div>
+          <div style="font-size:12px; color:var(--text-sub); margin-top:4px;">
+            基于各模型实际 Token 消耗及 ASR 语音流秒数，精确换算人民币费用。严格遵循 Zero-Content 隐私红线，绝无会议正文。
+          </div>
+        </div>
+        <button class="btn btn-outline" data-testid="admin-ai-cost-btn-refresh" onclick="loadAiCostStats()">🔄 刷新用量数据</button>
+      </div>
+
+      <!-- 四大核心指标卡 -->
+      <div class="grid-4" style="margin-bottom: 24px;">
+        <div class="stat-card" data-testid="admin-ai-cost-stat-card-total-cost">
+          <div class="stat-title">AI 实际累计支出 (元)</div>
+          <div class="stat-value" id="ai-cost-total-cost" style="color:var(--brand-hover);">¥ 0.0000</div>
+        </div>
+        <div class="stat-card" data-testid="admin-ai-cost-stat-card-today-cost">
+          <div class="stat-title">今日 AI 支出 (元)</div>
+          <div class="stat-value" id="ai-cost-today-cost" style="color:var(--warning);">¥ 0.0000</div>
+        </div>
+        <div class="stat-card" data-testid="admin-ai-cost-stat-card-tokens">
+          <div class="stat-title">LLM 消耗 Token 总数</div>
+          <div class="stat-value" id="ai-cost-total-tokens">0</div>
+        </div>
+        <div class="stat-card" data-testid="admin-ai-cost-stat-card-asr-duration">
+          <div class="stat-title">ASR 语音识别总时长</div>
+          <div class="stat-value" id="ai-cost-total-asr">0 分 0 秒</div>
+        </div>
+      </div>
+
+      <!-- 模型服务与业务场景分布看板 -->
+      <div style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap:16px; margin-bottom: 24px;">
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--card-border); border-radius:8px; padding:16px;">
+          <div style="font-weight:600; font-size:14px; margin-bottom:12px; color:var(--text-main);">🤖 模型服务商支出分布</div>
+          <div id="ai-cost-provider-breakdown" style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
+            <div style="color:var(--text-sub);">暂无厂商调用数据</div>
+          </div>
+        </div>
+        <div style="background:rgba(255,255,255,0.02); border:1px solid var(--card-border); border-radius:8px; padding:16px;">
+          <div style="font-weight:600; font-size:14px; margin-bottom:12px; color:var(--text-main);">🎯 业务场景支出分布</div>
+          <div id="ai-cost-type-breakdown" style="display:flex; flex-direction:column; gap:8px; font-size:13px;">
+            <div style="color:var(--text-sub);">暂无场景调用数据</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 脱敏流水明细表 -->
+      <div style="font-weight:600; font-size:14px; margin-bottom:12px; color:var(--text-main);">
+        📋 实时调用流水（最新 100 笔 · 已脱敏）
+      </div>
+      <div class="table-container" data-testid="admin-ai-cost-table-container">
+        <table>
+          <thead>
+            <tr>
+              <th>调用时间</th>
+              <th>业务类型</th>
+              <th>服务商</th>
+              <th>模型版本</th>
+              <th>消耗用量 (Tokens / 时长)</th>
+              <th>耗时</th>
+              <th>本次费用 (元)</th>
+              <th>状态</th>
+            </tr>
+          </thead>
+          <tbody id="ai-cost-table-body">
+            <tr class="empty-state-row"><td colspan="8">暂无 AI 调用流水数据。客户端发起会议提问、实时整理或会议总结后将在此实时展示。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <script>
@@ -776,11 +850,12 @@ export function renderAdminDashboardHtml(): string {
       document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
       const activeBtn = document.querySelector('[data-testid="admin-tab-btn-' + tabId + '"]');
       if (activeBtn) activeBtn.classList.add('active');
-      ['config', 'users', 'compensations', 'orders', 'audit'].forEach(t => {
-        const el = document.getElementById('tab-' + t);
+      ['config', 'users', 'compensations', 'orders', 'audit', 'ai-cost'].forEach(t => {
+        const el = document.getElementById('tab-' + t) || document.getElementById('panel-' + t);
         if (el) el.style.display = t === tabId ? 'block' : 'none';
       });
 
+      if (tabId === 'ai-cost') loadAiCostStats();
       if (tabId === 'users') loadUsers();
       if (tabId === 'compensations') loadCompensations();
       if (tabId === 'orders') loadOrders();
@@ -1228,6 +1303,83 @@ export function renderAdminDashboardHtml(): string {
         }
       } catch (err) {
         console.warn('获取审计日志失败:', err);
+      }
+    }
+
+    async function loadAiCostStats() {
+      try {
+        const res = await fetch('/v1/ops/ai-usage/stats');
+        if (!res.ok) return;
+        const json = await res.json();
+        if (json.code !== 0 || !json.data) return;
+        const d = json.data;
+
+        document.getElementById('ai-cost-total-cost').innerText = '¥ ' + (Number(d.totalCostYuan) || 0).toFixed(4);
+        document.getElementById('ai-cost-today-cost').innerText = '¥ ' + (Number(d.todayCostYuan) || 0).toFixed(4);
+        document.getElementById('ai-cost-total-tokens').innerText = (Number(d.totalTokens) || 0).toLocaleString();
+        const asrSecs = Number(d.totalAudioSeconds) || 0;
+        const asrMins = Math.floor(asrSecs / 60);
+        const asrRemSecs = Math.round(asrSecs % 60);
+        document.getElementById('ai-cost-total-asr').innerText = asrMins + ' 分 ' + asrRemSecs + ' 秒';
+
+        // Provider Breakdown
+        const pBreakdown = document.getElementById('ai-cost-provider-breakdown');
+        if (d.byProvider && Object.keys(d.byProvider).length > 0) {
+          pBreakdown.innerHTML = Object.entries(d.byProvider).map(([p, info]) => \`
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed var(--card-border);">
+              <span style="font-weight:500;">\${p === 'deepseek' ? 'DeepSeek 大模型' : (p === 'dashscope' ? 'DashScope 语音识别' : (p === 'qwen' ? '通义千问大模型' : p))}</span>
+              <div style="font-variant-numeric:tabular-nums; text-align:right;">
+                <strong>¥ \${(Number(info.costYuan) || 0).toFixed(4)}</strong>
+                <span style="color:var(--text-sub); font-size:12px; margin-left:6px;">(\${info.calls || 0} 次调用)</span>
+              </div>
+            </div>
+          \`).join('');
+        } else {
+          pBreakdown.innerHTML = '<div style="color:var(--text-sub);">暂无厂商调用数据</div>';
+        }
+
+        // Type Breakdown
+        const tBreakdown = document.getElementById('ai-cost-type-breakdown');
+        const typeNameMap = {
+          llm_chat: '会中本场问答 (Chat)',
+          llm_insights: '会中实时整理 (Live Insights)',
+          llm_summary: '会后全局纪要 (Summary)',
+          asr_stream: '实时语音识别 (Streaming ASR)',
+        };
+        if (d.byType && Object.keys(d.byType).length > 0) {
+          tBreakdown.innerHTML = Object.entries(d.byType).map(([t, info]) => \`
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px dashed var(--card-border);">
+              <span style="font-weight:500;">\${typeNameMap[t] || t}</span>
+              <div style="font-variant-numeric:tabular-nums; text-align:right;">
+                <strong>¥ \${(Number(info.costYuan) || 0).toFixed(4)}</strong>
+                <span style="color:var(--text-sub); font-size:12px; margin-left:6px;">(\${info.calls || 0} 次调用)</span>
+              </div>
+            </div>
+          \`).join('');
+        } else {
+          tBreakdown.innerHTML = '<div style="color:var(--text-sub);">暂无场景调用数据</div>';
+        }
+
+        // Recent Records
+        const tbody = document.getElementById('ai-cost-table-body');
+        if (Array.isArray(d.recentRecords) && d.recentRecords.length > 0) {
+          tbody.innerHTML = d.recentRecords.map(r => \`
+            <tr data-testid="admin-ai-cost-table-row-usage-\${r.id}">
+              <td style="color:var(--text-sub); font-variant-numeric:tabular-nums;">\${new Date(r.timestamp).toLocaleTimeString()}</td>
+              <td><span class="badge \${r.type.startsWith('llm') ? 'badge-blue' : 'badge-yellow'}">\${typeNameMap[r.type] || r.type}</span></td>
+              <td>\${r.provider}</td>
+              <td><code>\${r.model}</code></td>
+              <td style="font-variant-numeric:tabular-nums;">\${r.type === 'asr_stream' ? (r.audioSeconds + ' 秒音频') : ((r.totalTokens || 0).toLocaleString() + ' Tokens')}</td>
+              <td style="font-variant-numeric:tabular-nums; color:var(--text-sub);">\${r.latencyMs} ms</td>
+              <td style="font-variant-numeric:tabular-nums; font-weight:600; color:var(--warning);">¥ \${(Number(r.costYuan) || 0).toFixed(4)}</td>
+              <td><span class="badge badge-green">\${r.status || 200} OK</span></td>
+            </tr>
+          \`).join('');
+        } else {
+          tbody.innerHTML = '<tr class="empty-state-row"><td colspan="8">暂无 AI 调用流水数据。客户端发起会议提问、实时整理或会议总结后将在此实时展示。</td></tr>';
+        }
+      } catch (err) {
+        console.warn('获取 AI 成本统计失败:', err);
       }
     }
 

@@ -8,9 +8,11 @@ import { QwenAdapter } from './adapters/qwen.js';
 import { createAuditRecord } from './middleware/zeroContentAudit.js';
 import type { LiveInsightRequest, MeetingChatRequest, MeetingSummaryRequest } from './adapters/types.js';
 import { attachStreamingAsrServer } from './asr/streamingAsrServer.js';
+import { AiUsageStore } from './billing/aiUsageStore.js';
 
 export interface GatewayServerOptions {
   router?: ModelRouter;
+  usageStore?: AiUsageStore;
 }
 
 function loadBootstrapConfig(): any {
@@ -40,6 +42,7 @@ function loadBootstrapConfig(): any {
 
 export function createGatewayServer(options?: GatewayServerOptions) {
   const bootstrapConfig = loadBootstrapConfig();
+  const usageStore = options?.usageStore || new AiUsageStore();
 
   let activeConfig = {
     llmProvider: bootstrapConfig?.llm?.provider || 'deepseek',
@@ -97,6 +100,13 @@ export function createGatewayServer(options?: GatewayServerOptions) {
           circuitBreakers: router.getBreakerStats(),
         })
       );
+      return;
+    }
+
+    // 1.2 查询 AI 实际用量与成本大盘流水 (GET /internal/billing/ai-usage 或 GET /gateway/v1/billing/ai-usage)
+    if (req.method === 'GET' && (pathname === '/internal/billing/ai-usage' || pathname === '/gateway/v1/billing/ai-usage')) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ code: 0, data: usageStore.getStats() }));
       return;
     }
 
@@ -187,6 +197,20 @@ export function createGatewayServer(options?: GatewayServerOptions) {
           fallbackTriggered: result.fallbackTriggered,
         });
 
+        // 异步安全记录真实 Token 费用与用量
+        usageStore
+          .recordUsage({
+            type: 'llm_chat',
+            provider: result.provider,
+            model: result.modelVersion,
+            promptTokens: result.usage.promptTokens,
+            completionTokens: result.usage.completionTokens,
+            latencyMs: Date.now() - startTime,
+            status: 200,
+            meetingId: payload.meetingId,
+          })
+          .catch((err) => console.error('[AI Gateway] Record chat usage error:', err));
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -259,6 +283,20 @@ export function createGatewayServer(options?: GatewayServerOptions) {
           status: 200,
           fallbackTriggered: result.fallbackTriggered,
         });
+
+        // 异步安全记录实时整理 Token 费用与用量
+        usageStore
+          .recordUsage({
+            type: 'llm_insights',
+            provider: result.provider,
+            model: result.modelVersion,
+            promptTokens: result.usage.promptTokens,
+            completionTokens: result.usage.completionTokens,
+            latencyMs: Date.now() - startTime,
+            status: 200,
+            meetingId: payload.meetingId,
+          })
+          .catch((err) => console.error('[AI Gateway] Record live insights usage error:', err));
       } catch (err) {
         console.error('[AI Gateway] Live insights error:', (err as Error).message);
         if (!res.headersSent) {
@@ -304,6 +342,20 @@ export function createGatewayServer(options?: GatewayServerOptions) {
           fallbackTriggered: result.fallbackTriggered,
         });
 
+        // 异步安全记录全场纪要总结 Token 费用与用量
+        usageStore
+          .recordUsage({
+            type: 'llm_summary',
+            provider: result.provider,
+            model: result.modelVersion,
+            promptTokens: result.usage.promptTokens,
+            completionTokens: result.usage.completionTokens,
+            latencyMs: Date.now() - startTime,
+            status: 200,
+            meetingId: payload.meetingId,
+          })
+          .catch((err) => console.error('[AI Gateway] Record summary usage error:', err));
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -343,6 +395,18 @@ export function createGatewayServer(options?: GatewayServerOptions) {
       apiKey: activeConfig.asrApiKey,
       endpoint: activeConfig.asrEndpoint,
     }),
+    onStreamEnd: (stats) => {
+      usageStore
+        .recordUsage({
+          type: 'asr_stream',
+          provider: stats.provider,
+          model: 'paraformer-realtime-v2',
+          audioSeconds: stats.audioSeconds,
+          latencyMs: stats.latencyMs,
+          status: 200,
+        })
+        .catch((err) => console.error('[AI Gateway] Record ASR stream usage error:', err));
+    },
   });
 
   return { server, router, wss };

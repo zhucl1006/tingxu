@@ -6,6 +6,7 @@ export interface AsrServerOptions {
   server: HttpServer;
   path?: string;
   getAsrConfig?: () => { provider: string; apiKey?: string; endpoint?: string };
+  onStreamEnd?: (stats: { audioSeconds: number; latencyMs: number; provider: string }) => void;
 }
 
 export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketServer {
@@ -43,6 +44,23 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
     let untimedIndex = 0;
     let lastFinalBegin = -1;
     const revisions = new Map<string, { revision: number; final: boolean }>();
+    const sessionStartTime = Date.now();
+    let receivedPcmBytes = 0;
+    let hasReportedUsage = false;
+
+    const reportUsage = () => {
+      if (hasReportedUsage) return;
+      hasReportedUsage = true;
+      const audioSeconds = Math.round((receivedPcmBytes / 32000) * 10) / 10;
+      if (audioSeconds > 0 && options.onStreamEnd) {
+        options.onStreamEnd({
+          audioSeconds,
+          latencyMs: Date.now() - sessionStartTime,
+          provider: config.provider || 'dashscope',
+        });
+      }
+    };
+
     const send = (value: object) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(value));
     };
@@ -51,6 +69,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
     const complete = (outcome: 'complete' | 'timeout' | 'error') => {
       if (finished) return;
       finished = true;
+      reportUsage();
       if (finishTimer) clearTimeout(finishTimer);
       pendingPcmQueue.length = 0;
       send({ type: 'FINISHED', outcome });
@@ -209,6 +228,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
       }
       if (isBinary && !finishing && !finished) {
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
+        receivedPcmBytes += buffer.length;
 
         // 如果连接了真实上游 DashScope
         if (upstreamWs) {
@@ -250,6 +270,7 @@ export function attachStreamingAsrServer(options: AsrServerOptions): WebSocketSe
 
     ws.on('close', () => {
       finished = true;
+      reportUsage();
       if (finishTimer) clearTimeout(finishTimer);
       pendingPcmQueue.length = 0;
       upstreamWs?.close();

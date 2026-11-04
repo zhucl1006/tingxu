@@ -313,6 +313,7 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
       if (req.method === 'GET' && pathname === '/v1/ops/stats') {
         const userCount = authService.getUserCount();
         const totalPaid = await wechatPayService.getTotalPaidAmount();
+        const aiStats = await opsService.getAiUsageStats();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
@@ -321,6 +322,8 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
               userCount,
               todayMeetingMinutes: 0,
               totalPaidAmount: totalPaid,
+              todayAiCostYuan: aiStats.todayCostYuan,
+              totalAiCostYuan: aiStats.totalCostYuan,
               gatewayStatus: '● CLOSED (正常运行)',
             },
           })
@@ -393,6 +396,14 @@ export function createControlPlaneServer(options?: ControlPlaneOptions) {
         const logs = await opsService.getAuditLogs();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ code: 0, data: logs }));
+        return;
+      }
+
+      // 13.1 运营后台：AI 实际成本与用量统计大盘 (GET /v1/ops/ai-usage/stats)
+      if (req.method === 'GET' && pathname === '/v1/ops/ai-usage/stats') {
+        const aiStats = await opsService.getAiUsageStats();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ code: 0, data: aiStats }));
         return;
       }
 
