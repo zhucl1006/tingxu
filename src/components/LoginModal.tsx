@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
+import { getTingxuClient } from '../api/tingxuClient';
 import { TingxuLogo } from './TingxuLogo';
 
 export const LoginModal: React.FC = () => {
@@ -31,21 +32,9 @@ export const LoginModal: React.FC = () => {
     setLoading(true);
 
     try {
-      // 真实调用本地控制面 Server 短信接口（连通阿里云短信网关）
-      const res = await fetch('http://localhost:3200/v1/auth/sms/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone }),
-      }).catch((e) => {
-        throw new Error(`无法连接控制面服务端 (http://localhost:3200): ${e.message}`);
-      });
-
-      const data = await res.json();
-      if (!res.ok || data.code !== 0) {
-        throw new Error(data.message || '短信验证码下发失败，请检查短信服务状态');
-      }
-
-      setInfoMsg(data.message || '短信验证码已下发至您的手机，请查收');
+      // 深度通信契约：调用控制面短信验证服务
+      const result = await getTingxuClient().auth.sendSms(phone);
+      setInfoMsg(result.message || '短信验证码已下发至您的手机，请查收');
       setCountdown(60);
     } catch (err) {
       setErrorMsg((err as Error).message);
@@ -65,25 +54,14 @@ export const LoginModal: React.FC = () => {
     setLoading(true);
 
     try {
-      const res = await fetch('http://localhost:3200/v1/auth/sms/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code }),
-      }).catch((e) => {
-        throw new Error(`无法连接控制面服务端: ${e.message}`);
-      });
-
-      const json = await res.json();
-      if (!res.ok || json.code !== 0 || !json.data?.token) {
-        throw new Error(json.message || '验证码核验失败或已失效，请重新获取');
-      }
+      const data = await getTingxuClient().auth.loginWithSms(phone, code);
 
       // 仅接受真实签发的服务端凭据与用户身份
       loginUser({
-        userId: json.data.user.userId,
-        phone: json.data.user.phone,
-        token: json.data.token,
-        role: json.data.user.role || 'USER',
+        userId: data.user.userId,
+        phone: data.user.phone,
+        token: data.token,
+        role: (data.user as any).role || 'USER',
       });
     } catch (err) {
       setErrorMsg((err as Error).message);

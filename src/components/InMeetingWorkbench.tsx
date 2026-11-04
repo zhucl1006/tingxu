@@ -1,16 +1,9 @@
-import { getLocalRecording } from '../audio/localRecording';
 import React, { useState, useRef, useEffect, memo, useCallback, useMemo } from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
-import { RealAudioCapture, CaptureMode } from '../audio/realAudioCapture';
-import { RealStreamingAsrClient, streamingAsrUrl } from '../audio/realStreamingAsrClient';
-import { TranscriptEventState } from '../audio/transcriptEventState';
-import { InterimTextStabilizer } from '../audio/interimTextStabilizer';
-import { SentenceAudioBuffer } from '../audio/sentenceAudioBuffer';
-import { LocalSpeakerEmbeddingEngine } from '../audio/speakerEmbeddingEngine';
-import { OnlineSpeakerClusterer } from '../engine/speakerClusterer';
-import { SlidingWindowAccumulator, WindowPayload } from '../engine/slidingWindow';
+import { getMeetingPipelineService, type CaptureMode } from '../audio/meetingPipelineService';
+import { getTingxuClient } from '../api/tingxuClient';
 
 const SPEAKER_DOT_CLASSES = [
   'bg-brand-blue',
@@ -399,18 +392,6 @@ const TranscriptRow = memo<TranscriptRowProps>(({
   );
 });
 
-// 严苛的真实待办判断函数：必须有明确行动/落实动词，排除闲聊/假设/口癖
-const isValidActionItem = (title: string, content: string): boolean => {
-  const text = `${title} ${content}`.trim();
-  const actionVerbs = /(负责|完成|提交|排期|推进|输出|跟进|修复|开发|整理|制定|核对|撰写|优化|联系|发给|发送|交付|上线|准备|测试|梳理|编写)/;
-  const casualChat = /(生病|头疼|闲聊|随口|说说|不知道|觉得吧|算了吧|哈哈|嗯嗯|哎呀|可能吧|怎么搞|没意思)/;
-
-  if (casualChat.test(text) && !actionVerbs.test(text)) {
-    return false;
-  }
-  return actionVerbs.test(text);
-};
-
 export const InMeetingWorkbench: React.FC = () => {
   const {
     title,
@@ -423,14 +404,13 @@ export const InMeetingWorkbench: React.FC = () => {
     keepCurrentInsightVersion,
     acceptInsightRevision,
     setHighlightedTranscriptId,
-    setActiveWindow,
+    toggleFloatingPill,
     setCurrentRoute,
     startMeeting,
     pauseMeeting,
     resumeMeeting,
     endMeeting,
     addInsight,
-    addTranscriptSegment,
     isGeneratingSummary,
     isDrainingAsr,
     audioDeviceStop,
@@ -443,26 +423,35 @@ export const InMeetingWorkbench: React.FC = () => {
     appearanceSettings,
     setAppearanceSettings,
     voiceprintSettings,
+    setMeetingSpeakerMode,
+    insightError,
+    setInsightError,
+    // 实时会议管道全局状态与 setters (020)
+    micStatus,
+    micError,
+    asrStatus,
+    setAsrStatus,
+    asrError,
+    rmsLevel,
+    interimText,
+    interimParts,
+    isExtractingInsights,
+    isSystemAudioActive,
+    selectedMicId,
+    setSelectedMicId,
+    auxDeviceId,
+    setAuxDeviceId,
+    captureMode,
+    setCaptureMode,
+    availableMics,
+    setAvailableMics,
   } = useMeetingStore();
 
   const [activeFilter, setActiveFilter] = useState<'all' | InsightType>('all');
   const [filterKeyword, setFilterKeyword] = useState('');
   const [questionText, setQuestionText] = useState('');
   const [isAsking, setIsAsking] = useState(false);
-  const [rmsLevel, setRmsLevel] = useState(0);
-  const [interimText, setInterimText] = useState('');
-  const [interimParts, setInterimParts] = useState({ stable: '', unstable: '' });
-  const [micStatus, setMicStatus] = useState<'idle' | 'recording' | 'denied' | 'error'>('idle');
-  const [micError, setMicError] = useState<string>('');
-  const [asrStatus, setAsrStatus] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
-  const [asrError, setAsrError] = useState<string>('');
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
-  const [isExtractingInsights, setIsExtractingInsights] = useState(false);
-  const [availableMics, setAvailableMics] = useState<Array<{ deviceId: string; label: string }>>([]);
-  const [selectedMicId, setSelectedMicId] = useState<string>('');
-  const [auxDeviceId, setAuxDeviceId] = useState<string>('');
-  const [captureMode, setCaptureMode] = useState<CaptureMode>('speaker_meeting');
-  const [isSystemAudioActive, setIsSystemAudioActive] = useState<boolean>(false);
   const [showAudioHelpModal, setShowAudioHelpModal] = useState<boolean>(false);
   const [editingHeaderSpeaker, setEditingHeaderSpeaker] = useState<{
     key: string;
@@ -516,18 +505,14 @@ export const InMeetingWorkbench: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [appearanceSettings.fontSize, setAppearanceSettings]);
 
-  // 初始化加载音频输入设备列表并自动侦测 Teams/内录辅助设备
+  // 初始化加载音频输入设备列表并自动侦测 Teams/内录辅助设备（通过音频门面服务统一调度）
   useEffect(() => {
-    RealAudioCapture.getAvailableMicrophones()
-      .then((mics) => {
-        setAvailableMics(mics);
-        const autoAux = mics.find(
-          (d) =>
-            d.deviceId !== selectedMicId &&
-            /teams|blackhole|virtual|内录|loopback/i.test(d.label)
-        );
-        if (autoAux) {
-          setAuxDeviceId(autoAux.deviceId);
+    getMeetingPipelineService()
+      .discoverDevices()
+      .then(({ availableMics, autoDetectedAuxId }) => {
+        setAvailableMics(availableMics);
+        if (autoDetectedAuxId && autoDetectedAuxId !== selectedMicId) {
+          setAuxDeviceId(autoDetectedAuxId);
         }
       })
       .catch(() => {});
@@ -559,37 +544,25 @@ export const InMeetingWorkbench: React.FC = () => {
   }, [transcripts]);
 
   const transcriptListRef = useRef<HTMLDivElement>(null);
-  const audioCaptureRef = useRef<RealAudioCapture | null>(null);
-  const asrClientRef = useRef<RealStreamingAsrClient | null>(null);
-  const systemAudioOperationRef = useRef<Promise<void> | null>(null);
-  const sentenceBufferRef = useRef<SentenceAudioBuffer>(
-    new SentenceAudioBuffer({ sampleRate: 16000, maxDurationSeconds: 60 })
-  );
-  const embeddingEngineRef = useRef<LocalSpeakerEmbeddingEngine>(new LocalSpeakerEmbeddingEngine());
-  const speakerClustererRef = useRef<OnlineSpeakerClusterer>(
-    new OnlineSpeakerClusterer({
-      similarityThreshold: voiceprintSettings.similarityThreshold,
-      continuityThreshold: voiceprintSettings.continuityThreshold,
-      minClusterDurationMs: voiceprintSettings.minClusterDurationMs,
-    })
-  );
+  const speakerClusterer = getMeetingPipelineService().getSpeakerClusterer();
+
+  // 保证会中工作台挂载时，常驻会议流管道处于监听与附着状态 (020)
+  useEffect(() => {
+    getMeetingPipelineService().attach();
+  }, []);
 
   // 监听并实时更新会中在线声纹聚类器参数 (T11)
   useEffect(() => {
-    speakerClustererRef.current.updateOptions({
+    speakerClusterer.updateOptions({
       similarityThreshold: voiceprintSettings.similarityThreshold,
       continuityThreshold: voiceprintSettings.continuityThreshold,
       minClusterDurationMs: voiceprintSettings.minClusterDurationMs,
     });
-  }, [voiceprintSettings]);
-
-  const slidingWindowRef = useRef<SlidingWindowAccumulator>(
-    new SlidingWindowAccumulator({ minCharsThreshold: 60, maxSilenceSeconds: 12 })
-  );
+  }, [voiceprintSettings, speakerClusterer]);
 
   const commitVoiceprintEnrollment = useCallback(
     (speakerKey: string, displayName: string, explicitConsent: boolean) => {
-      const clusterVp = speakerClustererRef.current.getClusterVoiceprint(speakerKey);
+      const clusterVp = speakerClusterer.getClusterVoiceprint(speakerKey);
       const fallbackEmbedding = new Array<number>(192).fill(0);
       const hashSeed = Array.from(speakerKey + displayName).reduce(
         (acc, ch) => (acc * 31 + ch.charCodeAt(0)) % 192,
@@ -604,14 +577,14 @@ export const InMeetingWorkbench: React.FC = () => {
         consented: explicitConsent,
       });
     },
-    [registerSpeakerProfile]
+    [registerSpeakerProfile, speakerClusterer]
   );
 
   const handleRenameSpeakerUnified = useCallback(
     (speakerIdOrOldName: string, newName: string, alsoEnrollVoiceprint = true) => {
       const cleanName = newName.trim();
       if (!cleanName) return;
-      speakerClustererRef.current.renameSpeaker(speakerIdOrOldName, cleanName);
+      speakerClusterer.renameSpeaker(speakerIdOrOldName, cleanName);
       renameSpeaker(speakerIdOrOldName, cleanName);
 
       // 无论在逐字稿中还是控制台重命名，只要改为了明确的参会人姓名，自动同步注册为本地声纹与参会人档案
@@ -619,538 +592,54 @@ export const InMeetingWorkbench: React.FC = () => {
         commitVoiceprintEnrollment(speakerIdOrOldName, cleanName, true);
       }
     },
-    [renameSpeaker, commitVoiceprintEnrollment]
+    [renameSpeaker, commitVoiceprintEnrollment, speakerClusterer]
   );
 
   const handleConfirmTentativeMatch = useCallback(
     (speakerId: string, profileId: string, profileName: string) => {
-      speakerClustererRef.current.confirmProfileMatch(speakerId, profileId, profileName);
+      speakerClusterer.confirmProfileMatch(speakerId, profileId, profileName);
       markProfileMatched(profileId);
       renameSpeaker(speakerId, profileName);
     },
-    [markProfileMatched, renameSpeaker]
+    [markProfileMatched, renameSpeaker, speakerClusterer]
   );
 
   const handleRejectTentativeMatch = useCallback(
     (speakerId: string, profileId: string) => {
-      speakerClustererRef.current.rejectProfileMatch(speakerId, profileId);
+      speakerClusterer.rejectProfileMatch(speakerId, profileId);
       dismissTentativeMatch(speakerId, profileId);
     },
-    [dismissTentativeMatch]
+    [dismissTentativeMatch, speakerClusterer]
   );
 
-  // 处理增量洞察补丁（严格遵循不可覆盖的人工编辑保护）
-  const processInsightPatch = useCallback((item: any, win: WindowPayload) => {
-    if (!item || !item.patch) return;
-    const { action, topicId, patch } = item;
-    const currentStore = useMeetingStore.getState();
-    const nowTime = formatSeconds(currentStore.elapsedSeconds);
-    const defaultEvidenceId =
-      patch.evidenceRefs?.[0]?.segmentId || win.segments[win.segments.length - 1]?.id || '';
-
-    // 依据大模型返回提炼真实内容，杜绝套话与臆造
-    const cardContent =
-      patch.content ||
-      (Array.isArray(patch.decisions) && patch.decisions.length > 0
-        ? patch.decisions.join('；')
-        : patch.title
-        ? `围绕“${patch.title}”展开讨论并跟进细节`
-        : '现场讨论要点');
-
-    const rawCardType = patch.type || (action === 'ADD_TODO' ? 'action' : 'decision');
-    const isTodoAction = action === 'ADD_TODO' || rawCardType === 'action';
-
-    // 严苛过滤：只有具备明确责任人与行动承诺的才作为待办；普通讨论一律降级为阶段段落总结，杜绝假待办泛滥
-    const isGenuineAction = isTodoAction && isValidActionItem(patch.title || '', cardContent);
-    const cardType = isGenuineAction ? 'action' : (rawCardType === 'action' ? 'decision' : rawCardType);
-
-    if (isGenuineAction) {
-      currentStore.applyInsightPatch({
-        op: 'add',
-        card: {
-          id: topicId || `action_${Date.now()}`,
-          type: 'action',
-          title: `待办：${patch.title || '新增行动项'}`,
-          content: cardContent,
-          timestamp: nowTime,
-          evidenceSegmentId: defaultEvidenceId,
-        },
-      });
-    } else {
-      const existingCard = currentStore.insights.find(
-        (c) => c.id === topicId || (patch.title && c.title === patch.title)
-      );
-
-      const titlePrefix = cardType === 'decision' && isTodoAction ? '阶段讨论洞察：' : '';
-      const displayTitle = `${titlePrefix}${patch.title || '阶段讨论关键结论'}`;
-
-      if (existingCard) {
-        currentStore.applyInsightPatch({
-          op: 'update',
-          targetId: existingCard.id,
-          title: displayTitle,
-          content: cardContent,
-          timestamp: nowTime,
-          evidenceSegmentId: defaultEvidenceId,
-          reason: '后续发言补充事实与结论',
-        });
-      } else {
-        currentStore.applyInsightPatch({
-          op: 'add',
-          card: {
-            id: topicId || `ins_${Date.now()}`,
-            type: cardType,
-            title: displayTitle,
-            content: cardContent,
-            timestamp: nowTime,
-            evidenceSegmentId: defaultEvidenceId,
-          },
-        });
-      }
-    }
-
-    // 动态升级会议标题：若当前是系统生成的通用标题，根据当前对话提炼的主题更新标题，后面跟上日期时间
-    if (patch.title) {
-      const currentTitle = currentStore.title;
-      const isDefaultTitle =
-        !currentTitle ||
-        currentTitle.startsWith('会议记录') ||
-        currentTitle.startsWith('新会议') ||
-        currentTitle.startsWith('未命名');
-
-      if (isDefaultTitle) {
-        const now = new Date();
-        const timeSuffix = `${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-        currentStore.updateMeetingTitle(`${patch.title.trim()} ${timeSuffix}`);
-      }
-    }
-  }, []);
-
-  // 触发 AI Gateway 增量提炼洞察
-  const triggerLiveInsightExtraction = useCallback(
-    async (windowPayload: WindowPayload) => {
-      setIsExtractingInsights(true);
-      try {
-        const currentInsights = useMeetingStore.getState().insights;
-        const latestTopic =
-          currentInsights.length > 0
-            ? currentInsights[currentInsights.length - 1].title
-            : undefined;
-
-        const res = await fetch(`${useMeetingStore.getState().gatewayUrl}/gateway/v1/live-insights`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            meetingId: meetingId || 'mtg_current',
-            currentTopicSummary: latestTopic,
-            newStableText: windowPayload.combinedText,
-            contextAnchors: windowPayload.segments.map((s) => ({
-              segmentId: s.id,
-              quote: s.text.slice(0, 30),
-            })),
-          }),
-        });
-
-        if (!res.ok) {
-          console.warn('[LiveInsight] AI Gateway responded with error:', res.status);
-          return;
-        }
-
-        const reader = res.body?.getReader();
-        if (!reader) return;
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const chunks = buffer.split('\n\n');
-          buffer = chunks.pop() || '';
-
-          for (const chunk of chunks) {
-            const lines = chunk.split('\n');
-            let event = '';
-            let dataStr = '';
-            for (const line of lines) {
-              if (line.startsWith('event:')) event = line.replace('event:', '').trim();
-              if (line.startsWith('data:')) dataStr = line.replace('data:', '').trim();
-            }
-
-            if (event === 'insight_patch' && dataStr) {
-              try {
-                const parsed = JSON.parse(dataStr);
-                processInsightPatch(parsed, windowPayload);
-              } catch (e) {
-                console.warn('[LiveInsight] JSON parse error:', e);
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[LiveInsight] Extraction error:', err);
-      } finally {
-        setIsExtractingInsights(false);
-      }
-    },
-    [meetingId, processInsightPatch]
-  );
-
-  // 手动切换麦克风输入设备
+  // 手动切换麦克风输入设备 (通过常驻会议管道)
   const handleSwitchMicrophone = useCallback(async (newDeviceId: string) => {
     setSelectedMicId(newDeviceId);
-    if (audioCaptureRef.current) {
-      try {
-        await audioCaptureRef.current.switchDevice(newDeviceId || undefined);
-        setMicError('');
-      } catch (err: any) {
-        setMicError(`切换音频设备失败: ${err.message || '麦克风无法访问'}`);
-      }
+    try {
+      await getMeetingPipelineService().switchDevice(newDeviceId || undefined);
+    } catch (err: any) {
+      console.warn('切换音频设备失败:', err);
     }
-  }, []);
+  }, [setSelectedMicId]);
 
   // 切换拾音模式（扬声器外放开会 / 仅个人麦克风）
   const handleSwitchCaptureMode = useCallback(async (newMode: CaptureMode) => {
     setCaptureMode(newMode);
-    if (audioCaptureRef.current) {
-      try {
-        await audioCaptureRef.current.setCaptureMode(newMode);
-        setMicError('');
-      } catch (err: any) {
-        setMicError(`切换拾音模式失败: ${err.message || '音频模式无法切换'}`);
-      }
+    try {
+      await getMeetingPipelineService().setCaptureMode(newMode);
+    } catch (err: any) {
+      console.warn('切换拾音模式失败:', err);
     }
-  }, []);
+  }, [setCaptureMode]);
 
   // 切换系统声音内录（免驱本地混音，用于戴耳机开会场景）
   const handleToggleSystemAudio = useCallback(async () => {
-    const capture = audioCaptureRef.current;
-    const state = useMeetingStore.getState();
-    if (!capture || systemAudioOperationRef.current || state.status !== 'RECORDING' || state.isDrainingAsr || state.audioDeviceStop) return;
-    const stopping = isSystemAudioActive;
-    const operation = stopping ? capture.stopSystemAudioCapture() : capture.startSystemAudioCapture();
-    systemAudioOperationRef.current = operation;
     try {
-      await operation;
-      if (audioCaptureRef.current !== capture || useMeetingStore.getState().status !== 'RECORDING') return;
-      setIsSystemAudioActive(!stopping);
-      setMicError('');
-    } catch {
-      if (audioCaptureRef.current === capture) setMicError(stopping ? '停止系统内录失败，请暂停并检查音频设备' : '开启系统内录失败，请检查录制权限');
-    } finally {
-      if (systemAudioOperationRef.current === operation) systemAudioOperationRef.current = null;
+      await getMeetingPipelineService().toggleSystemAudio();
+    } catch (err: any) {
+      console.warn('切换系统内录失败:', err);
     }
-  }, [isSystemAudioActive]);
-
-  // 排空期间保持同一会话存活，停止回调先冻结新音频，最终文字仍可进入本场。
-  const captureActive = status === 'RECORDING' || isDrainingAsr;
-  useEffect(() => {
-    if (captureActive) {
-      const sessionMeetingId = useMeetingStore.getState().meetingId;
-      const local = getLocalRecording(sessionMeetingId || '', useMeetingStore.getState().currentUser?.token);
-      let asrRecordingOffsetMs: number | null = null;
-      let asrReady = false;
-      const eventState = new TranscriptEventState(crypto.randomUUID());
-      const stabilizer = new InterimTextStabilizer();
-      let activeDraftId: string | null = null;
-      let draftTimer: ReturnType<typeof setTimeout> | undefined;
-      let latestDraft: { text: string; parts: { stable: string; unstable: string } } | null = null;
-      const flushDraft = () => {
-        draftTimer = undefined;
-        if (!isCurrent() || !latestDraft) return;
-        setInterimText(latestDraft.text);
-        setInterimParts(latestDraft.parts);
-      };
-      let disposed = false;
-      let acceptingAudio = true;
-      let identityQueue = Promise.resolve();
-      let queuedIdentities = 0;
-      let identityDisabled = false;
-      const isCurrent = () => !disposed && useMeetingStore.getState().meetingId === sessionMeetingId;
-
-      setAsrStatus('connecting');
-      setAsrError('');
-      setMicStatus('recording');
-      setMicError('');
-
-      const asrClient = new RealStreamingAsrClient({
-        wsUrl: streamingAsrUrl(useMeetingStore.getState().gatewayUrl),
-        onTranscriptEvent: (rawEvent) => {
-          if (!isCurrent()) return;
-          const event = eventState.accept(rawEvent);
-          if (!event) return;
-          setAsrError('');
-          setAsrStatus('connected');
-          if (event.type === 'INTERIM') {
-            const first = activeDraftId !== event.id;
-            if (first) {
-              stabilizer.reset();
-              if (draftTimer) clearTimeout(draftTimer);
-              draftTimer = undefined;
-            }
-            activeDraftId = event.id;
-            latestDraft = { text: event.text, parts: stabilizer.update(event.text, performance.now()) };
-            if (first) flushDraft();
-            else if (!draftTimer) draftTimer = setTimeout(flushDraft, 120);
-            return;
-          }
-          if (activeDraftId === event.id) {
-            if (draftTimer) clearTimeout(draftTimer);
-            draftTimer = undefined;
-            latestDraft = null;
-            activeDraftId = null;
-            stabilizer.reset();
-            setInterimText('');
-            setInterimParts({ stable: '', unstable: '' });
-          }
-          const newSeg: TranscriptSegment = {
-            id: event.id, channel: event.source, speaker: '识别中', speakerStatus: 'pending',
-            text: event.text, beginTimeMs: event.beginTimeMs ?? undefined, endTimeMs: event.endTimeMs ?? undefined,
-            recordingBeginMs: asrRecordingOffsetMs !== null && event.beginTimeMs !== null ? asrRecordingOffsetMs + event.beginTimeMs : undefined,
-            recordingEndMs: asrRecordingOffsetMs !== null && event.endTimeMs !== null ? asrRecordingOffsetMs + event.endTimeMs : undefined,
-            timestamp: formatSeconds(Math.floor(asrRecordingOffsetMs !== null && event.beginTimeMs !== null ? (asrRecordingOffsetMs + event.beginTimeMs) / 1000 : useMeetingStore.getState().elapsedSeconds)),
-          };
-          // 正文立即落稿；身份补全永远不阻塞文字或重新触发洞察。
-          addTranscriptSegment(newSeg);
-          const windowPayload = slidingWindowRef.current.appendSegment(newSeg, useMeetingStore.getState().elapsedSeconds);
-          if (windowPayload) triggerLiveInsightExtraction(windowPayload);
-          const begin = event.beginTimeMs, end = event.endTimeMs;
-          const samples = begin !== null && end !== null && end > begin
-            ? sentenceBufferRef.current.sliceByTimeMs(begin, end) : new Float32Array(0);
-          const durationMs = samples.length / 16;
-          if (durationMs < 300 || queuedIdentities >= 16 || identityDisabled) {
-            useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
-            return;
-          }
-          queuedIdentities++;
-          identityQueue = identityQueue.then(async () => {
-            if (!isCurrent()) return;
-            if (identityDisabled) {
-              queuedIdentities--;
-              useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
-              return;
-            }
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            try {
-              const embedding = await Promise.race([
-                embeddingEngineRef.current.embedSamples(samples, 16000),
-                new Promise<null>(resolve => { timer = setTimeout(() => {
-                  // 原生调用不可取消；超时后熔断本会话，防止后台推理不断堆积。
-                  identityDisabled = true;
-                  resolve(null);
-                }, 2000); }),
-              ]);
-              if (!isCurrent()) return;
-              if (!embedding) {
-                useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
-                return;
-              }
-              const profiles = useMeetingStore.getState().speakerProfiles;
-              const assigned = speakerClustererRef.current.assign({ embedding, durationMs,
-                upstreamSpeakerId: event.sentence?.speakerId,
-                knownProfiles: profiles.map(p => ({ profileId: p.profileId, displayName: p.displayName, embedding: p.embedding })),
-              });
-              if (assigned.autoMatchedJustNow && assigned.matchedProfileId) {
-                useMeetingStore.getState().markProfileMatched(assigned.matchedProfileId);
-                useMeetingStore.getState().renameSpeaker(assigned.speakerId, assigned.displayName);
-              }
-              useMeetingStore.getState().updateTranscriptSpeaker(event.id, {
-                speaker: assigned.displayName, speakerId: assigned.speakerId, speakerStatus: 'assigned',
-                speakerConfidence: assigned.confidence, speakerColorIndex: assigned.colorIndex,
-                matchedProfileId: assigned.matchedProfileId, tentativeProfileId: assigned.tentativeProfileId,
-                tentativeProfileName: assigned.tentativeProfileName,
-              });
-            } catch {
-              if (isCurrent()) useMeetingStore.getState().updateTranscriptSpeaker(event.id, { speaker: '未确定', speakerStatus: 'unknown' });
-            } finally {
-              if (timer) clearTimeout(timer);
-              queuedIdentities--;
-            }
-          });
-        },
-        onStatus: (st) => {
-          if (st.status === 'READY') {
-            asrReady = true;
-            setAsrStatus('connected');
-            setAsrError('');
-          }
-        },
-        onError: (err) => {
-          setAsrStatus('error');
-          setAsrError(err.message);
-        },
-      });
-
-      const audioCapture = new RealAudioCapture({
-        sampleRate: 16000,
-        deviceId: selectedMicId || undefined,
-        auxDeviceId: auxDeviceId || undefined,
-        captureMode: captureMode,
-        onRmsLevel: (rms) => setRmsLevel(rms),
-        onAudioChunk: (chunk) => {
-          if (!acceptingAudio || !isCurrent()) return;
-          if (asrRecordingOffsetMs === null && asrReady && asrClient.isConnected()) asrRecordingOffsetMs = local.session.samples / 16;
-          local.session.append(chunk);
-          if (local.session.error) setMicError(local.session.error);
-          sentenceBufferRef.current.appendPcm16Chunk(chunk);
-          if (asrReady) asrClient.sendPcmChunk(chunk);
-        },
-        onSystemAudioStateChange: (active) => {
-          setIsSystemAudioActive(active);
-        },
-        onDeviceEnded: () => {
-          // 🎧 当蓝牙耳机关闭或断开连接时，自动自愈切回系统默认麦克风
-          setMicError('🎧 检测到当前音频设备已断开（如蓝牙耳机关闭），已自动切回系统麦克风继续识别');
-          setSelectedMicId('');
-          if (audioCaptureRef.current) {
-            audioCaptureRef.current.switchDevice(undefined).catch((e) => {
-              console.warn('Auto switch to default mic failed:', e);
-            });
-          }
-
-          setTimeout(() => {
-            setMicError('');
-          }, 4000);
-        },
-        onDeviceChange: async () => {
-          try {
-            const list = await RealAudioCapture.getAvailableMicrophones();
-            setAvailableMics(list);
-          } catch (e) {
-            console.warn('Device change enumerate error:', e);
-          }
-        },
-      });
-
-      asrClientRef.current = asrClient;
-      audioCaptureRef.current = audioCapture;
-      let startPromise: Promise<void> = Promise.resolve();
-      let stopPromise: Promise<void> | null = null;
-      const stopCapture = () => {
-        if (stopPromise) return stopPromise;
-        // 设备全局停止不能晚于下一会话启动；等待旧启动流程结束后只停止一次。
-        stopPromise = Promise.allSettled([startPromise, systemAudioOperationRef.current]).then(() => audioCapture.stop()).catch(() => {
-          if (useMeetingStore.getState().meetingId === sessionMeetingId) {
-            useMeetingStore.setState({ asrDrainWarning: '音频设备释放异常，请检查设备状态' });
-          }
-        });
-        useMeetingStore.setState({ audioDeviceStop: stopPromise });
-        void stopPromise.then(() => {
-          if (useMeetingStore.getState().audioDeviceStop === stopPromise) useMeetingStore.setState({ audioDeviceStop: null });
-        });
-        return stopPromise;
-      };
-      let drainPromise: Promise<'complete' | 'timeout' | 'error'> | null = null;
-      const drain = () => {
-        if (drainPromise) return drainPromise;
-        acceptingAudio = false;
-        // stop可能等待原生设备；先冻结音频入口，finish不依赖设备销毁完成。
-        void stopCapture();
-        drainPromise = Promise.all([asrClient.finish(), local.session.checkpoint()]).then(([outcome]) => {
-          eventState.close();
-          // 推理不是定稿条件；排空完成后挂起标签安全降级，不等待慢模型。
-          if (isCurrent()) {
-            for (const segment of useMeetingStore.getState().transcripts) {
-              if (segment.speakerStatus === 'pending') useMeetingStore.getState().updateTranscriptSpeaker(segment.id, { speaker: '未确定', speakerStatus: 'unknown' });
-            }
-          }
-          disposed = true;
-          return outcome;
-        });
-        return drainPromise;
-      };
-      useMeetingStore.setState({ asrSessionDrain: drain });
-
-
-      // 启动 WebSocket 与麦克风物理采集
-      asrClient.connect().then(() => {
-        if (!isCurrent()) return;
-        setAsrStatus('connected');
-        setAsrError('');
-      }).catch((err) => {
-        if (!isCurrent()) return;
-        setAsrStatus('error');
-        setAsrError(err.message || '无法连接 AI 网关流式 ASR 通道');
-      });
-
-      startPromise = local.ready.then(() => {
-        if (!isCurrent() || !acceptingAudio) return;
-        if (local.session.error) setMicError(local.session.error);
-        return audioCapture.start();
-      }).then(() => {
-        if (!isCurrent() || !acceptingAudio) { void stopCapture(); return; }
-        setMicStatus('recording');
-        // 戴耳机/在线会议场景：自动激活原生系统音频内录（ScreenCaptureKit），无感收录 Teams 对方声音
-        return audioCapture.startSystemAudioCapture().then(() => {
-          if (!isCurrent() || !acceptingAudio) { void stopCapture(); return; }
-          setIsSystemAudioActive(true);
-        }).catch((err) => {
-          console.info('[Workbench] 自动激活系统音频内录提示:', err);
-        });
-      }).catch((err) => {
-        if (!isCurrent()) return;
-        const msg = (err as Error).message;
-        if (msg.includes('NotAllowedError') || msg.includes('Permission') || msg.includes('权限')) {
-          setMicStatus('denied');
-          setMicError('系统麦克风权限未授予，请在系统设置中允许听序使用麦克风');
-        } else {
-          setMicStatus('error');
-          setMicError(msg || '麦克风设备初始化异常');
-        }
-      });
-      return () => {
-        disposed = true;
-        if (draftTimer) clearTimeout(draftTimer);
-        acceptingAudio = false;
-        eventState.close();
-        if (useMeetingStore.getState().asrSessionDrain === drain) useMeetingStore.setState({ asrSessionDrain: null });
-        void stopCapture();
-        asrClient.disconnect();
-        sentenceBufferRef.current.clear();
-        if (audioCaptureRef.current === audioCapture) audioCaptureRef.current = null;
-        if (asrClientRef.current === asrClient) asrClientRef.current = null;
-      };
-    } else {
-      if (audioCaptureRef.current) {
-        audioCaptureRef.current.stop().catch(() => {});
-        audioCaptureRef.current = null;
-      }
-      if (asrClientRef.current) {
-        asrClientRef.current.disconnect();
-        asrClientRef.current = null;
-      }
-      slidingWindowRef.current.clear();
-      sentenceBufferRef.current.clear();
-      if (status === 'IDLE' || status === 'ENDED') {
-        speakerClustererRef.current.reset();
-      }
-      setIsExtractingInsights(false);
-      setRmsLevel(0);
-      setInterimText('');
-      setInterimParts({ stable: '', unstable: '' });
-      setMicStatus('idle');
-      setAsrStatus('disconnected');
-    }
-
-  }, [captureActive, meetingId, addTranscriptSegment, triggerLiveInsightExtraction]);
-
-  // 周期性时间窗口自动提炼：在会议进行中每隔 25 秒检查一次缓冲区，若累积字符数 >= 35 字自动触发增量段落洞察
-  useEffect(() => {
-    if (status !== 'RECORDING') return;
-
-    const intervalId = setInterval(() => {
-      if (isExtractingInsights) return;
-      const currentSeconds = useMeetingStore.getState().elapsedSeconds;
-      const windowPayload = slidingWindowRef.current.flush(currentSeconds, 35);
-      if (windowPayload) {
-        triggerLiveInsightExtraction(windowPayload);
-      }
-    }, 25000);
-
-    return () => clearInterval(intervalId);
-  }, [status, isExtractingInsights, triggerLiveInsightExtraction]);
+  }, []);
 
   // 平滑或直接吸底滚动辅助函数（兼顾 jsdom 测试环境）
   const scrollToBottom = useCallback((smooth = true) => {
@@ -1201,13 +690,8 @@ export const InMeetingWorkbench: React.FC = () => {
   }, [highlightedTranscriptId, setHighlightedTranscriptId]);
 
   const handleMinimizeToPill = useCallback(() => {
-    setActiveWindow('floating-pill');
-    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-      import('@tauri-apps/api/core').then(({ invoke }) => {
-        invoke('toggle_floating_mode', { toFloating: true }).catch(() => {});
-      });
-    }
-  }, [setActiveWindow]);
+    toggleFloatingPill(true);
+  }, [toggleFloatingPill]);
 
   const handleAskQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -1218,45 +702,40 @@ export const InMeetingWorkbench: React.FC = () => {
     setIsAsking(true);
 
     try {
-      const res = await fetch(`${useMeetingStore.getState().gatewayUrl}/gateway/v1/meeting-chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          meetingId: meetingId || 'meet_live',
-          question: q,
-          asOfTextVersion: transcripts.length,
-          localStableTranscript: transcripts.length
-            ? transcripts.map((t) => ({ segmentId: t.id, speaker: t.speaker, text: t.text }))
-            : [{ segmentId: 'seg_init', speaker: '系统', text: '本场会议已开启，正在监听双轨音频。' }],
-        }),
-      }).catch(() => null);
-
-      if (res && res.ok) {
-        const json = await res.json();
-        const evidenceId =
-          json.data?.evidenceRefs?.[0]?.segmentId ||
-          json.data?.citations?.[0]?.segmentId ||
-          transcripts[transcripts.length - 1]?.id ||
-          '';
-
-        addInsight({
-          id: `qa-${Date.now()}`,
-          type: 'qa',
-          title: `提问：${q}`,
-          question: q,
-          content: json.data?.answer || '已完成本场会议问答分析。',
-          timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
-          evidenceSegmentId: evidenceId,
-        });
-
-        // 提问完成后若不在全部或问答视图，自动切到全部让用户立刻看到问答卡片
-        if (activeFilter !== 'all' && activeFilter !== 'qa') {
-          setActiveFilter('all');
-        }
-      } else {
-        // 彻底废除假数据生成：网关异常时明确提示真实错误，绝不臆造会议内容 (对齐 AGENTS.md 铁律)
-        alert('⚠️ AI 网关处理请求失败或网络不可达。根据安全防臆造铁律，系统已拒绝生成离线假数据，请确保网关运行正常后重试。');
+      const client = getTingxuClient();
+      if ('setGatewayUrl' in client) {
+        (client as any).setGatewayUrl(useMeetingStore.getState().gatewayUrl);
       }
+      const data = await client.copilot.chat({
+        meetingId: meetingId || 'meet_live',
+        question: q,
+        transcripts: transcripts.length
+          ? transcripts.map((t) => ({ id: t.id, speaker: t.speaker, text: t.text }))
+          : [{ id: 'seg_init', speaker: '系统', text: '本场会议已开启，正在监听双轨音频。' }],
+      });
+
+      const evidenceId =
+        data.citations?.[0]?.segmentId ||
+        transcripts[transcripts.length - 1]?.id ||
+        '';
+
+      addInsight({
+        id: `qa-${Date.now()}`,
+        type: 'qa',
+        title: `提问：${q}`,
+        question: q,
+        content: data.answer || '已完成本场会议问答分析。',
+        timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
+        evidenceSegmentId: evidenceId,
+      });
+
+      // 提问完成后若不在全部或问答视图，自动切到全部让用户立刻看到问答卡片
+      if (activeFilter !== 'all' && activeFilter !== 'qa') {
+        setActiveFilter('all');
+      }
+    } catch {
+      // 彻底废除假数据生成：网关异常时明确提示真实错误，绝不臆造会议内容 (对齐 AGENTS.md 铁律)
+      alert('⚠️ AI 网关处理请求失败或网络不可达。根据安全防臆造铁律，系统已拒绝生成离线假数据，请确保网关运行正常后重试。');
     } finally {
       setIsAsking(false);
     }
@@ -1303,7 +782,8 @@ export const InMeetingWorkbench: React.FC = () => {
           />
           <h1
             data-testid="workbench-page-header-text-title"
-            className="text-base font-semibold truncate max-w-xs"
+            className="text-base font-semibold truncate max-w-[180px] xl:max-w-xs shrink min-w-0"
+            title={title}
           >
             {title}
           </h1>
@@ -1312,7 +792,7 @@ export const InMeetingWorkbench: React.FC = () => {
           {/* 会中参会人员信息识别展示（支持直接点击胶囊重命名对应声纹说话人） */}
           <div
             data-testid="workbench-page-header-badge-speakers"
-            className="hidden lg:flex items-center gap-1.5 text-xs bg-panel px-2.5 py-1 rounded-md border border-border-subtle whitespace-nowrap overflow-x-auto max-w-md"
+            className="hidden xl:flex items-center gap-1.5 text-xs bg-panel px-2.5 py-1 rounded-md border border-border-subtle whitespace-nowrap overflow-x-auto max-w-sm"
             title="本场端侧声纹识别参会人名单，点击姓名可修改全部同声纹发言"
           >
             <span className="text-text-tertiary whitespace-nowrap shrink-0">👥 参会人:</span>
@@ -1572,26 +1052,27 @@ export const InMeetingWorkbench: React.FC = () => {
           {/* 洞察类型筛选 Tab */}
           <div
             data-testid="workbench-page-insights-panel-tabs-filter"
-            className="px-4 py-2.5 border-b border-border-subtle bg-subtle flex items-center justify-between shrink-0"
+            className="px-3.5 py-2 border-b border-border-subtle bg-subtle flex items-center justify-between gap-2 shrink-0 min-w-0"
           >
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
               {([
-                { id: 'all', label: '全部洞察' },
-                { id: 'decision', label: '关键结论' },
-                { id: 'action', label: '待办项' },
-                { id: 'risk', label: '风险争议' },
-                { id: 'fact', label: '核心事实' },
-                { id: 'qa', label: '本场问答' },
+                { id: 'all', label: '全部', title: '全部洞察' },
+                { id: 'decision', label: '结论', title: '关键结论与决策' },
+                { id: 'action', label: '待办', title: '行动待办事项' },
+                { id: 'risk', label: '风险', title: '风险预警与分歧' },
+                { id: 'fact', label: '事实', title: '核心事实与背景' },
+                { id: 'qa', label: '问答', title: '本场即时问答' },
               ] as const).map((tab) => (
                 <button
                   key={tab.id}
                   type="button"
                   data-testid={`workbench-page-insights-panel-tab-${tab.id}`}
                   onClick={() => setActiveFilter(tab.id as 'all' | InsightType)}
-                  className={`px-2.5 py-1 text-xs rounded transition-colors ${
+                  title={tab.title}
+                  className={`px-2.5 py-1 text-xs rounded transition-colors whitespace-nowrap shrink-0 ${
                     activeFilter === tab.id
-                      ? 'bg-brand-blue text-white font-medium'
-                      : 'text-text-secondary hover:bg-panel'
+                      ? 'bg-brand-blue text-white font-medium shadow-xs'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-panel'
                   }`}
                 >
                   {tab.label}
@@ -1600,9 +1081,9 @@ export const InMeetingWorkbench: React.FC = () => {
             </div>
             <span
               data-testid="workbench-page-insights-panel-text-count"
-              className="text-xs text-text-tertiary tabular-nums"
+              className="text-[11px] text-text-tertiary tabular-nums whitespace-nowrap shrink-0 font-mono"
             >
-              已提炼 {filteredInsights.length} 项
+              {filteredInsights.length} 项
             </span>
           </div>
 
@@ -1614,6 +1095,28 @@ export const InMeetingWorkbench: React.FC = () => {
             >
               <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-ping" />
               <span>✦ AI 正在结合上下文提炼关键结论与待办...</span>
+            </div>
+          )}
+
+          {/* AI 洞察提取异常警示条 */}
+          {insightError && (
+            <div
+              data-testid="workbench-page-insights-panel-banner-error"
+              className="px-4 py-2 bg-status-danger/10 border-b border-status-danger/30 flex items-center justify-between text-xs text-status-danger shrink-0"
+            >
+              <div className="flex items-center gap-2">
+                <span>⚠️</span>
+                <span className="leading-snug">{insightError}</span>
+              </div>
+              <button
+                type="button"
+                data-testid="workbench-page-insights-panel-btn-dismiss-error"
+                onClick={() => setInsightError(null)}
+                className="px-2 py-0.5 rounded bg-status-danger/15 hover:bg-status-danger/25 text-status-danger text-[11px] font-medium transition-colors shrink-0 ml-2"
+                title="关闭错误提示"
+              >
+                ✕ 关闭
+              </button>
             </div>
           )}
 
@@ -1685,18 +1188,18 @@ export const InMeetingWorkbench: React.FC = () => {
           data-testid="workbench-page-transcript-panel-container"
           className="w-[46%] flex flex-col bg-subtle overflow-hidden relative"
         >
-          {/* 逐字稿顶部信息与搜索 */}
-          <div className="px-4 py-2.5 border-b border-border-subtle bg-canvas flex items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2">
+          {/* 逐字稿顶部主栏：状态与场景模式即时切换 */}
+          <div className="px-3.5 py-2 border-b border-border-subtle bg-canvas flex items-center justify-between gap-2 shrink-0 min-w-0">
+            <div className="flex items-center gap-2 shrink-0">
               <span
                 data-testid="workbench-page-transcript-panel-text-status"
-                className="text-xs font-semibold text-text-primary"
+                className="text-xs font-semibold text-text-primary whitespace-nowrap"
               >
                 实时逐字稿
               </span>
               <span
                 data-testid="workbench-page-transcript-panel-badge-channel-source"
-                className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 ${
+                className={`px-1.5 py-0.5 rounded text-[10px] font-mono flex items-center gap-1 whitespace-nowrap ${
                   micStatus === 'denied' || micStatus === 'error'
                     ? 'bg-status-danger/10 text-status-danger'
                     : asrStatus === 'connected'
@@ -1705,7 +1208,7 @@ export const InMeetingWorkbench: React.FC = () => {
                 }`}
               >
                 <span
-                  className={`w-1.5 h-1.5 rounded-full ${
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     micStatus === 'denied' || micStatus === 'error'
                       ? 'bg-status-danger'
                       : rmsLevel > 0.05
@@ -1714,21 +1217,21 @@ export const InMeetingWorkbench: React.FC = () => {
                   }`}
                 />
                 {micStatus === 'denied'
-                  ? '麦克风权限受阻'
+                  ? '麦克风受阻'
                   : micStatus === 'error'
-                  ? '麦克风异常'
+                  ? '设备异常'
                   : asrStatus === 'connected'
-                  ? '实时转写已就绪'
+                  ? '已就绪'
                   : asrStatus === 'connecting'
-                  ? '转写引擎连接中...'
-                  : '麦克风拾音中'}
+                  ? '连接中'
+                  : '拾音中'}
               </span>
 
               {/* 麦克风物理音量指示跳动条 */}
               {status === 'RECORDING' && micStatus === 'recording' && (
                 <div
                   title="实时麦克风音量能量"
-                  className="w-12 h-1.5 rounded-full bg-subtle overflow-hidden flex items-center border border-border-subtle"
+                  className="w-10 h-1.5 rounded-full bg-subtle overflow-hidden flex items-center border border-border-subtle shrink-0"
                 >
                   <div
                     className="h-full bg-emerald-500 transition-all duration-75"
@@ -1736,16 +1239,79 @@ export const InMeetingWorkbench: React.FC = () => {
                   />
                 </div>
               )}
+            </div>
 
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
+              {/* 会议场景模式即时切换胶囊组 */}
+              <div
+                data-testid="workbench-page-transcript-panel-group-modes"
+                className="flex items-center rounded-md border border-border-subtle bg-subtle p-0.5 text-[11px] shrink-0"
+                title="根据当前会议场景即时动态调整说话人分离策略，会中随时生效"
+              >
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-mode-single"
+                  onClick={() => setMeetingSpeakerMode('single')}
+                  className={`px-2 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-1 ${
+                    !voiceprintSettings.enabled
+                      ? 'bg-panel text-brand-blue font-semibold shadow-xs'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="单人模式：不区分发言人，纯净文字记录，杜绝一人被切分为多位发言人"
+                >
+                  <span>🎙️ 单人模式</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-mode-balanced"
+                  onClick={() => setMeetingSpeakerMode('balanced')}
+                  className={`px-2 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-1 ${
+                    voiceprintSettings.enabled && voiceprintSettings.presetMode === 'balanced'
+                      ? 'bg-panel text-brand-blue font-semibold shadow-xs'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="标准多人模式：开启说话人分离，平衡相似度与连续性，适用于 2~6 人例会"
+                >
+                  <span>👥 标准多人</span>
+                </button>
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-mode-sensitive"
+                  onClick={() => setMeetingSpeakerMode('sensitive')}
+                  className={`px-2 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-1 ${
+                    voiceprintSettings.enabled && voiceprintSettings.presetMode === 'sensitive'
+                      ? 'bg-panel text-brand-blue font-semibold shadow-xs'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                  title="多人激辩模式：高灵敏度声纹切分，快速捕捉频繁抢话与多方快速交替"
+                >
+                  <span>⚡ 多人激辩</span>
+                </button>
+              </div>
+
+              <input
+                type="text"
+                value={filterKeyword}
+                onChange={(e) => setFilterKeyword(e.target.value)}
+                placeholder="过滤..."
+                data-testid="workbench-page-transcript-panel-input-filter"
+                className="px-2 py-0.5 text-[11px] bg-subtle border border-border-subtle rounded focus:outline-none focus:border-brand-blue text-text-primary w-20 focus:w-28 transition-all shrink-0"
+              />
+            </div>
+          </div>
+
+          {/* 逐字稿次级工具条：音频设备拾音与系统内录配置 */}
+          <div className="px-3.5 py-1.5 border-b border-border-subtle bg-subtle/50 flex items-center justify-between gap-2 text-xs shrink-0 min-w-0">
+            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 min-w-0">
               {/* 麦克风输入设备切换下拉框 */}
               <select
                 data-testid="workbench-page-transcript-panel-select-mic-device"
                 value={selectedMicId}
                 onChange={(e) => handleSwitchMicrophone(e.target.value)}
-                className="text-[11px] px-2 py-0.5 rounded bg-subtle border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[140px] truncate"
+                className="text-[11px] px-2 py-0.5 rounded bg-panel border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[130px] truncate shrink-0"
                 title="选择拾音麦克风（支持蓝牙耳机/系统内置麦克风平滑切换）"
               >
-                <option value="">默认系统麦克风</option>
+                <option value="">默认麦克风</option>
                 {availableMics.map((mic) => (
                   <option key={mic.deviceId} value={mic.deviceId}>
                     {mic.label}
@@ -1758,11 +1324,11 @@ export const InMeetingWorkbench: React.FC = () => {
                 data-testid="workbench-page-transcript-panel-select-capture-mode"
                 value={captureMode}
                 onChange={(e) => handleSwitchCaptureMode(e.target.value as CaptureMode)}
-                className="text-[11px] px-2 py-0.5 rounded bg-subtle border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[150px] truncate"
+                className="text-[11px] px-2 py-0.5 rounded bg-panel border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[140px] truncate shrink-0"
                 title="开会时推荐使用【扬声器外放开会】，麦克风将同时拾取扬声器播放的他人声音"
               >
-                <option value="speaker_meeting">🔊 扬声器外放开会 (全员收音)</option>
-                <option value="mic_only">🎤 仅收录个人麦克风</option>
+                <option value="speaker_meeting">🔊 扬声器外放 (全员收音)</option>
+                <option value="mic_only">🎤 仅个人麦克风</option>
               </select>
 
               {/* 戴耳机免驱系统声音内录开关 */}
@@ -1770,48 +1336,39 @@ export const InMeetingWorkbench: React.FC = () => {
                 type="button"
                 data-testid="workbench-page-transcript-panel-btn-toggle-system-audio"
                 onClick={handleToggleSystemAudio}
-                className={`text-[11px] px-2 py-0.5 rounded border transition-colors flex items-center gap-1 ${
+                className={`text-[11px] px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 ${
                   isSystemAudioActive
                     ? 'bg-status-success/15 border-status-success/40 text-status-success font-medium'
-                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                    : 'bg-panel border-border-subtle text-text-secondary hover:text-text-primary'
                 }`}
-                title="戴耳机开会时，实时捕获 Teams/腾讯会议中远端同事声音并转文字（实时转写，录音仅保存在本机，约每小时 220MiB）"
+                title="戴耳机开会时，实时捕获 Teams/腾讯会议中远端同事声音并转文字（录音保存在本机）"
               >
-                {isSystemAudioActive ? '🎧 远端声音收录中 (系统内录)' : '🎧 开启系统内录 (远端声音)'}
+                {isSystemAudioActive ? '🎧 远端声音收录中' : '🎧 开启系统内录'}
               </button>
 
               {/* 自动检测到的 Teams / 会议内录混音通道徽章 */}
               {auxDeviceId && (
                 <span
                   data-testid="workbench-page-transcript-panel-badge-aux-audio"
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 font-medium flex items-center gap-1 shrink-0"
-                  title="检测到会议虚拟音频设备，已开启双轨本地混音（AirPods 录自己 + Teams 录他人）"
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 font-medium flex items-center gap-1 shrink-0 whitespace-nowrap"
+                  title="检测到会议虚拟音频设备，已开启双轨本地混音"
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
                   已混音: {availableMics.find((d) => d.deviceId === auxDeviceId)?.label || 'Teams音频'}
                 </span>
               )}
-
-              {/* 音频收音排查指南小图标 */}
-              <button
-                type="button"
-                data-testid="workbench-page-transcript-panel-btn-audio-troubleshoot"
-                onClick={() => setShowAudioHelpModal(true)}
-                className="text-text-tertiary hover:text-brand-blue text-[11px] px-1 py-0.5 rounded transition-colors"
-                title="音频收音排查指南"
-              >
-                <span>(?)</span>
-              </button>
             </div>
 
-            <input
-              type="text"
-              value={filterKeyword}
-              onChange={(e) => setFilterKeyword(e.target.value)}
-              placeholder="快速过滤逐字稿..."
-              data-testid="workbench-page-transcript-panel-input-filter"
-              className="px-2.5 py-1 text-xs bg-subtle border border-border-subtle rounded focus:outline-none focus:border-brand-blue text-text-primary w-40"
-            />
+            {/* 音频收音排查指南小图标 */}
+            <button
+              type="button"
+              data-testid="workbench-page-transcript-panel-btn-audio-troubleshoot"
+              onClick={() => setShowAudioHelpModal(true)}
+              className="text-text-tertiary hover:text-brand-blue text-[11px] px-1 py-0.5 rounded transition-colors shrink-0"
+              title="音频收音排查指南"
+            >
+              <span>(?)</span>
+            </button>
           </div>
 
           {/* 麦克风或 ASR 真实异常提示条 */}
@@ -1833,7 +1390,7 @@ export const InMeetingWorkbench: React.FC = () => {
               <button
                 type="button"
                 data-testid="workbench-page-transcript-panel-btn-dismiss-asr-error"
-                onClick={() => setAsrError('')}
+                onClick={() => setAsrStatus(asrStatus, '')}
                 className="text-text-tertiary hover:text-text-primary px-1.5 py-0.5 rounded text-xs font-bold transition-colors"
                 title="关闭提示"
               >

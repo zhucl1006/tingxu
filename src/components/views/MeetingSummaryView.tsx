@@ -4,6 +4,8 @@ import { formatSeconds } from '../../utils/formatTime';
 import { MeetingAudioPlayer, type MeetingAudioHandle } from '../MeetingAudioPlayer';
 import { parseTimecode, segmentPlaybackSeconds, playingSegment } from '../../utils/transcriptTime';
 import { MeetingMindmap } from '../MeetingMindmap';
+import { SummaryRevisionProposal, MeetingChatMessage } from '../../types/meeting';
+import { getTingxuClient } from '../../api/tingxuClient';
 
 export const MeetingSummaryView: React.FC = () => {
   const {
@@ -15,20 +17,78 @@ export const MeetingSummaryView: React.FC = () => {
     renameSpeaker,
     registerSpeakerProfile,
     cleanupRecordings,
+    gatewayUrl,
+    updateMeetingOverview,
+    updateMeetingDecision,
+    addMeetingDecision,
+    deleteMeetingDecision,
+    updateMeetingAction,
+    addMeetingAction,
+    deleteMeetingAction,
+    updateMeetingTranscriptText,
+    applySummaryProposal,
+    addMeetingChatMessage,
   } = useMeetingStore();
 
   const [activeTab, setActiveTab] = useState<'summary' | 'mindmap' | 'transcripts'>('summary');
   const [summaryMode, setSummaryMode] = useState<'cards' | 'outline'>('cards');
   const [copied, setCopied] = useState(false);
+  const [copiedSection, setCopiedSection] = useState<'decisions' | 'actions' | null>(null);
+  const [completedActions, setCompletedActions] = useState<Set<number>>(new Set());
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [newSpeakerName, setNewSpeakerName] = useState('');
+
+  const toggleActionComplete = (index: number) => {
+    setCompletedActions((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) {
+        next.delete(index);
+      } else {
+        next.add(index);
+      }
+      return next;
+    });
+  };
+
+  // 右栏切换：逐字稿录音 vs 会后 Copilot 智能助手
+  const [rightPanelTab, setRightPanelTab] = useState<'transcripts' | 'copilot'>('transcripts');
+
+  // Copilot 问答与指令修订状态
+  const [copilotInput, setCopilotInput] = useState('');
+  const [isCopilotLoading, setIsCopilotLoading] = useState(false);
+  const copilotMessagesEndRef = useRef<HTMLDivElement>(null);
+
+  // 原地人工编辑状态 (Inline Editing)
+  const [isEditingOverview, setIsEditingOverview] = useState(false);
+  const [overviewDraft, setOverviewDraft] = useState('');
+
+  const [editingDecisionIndex, setEditingDecisionIndex] = useState<number | null>(null);
+  const [decisionTitleDraft, setDecisionTitleDraft] = useState('');
+  const [decisionContentDraft, setDecisionContentDraft] = useState('');
+  const [isAddingDecision, setIsAddingDecision] = useState(false);
+
+  const [editingActionIndex, setEditingActionIndex] = useState<number | null>(null);
+  const [actionTitleDraft, setActionTitleDraft] = useState('');
+  const [actionAssigneeDraft, setActionAssigneeDraft] = useState('');
+  const [actionDueDateDraft, setActionDueDateDraft] = useState('');
+  const [isAddingAction, setIsAddingAction] = useState(false);
+
+  const [editingTranscriptId, setEditingTranscriptId] = useState<string | null>(null);
+  const [transcriptDraft, setTranscriptDraft] = useState('');
 
   const playerRef = useRef<MeetingAudioHandle>(null);
   const [playingSegmentId, setPlayingSegmentId] = useState<string | null>(null);
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [seekRequest, setSeekRequest] = useState<{ seconds: number; revision: number }>();
   const [seekRevision, setSeekRevision] = useState(0);
-  useEffect(() => { setSelectedSegmentId(null); setPlayingSegmentId(null); setSeekRequest(undefined); setActiveTab('summary'); }, [activeSummaryMeeting?.id]);
+  useEffect(() => {
+    setSelectedSegmentId(null);
+    setPlayingSegmentId(null);
+    setSeekRequest(undefined);
+    setActiveTab('summary');
+    setCompletedActions(new Set());
+    setCopiedSection(null);
+  }, [activeSummaryMeeting?.id]);
 
   const transcriptsContainerRef = useRef<HTMLDivElement>(null);
 
@@ -42,6 +102,13 @@ export const MeetingSummaryView: React.FC = () => {
       }
     }
   }, [activeTargetSegmentId, selectedSegmentId, activeTab, seekRevision]);
+
+  // Copilot 消息平滑滚动到底部
+  useEffect(() => {
+    if (rightPanelTab === 'copilot') {
+      copilotMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [activeSummaryMeeting?.chatHistory, rightPanelTab, isCopilotLoading]);
 
   if (!activeSummaryMeeting) {
     return (
@@ -179,6 +246,30 @@ export const MeetingSummaryView: React.FC = () => {
     });
   };
 
+  const handleCopySection = (section: 'decisions' | 'actions') => {
+    let text = '';
+    if (section === 'decisions') {
+      text = `### 💡 核心决策与架构原则 (${decisions.length})\n` +
+        (decisions.length === 0
+          ? '暂无提炼结论'
+          : decisions.map((d, idx) => `${idx + 1}. **${d.title}**：${d.content}${d.evidenceQuote ? ` (依据: ${d.evidenceQuote})` : ''}`).join('\n'));
+    } else {
+      text = `### ☑️ 落地行动与分步待办 (${actions.length})\n` +
+        (actions.length === 0
+          ? '暂无执行待办'
+          : actions.map((a, idx) => {
+              const isDone = completedActions.has(idx);
+              const assignee = a.assignee ? ` [负责人: ${a.assignee}]` : '';
+              const due = a.dueDate ? ` [交付期限: ${a.dueDate}]` : '';
+              return `${idx + 1}. [${isDone ? 'x' : ' '}] **${a.title}**${assignee}${due}`;
+            }).join('\n'));
+    }
+    navigator.clipboard.writeText(text).then(() => {
+      setCopiedSection(section);
+      setTimeout(() => setCopiedSection(null), 2000);
+    });
+  };
+
   const handleSaveSpeakerRename = (oldName: string) => {
     if (newSpeakerName.trim() && newSpeakerName.trim() !== oldName) {
       const cleanName = newSpeakerName.trim();
@@ -197,6 +288,168 @@ export const MeetingSummaryView: React.FC = () => {
     }
     setEditingSpeaker(null);
     setNewSpeakerName('');
+  };
+
+  // 发送 Copilot 问题或修订指令
+  const handleSendCopilotMessage = async (customPrompt?: string) => {
+    const text = (customPrompt || copilotInput).trim();
+    if (!text || isCopilotLoading) return;
+    setCopilotInput('');
+
+    const userMsg: MeetingChatMessage = {
+      id: `chat_user_${Date.now()}`,
+      sender: 'user',
+      content: text,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+    };
+    addMeetingChatMessage(meeting.id, userMsg);
+    setIsCopilotLoading(true);
+
+    try {
+      const client = getTingxuClient();
+      if ('setGatewayUrl' in client) {
+        (client as any).setGatewayUrl(gatewayUrl);
+      }
+      const chatData = await client.copilot.chat({
+        meetingId: meeting.id,
+        question: text,
+        asOfTextVersion: transcripts.length,
+        transcripts: transcripts.length
+          ? transcripts.map((t) => ({ id: t.id, speaker: t.speaker, text: t.text }))
+          : [{ id: 'seg_init', speaker: '系统', text: '本场会议已完成，正在查阅本地纪要与录音。' }],
+        currentSummary: meeting.structuredSummary,
+      });
+
+      const proposals: SummaryRevisionProposal[] = (chatData.proposals || []).map((p: any, idx: number) => ({
+        id: `prop_${Date.now()}_${idx}`,
+        targetSection: p.targetSection || 'decisions',
+        action: p.action || 'replace',
+        itemIndex: p.itemIndex,
+        originalText: p.originalText,
+        proposedText: p.proposedText,
+        reason: p.reason,
+        applied: false,
+      }));
+
+      const aiMsg: MeetingChatMessage = {
+        id: `chat_ai_${Date.now()}`,
+        sender: 'assistant',
+        content: chatData.answer || '已完成分析。',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        citations: chatData.citations || [],
+        proposals,
+      };
+      addMeetingChatMessage(meeting.id, aiMsg);
+    } catch {
+      const errorMsg: MeetingChatMessage = {
+        id: `chat_err_${Date.now()}`,
+        sender: 'assistant',
+        content: '⚠️ AI 网关处理请求失败或网络不可达。根据安全防臆造铁律，未生成假数据，请检查网关连接。',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      };
+      addMeetingChatMessage(meeting.id, errorMsg);
+    } finally {
+      setIsCopilotLoading(false);
+    }
+  };
+
+  // 采纳 AI 修订提案
+  const handleApplyProposal = (proposal: SummaryRevisionProposal) => {
+    applySummaryProposal(meeting.id, proposal);
+  };
+
+  // 原地人工编辑：主旨综述
+  const handleStartEditOverview = () => {
+    setOverviewDraft(overviewText || '');
+    setIsEditingOverview(true);
+  };
+
+  const handleSaveOverview = () => {
+    if (overviewDraft.trim()) {
+      updateMeetingOverview(meeting.id, overviewDraft.trim());
+    }
+    setIsEditingOverview(false);
+  };
+
+  // 原地人工编辑：决策卡片
+  const handleStartEditDecision = (index: number) => {
+    const d = decisions[index];
+    if (d) {
+      setDecisionTitleDraft(d.title);
+      setDecisionContentDraft(d.content);
+      setEditingDecisionIndex(index);
+    }
+  };
+
+  const handleSaveEditDecision = (index: number) => {
+    if (decisionTitleDraft.trim()) {
+      updateMeetingDecision(meeting.id, index, {
+        title: decisionTitleDraft.trim(),
+        content: decisionContentDraft.trim(),
+      });
+    }
+    setEditingDecisionIndex(null);
+  };
+
+  const handleAddDecision = () => {
+    if (decisionTitleDraft.trim()) {
+      addMeetingDecision(meeting.id, {
+        title: decisionTitleDraft.trim(),
+        content: decisionContentDraft.trim() || decisionTitleDraft.trim(),
+      });
+      setDecisionTitleDraft('');
+      setDecisionContentDraft('');
+      setIsAddingDecision(false);
+    }
+  };
+
+  // 原地人工编辑：待办事项
+  const handleStartEditAction = (index: number) => {
+    const a = actions[index];
+    if (a) {
+      setActionTitleDraft(a.title);
+      setActionAssigneeDraft(a.assignee || '');
+      setActionDueDateDraft(a.dueDate || '');
+      setEditingActionIndex(index);
+    }
+  };
+
+  const handleSaveEditAction = (index: number) => {
+    if (actionTitleDraft.trim()) {
+      updateMeetingAction(meeting.id, index, {
+        title: actionTitleDraft.trim(),
+        assignee: actionAssigneeDraft.trim() || '待确认',
+        dueDate: actionDueDateDraft.trim() || '尽快推进',
+      });
+    }
+    setEditingActionIndex(null);
+  };
+
+  const handleAddAction = () => {
+    if (actionTitleDraft.trim()) {
+      addMeetingAction(meeting.id, {
+        title: actionTitleDraft.trim(),
+        assignee: actionAssigneeDraft.trim() || '待确认',
+        dueDate: actionDueDateDraft.trim() || '尽快推进',
+      });
+      setActionTitleDraft('');
+      setActionAssigneeDraft('');
+      setActionDueDateDraft('');
+      setIsAddingAction(false);
+    }
+  };
+
+  // 原地人工编辑：逐字稿校订
+  const handleStartEditTranscript = (segmentId: string, currentText: string) => {
+    setEditingTranscriptId(segmentId);
+    setTranscriptDraft(currentText);
+  };
+
+  const handleSaveEditTranscript = (segmentId: string) => {
+    if (transcriptDraft.trim()) {
+      updateMeetingTranscriptText(meeting.id, segmentId, transcriptDraft.trim());
+    }
+    setEditingTranscriptId(null);
   };
 
   // 引用只按证据 ID 定位，普通正文绝不提取数字猜时间。
@@ -289,6 +542,22 @@ export const MeetingSummaryView: React.FC = () => {
         <div className="flex items-center gap-2 shrink-0">
           <button
             type="button"
+            data-testid="summary-page-btn-call-copilot"
+            onClick={() => {
+              setActiveTab('summary');
+              setRightPanelTab((prev) => (prev === 'copilot' ? 'transcripts' : 'copilot'));
+            }}
+            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+              rightPanelTab === 'copilot'
+                ? 'bg-brand-blue text-white border-brand-blue shadow-xs'
+                : 'bg-panel border-border-subtle hover:bg-hover text-brand-blue'
+            }`}
+          >
+            <span>🤖</span>
+            <span>{rightPanelTab === 'copilot' ? 'Copilot 对话中' : '会后 Copilot 助手'}</span>
+          </button>
+          <button
+            type="button"
             data-testid="summary-page-btn-copy"
             onClick={handleCopySummary}
             className="px-3 py-1.5 rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors"
@@ -365,7 +634,7 @@ export const MeetingSummaryView: React.FC = () => {
                 : 'border-transparent text-text-secondary hover:text-text-primary'
             }`}
           >
-            📊 结构化总结提炼（讯飞双栏看板）
+            📊 结构化纪要与提炼
           </button>
           <button
             type="button"
@@ -468,22 +737,133 @@ export const MeetingSummaryView: React.FC = () => {
                       >
                         👤 {t.speaker}
                       </span>
-                      <button type="button" data-testid={`summary-page-transcript-btn-seek-${t.id}`} onClick={() => handleSeekSegment(t.id)} className="font-mono text-[11px] text-brand-blue tabular-nums">{t.timestamp}</button>
+                      <div className="flex items-center gap-2">
+                        <button type="button" data-testid={`summary-page-transcript-btn-seek-${t.id}`} onClick={() => handleSeekSegment(t.id)} className="font-mono text-[11px] text-brand-blue tabular-nums">{t.timestamp}</button>
+                        <button
+                          type="button"
+                          data-testid={`summary-page-btn-edit-transcript-${t.id}`}
+                          onClick={() => handleStartEditTranscript(t.id, t.text)}
+                          className="text-text-tertiary hover:text-brand-blue text-[11px] p-0.5"
+                          title="校正逐字稿文字"
+                        >
+                          ✏️
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-xs text-text-primary leading-relaxed">{t.text}</p>
+                    {editingTranscriptId === t.id ? (
+                      <div className="flex items-center gap-2 pt-1">
+                        <input
+                          type="text"
+                          data-testid={`summary-page-input-edit-transcript-${t.id}`}
+                          value={transcriptDraft}
+                          onChange={(e) => setTranscriptDraft(e.target.value)}
+                          className="flex-1 px-2.5 py-1 text-xs bg-canvas border border-brand-blue rounded text-text-primary"
+                        />
+                        <button
+                          type="button"
+                          data-testid={`summary-page-btn-save-transcript-${t.id}`}
+                          onClick={() => handleSaveEditTranscript(t.id)}
+                          className="px-2.5 py-1 rounded bg-brand-blue text-white text-xs font-medium"
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingTranscriptId(null)}
+                          className="px-2 py-1 rounded bg-subtle text-text-secondary text-xs"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    ) : (
+                      <p
+                        data-testid={`summary-page-text-transcript-${t.id}`}
+                        onClick={() => handleSeekSegment(t.id)}
+                        className="text-xs text-text-primary leading-relaxed cursor-pointer hover:text-brand-blue transition-colors"
+                        title="点击直接定位至该句录音并播放"
+                      >
+                        {t.text}
+                      </p>
+                    )}
                   </div>
                 ))
               )}
             </div>
           </div>
         ) : (
-          /* 讯飞听见同款双栏联动工作台 (左侧卡片/大纲 + 右侧逐字稿与原声播放器) */
+          /* 双栏联动工作台 (左侧卡片/大纲 + 右侧逐字稿与原声播放器) */
           <div className="flex-1 overflow-hidden flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-border-subtle">
             {/* 左栏：智能纪要占桌面宽度的三分之二 */}
             <div
               data-testid="summary-page-panel-left"
               className="flex-1 min-w-0 md:flex-none md:w-2/3 overflow-y-auto p-6 space-y-6"
             >
+              {/* 会议产出关键指标横幅 (Executive Metrics Bar) */}
+              <div
+                data-testid="summary-page-metrics-bar"
+                className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-xl bg-subtle/70 border border-border-subtle"
+              >
+                <div
+                  data-testid="summary-page-metric-decisions"
+                  className="p-2.5 rounded-lg bg-canvas border border-border-subtle flex items-center gap-2.5 shadow-2xs"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xs font-bold shrink-0">
+                    🎯
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-text-tertiary">核心决议</div>
+                    <div className="text-xs font-bold text-emerald-700 dark:text-emerald-300 tabular-nums truncate">
+                      {decisions.length} 项
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  data-testid="summary-page-metric-actions"
+                  className="p-2.5 rounded-lg bg-canvas border border-border-subtle flex items-center gap-2.5 shadow-2xs"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-blue-500/10 text-brand-blue flex items-center justify-center text-xs font-bold shrink-0">
+                    ☑️
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-text-tertiary">待办执行</div>
+                    <div className="text-xs font-bold text-brand-blue tabular-nums truncate">
+                      {actions.length} 项{completedActions.size > 0 && ` (${completedActions.size}已落实)`}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  data-testid="summary-page-metric-risks"
+                  className="p-2.5 rounded-lg bg-canvas border border-border-subtle flex items-center gap-2.5 shadow-2xs"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center text-xs font-bold shrink-0">
+                    ⚠️
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-text-tertiary">风险关注</div>
+                    <div className="text-xs font-bold text-amber-700 dark:text-amber-400 tabular-nums truncate">
+                      {risks.length} 项
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  data-testid="summary-page-metric-facts"
+                  className="p-2.5 rounded-lg bg-canvas border border-border-subtle flex items-center gap-2.5 shadow-2xs"
+                >
+                  <span className="w-7 h-7 rounded-lg bg-slate-500/10 text-text-secondary flex items-center justify-center text-xs font-bold shrink-0">
+                    📌
+                  </span>
+                  <div className="min-w-0">
+                    <div className="text-[10px] text-text-tertiary">核心事实</div>
+                    <div className="text-xs font-bold text-text-primary tabular-nums truncate">
+                      {facts.length} 条
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* 1. 全局主旨综述 */}
               <div
                 data-testid="summary-page-card-overview"
@@ -493,17 +873,60 @@ export const MeetingSummaryView: React.FC = () => {
                   <div className="flex items-center gap-2 text-xs font-bold text-text-primary">
                     <span>📋 全局主旨背景</span>
                   </div>
-                  <span className="text-[10px] text-brand-blue bg-brand-blue/10 px-2 py-0.5 rounded-full font-medium">
-                    核心脉络
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-brand-blue bg-brand-blue/10 px-2 py-0.5 rounded-full font-medium">
+                      核心脉络
+                    </span>
+                    {!isEditingOverview ? (
+                      <button
+                        type="button"
+                        data-testid="summary-page-btn-edit-overview"
+                        onClick={handleStartEditOverview}
+                        className="text-[11px] text-text-tertiary hover:text-brand-blue transition-colors flex items-center gap-1"
+                        title="就地编辑综述"
+                      >
+                        <span>✏️ 编辑</span>
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          data-testid="summary-page-btn-save-overview"
+                          onClick={handleSaveOverview}
+                          className="px-2 py-0.5 rounded bg-brand-blue text-white text-[10px] font-medium"
+                        >
+                          保存
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="summary-page-btn-cancel-overview"
+                          onClick={() => setIsEditingOverview(false)}
+                          className="px-2 py-0.5 rounded bg-subtle text-text-secondary text-[10px]"
+                        >
+                          取消
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <p className="text-xs text-text-secondary leading-relaxed">
-                  {overviewText}
-                </p>
+
+                {isEditingOverview ? (
+                  <textarea
+                    data-testid="summary-page-textarea-edit-overview"
+                    value={overviewDraft}
+                    onChange={(e) => setOverviewDraft(e.target.value)}
+                    rows={4}
+                    className="w-full p-2.5 text-xs bg-canvas border border-brand-blue rounded-lg text-text-primary leading-relaxed focus:outline-none"
+                  />
+                ) : (
+                  <p className="text-xs text-text-secondary leading-relaxed">
+                    {overviewText}
+                  </p>
+                )}
               </div>
 
               {summaryMode === 'cards' ? (
-                /* 讯飞同款彩色主题卡片看板 */
+                /* 结构化主题卡片看板 */
                 <div
                   data-testid="summary-page-topic-cards-container"
                   className="space-y-6"
@@ -513,10 +936,74 @@ export const MeetingSummaryView: React.FC = () => {
                     data-testid="summary-page-section-decisions"
                     className="space-y-3"
                   >
-                    <div className="flex items-center gap-2 text-xs font-bold text-status-success">
-                      <span>✦</span>
-                      <span>关键结论与架构决策 ({decisions.length})</span>
+                    <div className="flex items-center justify-between text-xs font-bold text-status-success">
+                      <div className="flex items-center gap-2">
+                        <span>✦</span>
+                        <span>关键结论与架构决策 ({decisions.length})</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          data-testid="summary-page-btn-copy-section-decisions"
+                          onClick={() => handleCopySection('decisions')}
+                          className="text-[11px] font-normal px-2 py-0.5 rounded bg-status-success-bg hover:bg-status-success/20 text-status-success border border-status-success/30 transition-colors flex items-center gap-1"
+                          title="复制所有结论到剪贴板"
+                        >
+                          {copiedSection === 'decisions' ? '✓ 已复制' : '📋 复制结论'}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="summary-page-btn-add-decision"
+                          onClick={() => {
+                            setIsAddingDecision(true);
+                            setDecisionTitleDraft('');
+                            setDecisionContentDraft('');
+                          }}
+                          className="text-[11px] font-normal px-2 py-0.5 rounded bg-status-success-bg text-status-success border border-status-success/30 hover:bg-status-success/20 transition-colors"
+                        >
+                          + 添加结论
+                        </button>
+                      </div>
                     </div>
+
+                    {isAddingDecision && (
+                      <div className="p-3.5 rounded-xl bg-canvas border border-brand-blue space-y-2 shadow-xs animate-fadeIn">
+                        <div className="text-xs font-bold text-text-primary">新增关键结论</div>
+                        <input
+                          type="text"
+                          data-testid="summary-page-input-new-decision-title"
+                          placeholder="结论标题（例如：采用分布式架构）"
+                          value={decisionTitleDraft}
+                          onChange={(e) => setDecisionTitleDraft(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs bg-subtle border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-brand-blue"
+                        />
+                        <textarea
+                          data-testid="summary-page-textarea-new-decision-content"
+                          placeholder="具体结论阐述与依据"
+                          value={decisionContentDraft}
+                          onChange={(e) => setDecisionContentDraft(e.target.value)}
+                          rows={2}
+                          className="w-full px-2.5 py-1.5 text-xs bg-subtle border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-brand-blue"
+                        />
+                        <div className="flex justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingDecision(false)}
+                            className="px-2.5 py-1 rounded bg-subtle text-text-secondary text-[11px]"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="summary-page-btn-confirm-add-decision"
+                            onClick={handleAddDecision}
+                            className="px-3 py-1 rounded bg-brand-blue text-white text-[11px] font-medium"
+                          >
+                            保存添加
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <div className="grid grid-cols-1 gap-3">
                       {decisions.length === 0 ? (
@@ -530,44 +1017,177 @@ export const MeetingSummaryView: React.FC = () => {
                             data-testid={`summary-page-item-decision-${i}`}
                             className="p-3.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200/60 dark:border-emerald-900/50 space-y-1.5 shadow-xs"
                           >
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
-                                {d.title}
-                              </span>
-                              {d.evidenceSegmentId && (
-                                <button
-                                  type="button"
-                                  data-testid={`summary-pill-time-${d.evidenceSegmentId}`}
-                                  onClick={() => handleSeekSegment(d.evidenceSegmentId, d.evidenceQuote)}
-                                  className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-600 hover:text-white transition-colors flex items-center gap-1"
-                                  title="点击在右侧定位逐字稿与原声"
-                                >
-                                  <span>⏱ {d.evidenceQuote || '00:15'}</span>
-                                  <span>⤤</span>
-                                </button>
-                              )}
-                            </div>
-                            <div className="text-xs text-emerald-950/80 dark:text-emerald-200/80 leading-relaxed">
-                              <span className="font-semibold text-emerald-900 dark:text-emerald-200">
-                                【核心要点】：
-                              </span>
-                              {d.content}
-                            </div>
+                            {editingDecisionIndex === i ? (
+                              <div className="space-y-2">
+                                <input
+                                  type="text"
+                                  data-testid={`summary-page-input-edit-decision-title-${i}`}
+                                  value={decisionTitleDraft}
+                                  onChange={(e) => setDecisionTitleDraft(e.target.value)}
+                                  className="w-full px-2.5 py-1 text-xs bg-canvas border border-brand-blue rounded text-text-primary"
+                                />
+                                <textarea
+                                  data-testid={`summary-page-textarea-edit-decision-content-${i}`}
+                                  value={decisionContentDraft}
+                                  onChange={(e) => setDecisionContentDraft(e.target.value)}
+                                  rows={2}
+                                  className="w-full px-2.5 py-1 text-xs bg-canvas border border-brand-blue rounded text-text-primary"
+                                />
+                                <div className="flex justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingDecisionIndex(null)}
+                                    className="px-2 py-0.5 rounded bg-subtle text-text-secondary text-[10px]"
+                                  >
+                                    取消
+                                  </button>
+                                  <button
+                                    type="button"
+                                    data-testid={`summary-page-btn-save-decision-${i}`}
+                                    onClick={() => handleSaveEditDecision(i)}
+                                    className="px-2.5 py-0.5 rounded bg-brand-blue text-white text-[10px] font-medium"
+                                  >
+                                    保存
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
+                                    {d.title}
+                                  </span>
+                                  <div className="flex items-center gap-1.5">
+                                    {d.evidenceSegmentId && (
+                                      <button
+                                        type="button"
+                                        data-testid={`summary-pill-time-${d.evidenceSegmentId}`}
+                                        onClick={() => handleSeekSegment(d.evidenceSegmentId, d.evidenceQuote)}
+                                        className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-600 hover:text-white transition-colors flex items-center gap-1"
+                                        title="点击在右侧定位逐字稿与原声"
+                                      >
+                                        <span>⏱ {d.evidenceQuote || '00:15'}</span>
+                                        <span>⤤</span>
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      data-testid={`summary-page-btn-edit-decision-${i}`}
+                                      onClick={() => handleStartEditDecision(i)}
+                                      className="p-1 text-text-tertiary hover:text-brand-blue text-[11px]"
+                                      title="编辑此结论"
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`summary-page-btn-delete-decision-${i}`}
+                                      onClick={() => deleteMeetingDecision(meeting.id, i)}
+                                      className="p-1 text-text-tertiary hover:text-status-danger text-[11px]"
+                                      title="删除此结论"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="text-xs text-emerald-950/80 dark:text-emerald-200/80 leading-relaxed">
+                                  <span className="font-semibold text-emerald-900 dark:text-emerald-200">
+                                    【核心要点】：
+                                  </span>
+                                  {d.content}
+                                </div>
+                              </>
+                            )}
                           </div>
                         ))
                       )}
                     </div>
                   </div>
 
-                  {/* 章节 2：分步执行行动流 (蓝色系，讯飞听见核心特色) */}
+                  {/* 章节 2：分步执行行动流 (蓝色系) */}
                   <div
                     data-testid="summary-page-section-action-steps"
                     className="space-y-3"
                   >
-                    <div className="flex items-center gap-2 text-xs font-bold text-brand-blue">
-                      <span>✦</span>
-                      <span>落地计划与分步执行流 ({actions.length})</span>
+                    <div className="flex items-center justify-between text-xs font-bold text-brand-blue">
+                      <div className="flex items-center gap-2">
+                        <span>✦</span>
+                        <span>落地计划与分步执行流 ({actions.length})</span>
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          data-testid="summary-page-btn-copy-section-actions"
+                          onClick={() => handleCopySection('actions')}
+                          className="text-[11px] font-normal px-2 py-0.5 rounded bg-brand-blue-subtle hover:bg-brand-blue/20 text-brand-blue border border-brand-blue/30 transition-colors flex items-center gap-1"
+                          title="复制所有待办清单到剪贴板"
+                        >
+                          {copiedSection === 'actions' ? '✓ 已复制' : '📋 复制待办'}
+                        </button>
+                        <button
+                          type="button"
+                          data-testid="summary-page-btn-add-action"
+                          onClick={() => {
+                            setIsAddingAction(true);
+                            setActionTitleDraft('');
+                            setActionAssigneeDraft('');
+                            setActionDueDateDraft('');
+                          }}
+                          className="text-[11px] font-normal px-2 py-0.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 hover:bg-brand-blue/20 transition-colors"
+                        >
+                          + 添加待办
+                        </button>
+                      </div>
                     </div>
+
+                    {isAddingAction && (
+                      <div className="p-3.5 rounded-xl bg-canvas border border-brand-blue space-y-2 shadow-xs animate-fadeIn">
+                        <div className="text-xs font-bold text-text-primary">新增行动待办</div>
+                        <input
+                          type="text"
+                          data-testid="summary-page-input-new-action-title"
+                          placeholder="待办事项任务名称"
+                          value={actionTitleDraft}
+                          onChange={(e) => setActionTitleDraft(e.target.value)}
+                          className="w-full px-2.5 py-1.5 text-xs bg-subtle border border-border-subtle rounded-md text-text-primary focus:outline-none focus:border-brand-blue"
+                        />
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="text"
+                            data-testid="summary-page-input-new-action-assignee"
+                            placeholder="责任人（例如：李工）"
+                            value={actionAssigneeDraft}
+                            onChange={(e) => setActionAssigneeDraft(e.target.value)}
+                            className="px-2.5 py-1 text-xs bg-subtle border border-border-subtle rounded text-text-primary"
+                          />
+                          <input
+                            type="text"
+                            data-testid="summary-page-input-new-action-duedate"
+                            placeholder="截止期限（例如：下周五前）"
+                            value={actionDueDateDraft}
+                            onChange={(e) => setActionDueDateDraft(e.target.value)}
+                            className="px-2.5 py-1 text-xs bg-subtle border border-border-subtle rounded text-text-primary"
+                          />
+                        </div>
+                        <div className="flex justify-end gap-2 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => setIsAddingAction(false)}
+                            className="px-2.5 py-1 rounded bg-subtle text-text-secondary text-[11px]"
+                          >
+                            取消
+                          </button>
+                          <button
+                            type="button"
+                            data-testid="summary-page-btn-confirm-add-action"
+                            onClick={handleAddAction}
+                            className="px-3 py-1 rounded bg-brand-blue text-white text-[11px] font-medium"
+                          >
+                            保存添加
+                          </button>
+                        </div>
+                      </div>
+                    )}
 
                     <div
                       data-testid="summary-page-section-actions"
@@ -579,39 +1199,136 @@ export const MeetingSummaryView: React.FC = () => {
                         </div>
                       ) : (
                         actions.map((a, i) => {
+                          const isDone = completedActions.has(i);
                           const stepNames = ['第一步', '第二步', '第三步', '第四步', '第五步'];
                           const stepLabel = stepNames[i] || `步骤 ${i + 1}`;
                           return (
                             <div
                               key={i}
                               data-testid={`summary-page-item-action-${i}`}
-                              className="p-3 rounded-lg bg-canvas border border-border-subtle flex items-start justify-between gap-3 shadow-xs"
+                              className={`p-3 rounded-lg border transition-all space-y-2 shadow-xs ${
+                                isDone
+                                  ? 'opacity-60 bg-subtle/50 border-border-subtle'
+                                  : 'bg-canvas border-border-subtle hover:border-brand-blue/50'
+                              }`}
                             >
-                              <div className="flex items-start gap-2.5 min-w-0">
-                                <span className="w-5 h-5 rounded-full bg-brand-blue text-white text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5">
-                                  {i + 1}
-                                </span>
-                                <div className="space-y-1 min-w-0">
-                                  <div className="text-xs font-semibold text-text-primary">
-                                    {stepLabel}：{a.title}
+                              {editingActionIndex === i ? (
+                                <div className="space-y-2">
+                                  <input
+                                    type="text"
+                                    data-testid={`summary-page-input-edit-action-title-${i}`}
+                                    value={actionTitleDraft}
+                                    onChange={(e) => setActionTitleDraft(e.target.value)}
+                                    className="w-full px-2.5 py-1 text-xs bg-canvas border border-brand-blue rounded text-text-primary"
+                                  />
+                                  <div className="grid grid-cols-2 gap-2">
+                                    <input
+                                      type="text"
+                                      data-testid={`summary-page-input-edit-action-assignee-${i}`}
+                                      value={actionAssigneeDraft}
+                                      placeholder="负责人"
+                                      onChange={(e) => setActionAssigneeDraft(e.target.value)}
+                                      className="px-2 py-1 text-xs bg-canvas border border-border-subtle rounded text-text-primary"
+                                    />
+                                    <input
+                                      type="text"
+                                      data-testid={`summary-page-input-edit-action-duedate-${i}`}
+                                      value={actionDueDateDraft}
+                                      placeholder="交付期限"
+                                      onChange={(e) => setActionDueDateDraft(e.target.value)}
+                                      className="px-2 py-1 text-xs bg-canvas border border-border-subtle rounded text-text-primary"
+                                    />
                                   </div>
-                                  <div className="text-[11px] text-text-secondary leading-snug">
-                                    <span className="font-medium text-text-primary">【执行细节】：</span>
-                                    {('content' in a ? (a as any).content : undefined) || a.title}
+                                  <div className="flex justify-end gap-1.5 pt-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => setEditingActionIndex(null)}
+                                      className="px-2 py-0.5 rounded bg-subtle text-text-secondary text-[10px]"
+                                    >
+                                      取消
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`summary-page-btn-save-action-${i}`}
+                                      onClick={() => handleSaveEditAction(i)}
+                                      className="px-2.5 py-0.5 rounded bg-brand-blue text-white text-[10px] font-medium"
+                                    >
+                                      保存
+                                    </button>
                                   </div>
                                 </div>
-                              </div>
+                              ) : (
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="flex items-start gap-2.5 min-w-0">
+                                    <input
+                                      type="checkbox"
+                                      data-testid={`summary-page-checkbox-action-${i}`}
+                                      checked={isDone}
+                                      onChange={() => toggleActionComplete(i)}
+                                      className="mt-1 w-4 h-4 rounded border-border-subtle text-brand-blue focus:ring-brand-blue cursor-pointer shrink-0"
+                                      title={isDone ? '标记为未完成' : '标记为已完成'}
+                                    />
+                                    <span
+                                      className={`w-5 h-5 rounded-full text-[10px] font-bold flex items-center justify-center shrink-0 mt-0.5 ${
+                                        isDone ? 'bg-text-tertiary text-white' : 'bg-brand-blue text-white'
+                                      }`}
+                                    >
+                                      {i + 1}
+                                    </span>
+                                    <div className="space-y-1 min-w-0">
+                                      <div
+                                        className={`text-xs font-semibold ${
+                                          isDone ? 'line-through text-text-tertiary' : 'text-text-primary'
+                                        }`}
+                                      >
+                                        {stepLabel}：{a.title}
+                                        {isDone && (
+                                          <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 no-underline font-normal inline-block">
+                                            ✓ 已落实
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div
+                                        className={`text-[11px] leading-snug ${
+                                          isDone ? 'line-through text-text-tertiary' : 'text-text-secondary'
+                                        }`}
+                                      >
+                                        <span className="font-medium text-text-primary">【执行细节】：</span>
+                                        {('content' in a ? (a as any).content : undefined) || a.title}
+                                      </div>
+                                    </div>
+                                  </div>
 
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className="px-1.5 py-0.5 rounded bg-subtle text-[10px] text-text-secondary font-mono">
-                                  👤 {a.assignee}
-                                </span>
-                                {a.dueDate && (
-                                  <span className="px-1.5 py-0.5 rounded bg-subtle text-[10px] text-text-tertiary font-mono">
-                                    📅 {a.dueDate}
-                                  </span>
-                                )}
-                              </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="px-1.5 py-0.5 rounded bg-subtle text-[10px] text-text-secondary font-mono">
+                                      👤 {a.assignee}
+                                    </span>
+                                    {a.dueDate && (
+                                      <span className="px-1.5 py-0.5 rounded bg-subtle text-[10px] text-text-tertiary font-mono">
+                                        📅 {a.dueDate}
+                                      </span>
+                                    )}
+                                    <button
+                                      type="button"
+                                      data-testid={`summary-page-btn-edit-action-${i}`}
+                                      onClick={() => handleStartEditAction(i)}
+                                      className="p-1 text-text-tertiary hover:text-brand-blue text-[11px]"
+                                      title="编辑此待办"
+                                    >
+                                      ✏️
+                                    </button>
+                                    <button
+                                      type="button"
+                                      data-testid={`summary-page-btn-delete-action-${i}`}
+                                      onClick={() => deleteMeetingAction(meeting.id, i)}
+                                      className="p-1 text-text-tertiary hover:text-status-danger text-[11px]"
+                                      title="删除此待办"
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })
@@ -699,151 +1416,545 @@ export const MeetingSummaryView: React.FC = () => {
                   </div>
                 </div>
               ) : (
-                /* 讯飞听见同款严谨层级大纲文本视图 */
+                /* 结构化层级大纲文本视图 (正式汇报与通读模式) */
                 <div
                   data-testid="summary-page-structured-outline"
-                  className="p-5 rounded-xl bg-canvas border border-border-subtle space-y-4 text-xs font-sans shadow-xs"
+                  className="p-6 rounded-xl bg-canvas border border-border-subtle space-y-6 text-xs font-sans shadow-xs animate-fadeIn"
                 >
-                  <div className="border-b border-border-subtle pb-3">
-                    <h2 className="text-sm font-bold text-text-primary mb-1">
+                  {/* 正式文档信头 */}
+                  <div className="border-b border-border-subtle pb-4 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-mono tracking-wider uppercase text-text-tertiary">
+                        OFFICIAL MEETING BRIEF · 听序结构化纪要
+                      </span>
+                      <button
+                        type="button"
+                        onClick={handleCopySummary}
+                        className="text-[11px] text-brand-blue hover:underline font-medium flex items-center gap-1"
+                        title="复制大纲文本"
+                      >
+                        {copied ? '✓ 已复制全文' : '📋 复制大纲文本'}
+                      </button>
+                    </div>
+                    <h2 className="text-base font-bold text-text-primary">
                       {meeting.title}
                     </h2>
-                    <div className="text-[11px] text-text-tertiary font-mono space-x-2">
-                      <span>参会人: {speakers.join(', ')}</span>
+                    <div className="flex flex-wrap items-center gap-3 text-[11px] text-text-tertiary font-mono">
+                      <span>📅 记录日期: {meeting.date}</span>
                       <span>·</span>
-                      <span>记录日期: {meeting.date}</span>
+                      <span>⏱ 会议时长: {formatSeconds(meeting.durationSeconds)}</span>
+                      <span>·</span>
+                      <span>👥 参会人: {speakers.join('、') || '全员'}</span>
                     </div>
                   </div>
 
-                  {/* 一、关键决策与管理模式 */}
-                  <div className="space-y-2">
-                    <h3 className="font-bold text-text-primary text-xs">
-                      一、核心决策与架构原则
-                    </h3>
-                    <div className="pl-4 space-y-1.5 border-l-2 border-brand-blue/30">
-                      {decisions.map((d, i) => (
-                        <div key={i} className="text-text-secondary leading-relaxed">
-                          <span className="font-semibold text-text-primary">{i + 1}. {d.title}</span>：
-                          <span>{d.content}</span>
-                          {d.evidenceSegmentId && (
-                            <button
-                              type="button"
-                              onClick={() => handleSeekSegment(d.evidenceSegmentId, d.evidenceQuote)}
-                              className="ml-2 text-[10px] text-brand-blue hover:underline font-mono"
-                            >
-                              [依据定位 ⤤]
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* 二、待办行动清单 */}
-                  <div className="space-y-2">
-                    <h3 className="font-bold text-text-primary text-xs">
-                      二、行动待办与落实排期
-                    </h3>
-                    <div className="pl-4 space-y-1.5 border-l-2 border-indigo-500/30">
-                      {actions.map((a, i) => (
-                        <div key={i} className="text-text-secondary leading-relaxed">
-                          <span className="font-semibold text-text-primary">{i + 1}. {a.title}</span>
-                          <span className="text-text-tertiary text-[11px]">（责任人: {a.assignee} · 交付: {a.dueDate}）</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* 三、风险与事实归因 */}
-                  {(risks.length > 0 || facts.length > 0) && (
-                    <div className="space-y-2">
-                      <h3 className="font-bold text-text-primary text-xs">
-                        三、风险关注与背景事实
+                  {/* 一、会议全局主旨 */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center gap-2">
+                      <span className="w-1.5 h-3.5 rounded-full bg-brand-blue shrink-0" />
+                      <h3 className="font-bold text-text-primary text-xs tracking-wide">
+                        一、会议全局主旨与背景脉络
                       </h3>
-                      <div className="pl-4 space-y-1.5 border-l-2 border-amber-500/30 text-text-secondary">
+                    </div>
+                    <div className="pl-3.5 ml-0.5 border-l-2 border-brand-blue/20 text-text-secondary leading-relaxed">
+                      <p>{overviewText}</p>
+                    </div>
+                  </div>
+
+                  {/* 二、核心决策与架构原则 */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-3.5 rounded-full bg-emerald-500 shrink-0" />
+                        <h3 className="font-bold text-text-primary text-xs tracking-wide">
+                          二、核心决策与架构原则 ({decisions.length})
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-emerald-600 dark:text-emerald-400">已形成共识</span>
+                    </div>
+                    <div className="pl-3.5 ml-0.5 border-l-2 border-emerald-500/30 space-y-2">
+                      {decisions.length === 0 ? (
+                        <div className="text-text-tertiary text-[11px]">暂无决议记录</div>
+                      ) : (
+                        decisions.map((d, i) => (
+                          <div key={i} className="text-text-secondary leading-relaxed space-y-0.5">
+                            <div className="flex items-baseline gap-1.5 flex-wrap">
+                              <span className="font-semibold text-emerald-900 dark:text-emerald-300">
+                                {i + 1}. {d.title}
+                              </span>
+                              {d.evidenceSegmentId && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleSeekSegment(d.evidenceSegmentId, d.evidenceQuote)}
+                                  className="text-[10px] text-brand-blue hover:underline font-mono inline-flex items-center gap-0.5"
+                                  title="点击在右侧定位证据"
+                                >
+                                  <span>[⏱ {d.evidenceQuote || '依据'} ⤤]</span>
+                                </button>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-text-secondary pl-3">
+                              {d.content}
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 三、行动待办与落实排期 */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-3.5 rounded-full bg-blue-500 shrink-0" />
+                        <h3 className="font-bold text-text-primary text-xs tracking-wide">
+                          三、行动待办与落实排期 ({actions.length})
+                        </h3>
+                      </div>
+                      <span className="text-[10px] font-mono text-brand-blue">
+                        {completedActions.size}/{actions.length} 已落实
+                      </span>
+                    </div>
+                    <div className="pl-3.5 ml-0.5 border-l-2 border-blue-500/30 space-y-2">
+                      {actions.length === 0 ? (
+                        <div className="text-text-tertiary text-[11px]">暂无待办清单</div>
+                      ) : (
+                        actions.map((a, i) => {
+                          const isDone = completedActions.has(i);
+                          return (
+                            <div
+                              key={i}
+                              className={`text-text-secondary leading-relaxed space-y-0.5 ${
+                                isDone ? 'opacity-60 line-through' : ''
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-semibold text-text-primary">
+                                  {i + 1}. {a.title}
+                                </span>
+                                <span className="text-text-tertiary text-[10px] font-mono">
+                                  [责任人: {a.assignee} · 交付: {a.dueDate}]
+                                </span>
+                                {isDone && (
+                                  <span className="text-[10px] text-emerald-600 no-underline font-mono">✓ 已落实</span>
+                                )}
+                              </div>
+                              {('content' in a && (a as any).content && (a as any).content !== a.title) && (
+                                <div className="text-[11px] text-text-tertiary pl-3">
+                                  细节：{(a as any).content}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+
+                  {/* 四、风险关注与背景事实 */}
+                  {(risks.length > 0 || facts.length > 0) && (
+                    <div className="space-y-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-1.5 h-3.5 rounded-full bg-amber-500 shrink-0" />
+                        <h3 className="font-bold text-text-primary text-xs tracking-wide">
+                          四、风险关注与背景事实 ({risks.length + facts.length})
+                        </h3>
+                      </div>
+                      <div className="pl-3.5 ml-0.5 border-l-2 border-amber-500/30 space-y-2 text-text-secondary">
                         {risks.map((r, i) => (
-                          <div key={i}>• [风险] {r.title}：{r.content}</div>
+                          <div key={i} className="text-[11px] leading-relaxed">
+                            <span className="font-semibold text-amber-700 dark:text-amber-400">
+                              ⚠️ [风险预警] {r.title}：
+                            </span>
+                            <span>{r.content}</span>
+                          </div>
                         ))}
                         {facts.map((f, i) => (
-                          <div key={i}>• [事实] {f.title}：{f.content}</div>
+                          <div key={i} className="text-[11px] leading-relaxed">
+                            <span className="font-semibold text-text-primary">
+                              📌 [背景事实] {f.title}：
+                            </span>
+                            <span>{f.content}</span>
+                          </div>
                         ))}
                       </div>
                     </div>
                   )}
+
+                  {/* 尾部：隐私主权说明 */}
+                  <div className="pt-3 border-t border-border-subtle flex items-center justify-between text-[10px] text-text-tertiary">
+                    <span>🔒 本地优先数据隐私主权保护（Local-First SQLite · Zero-Content 云端零留存）</span>
+                    <span className="font-mono">听序 Tingxu</span>
+                  </div>
                 </div>
               )}
             </div>
 
-            {/* 右栏：录音与逐字稿占桌面宽度的三分之一 */}
+            {/* 右栏：录音逐字稿 / 会后 Copilot 助手 */}
             <div
               data-testid="summary-page-panel-right"
               className="flex-1 min-w-0 md:flex-none md:w-1/3 flex flex-col bg-subtle/40 overflow-hidden"
             >
               {/* 右栏顶部标签条 */}
-              <div className="px-4 py-2.5 bg-canvas border-b border-border-subtle flex flex-wrap gap-1 items-center justify-between text-xs shrink-0">
-                <div className="flex items-center gap-2">
-                  <span className="font-bold text-text-primary flex items-center gap-1.5">
-                    <span>🎙️ 现场录音与逐字稿</span>
-                  </span>
-                  <span className="text-[11px] text-text-tertiary tabular-nums">
-                    （{transcripts.length} 句）
-                  </span>
-                </div>
-                <div className="text-[11px] text-brand-blue font-mono">
-                  ● 支持点击左侧气泡定位
+              <div className="px-4 py-2 bg-canvas border-b border-border-subtle flex flex-wrap gap-1 items-center justify-between text-xs shrink-0">
+                <div className="flex items-center gap-1 bg-subtle p-0.5 rounded-lg border border-border-subtle">
+                  <button
+                    type="button"
+                    data-testid="summary-page-btn-tab-right-transcripts"
+                    onClick={() => setRightPanelTab('transcripts')}
+                    className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                      rightPanelTab === 'transcripts'
+                        ? 'bg-canvas text-brand-blue font-semibold shadow-xs'
+                        : 'text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    🎙️ 录音与逐字稿 ({transcripts.length})
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="summary-page-btn-tab-right-copilot"
+                    onClick={() => setRightPanelTab('copilot')}
+                    className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1.5 ${
+                      rightPanelTab === 'copilot'
+                        ? 'bg-canvas text-brand-blue font-semibold shadow-xs'
+                        : 'text-text-secondary hover:text-text-primary'
+                    }`}
+                  >
+                    <span>🤖</span>
+                    <span>会后 Copilot 助手</span>
+                    {meeting.chatHistory && meeting.chatHistory.length > 0 && (
+                      <span className="w-1.5 h-1.5 rounded-full bg-brand-blue" />
+                    )}
+                  </button>
                 </div>
               </div>
 
-              {/* 逐字稿滚动列表 */}
-              <div
-                ref={transcriptsContainerRef}
-                data-testid="summary-page-list-transcripts"
-                className="flex-1 overflow-y-auto p-4 space-y-3"
-              >
-                {transcripts.length === 0 ? (
-                  <div className="text-center py-12 text-xs text-text-tertiary">
-                    本场会议暂无逐字稿记录
-                  </div>
-                ) : (
-                  transcripts.map((t) => {
-                    const isHighlighted = t.id === currentHighlightId;
-                    return (
-                      <div
-                        key={t.id}
-                        id={`summary-seg-${t.id}`}
-                        data-testid={`summary-page-row-transcript-${t.id}`}
-                        className={`p-3 rounded-xl border transition-all space-y-1 ${
-                          isHighlighted
-                            ? 'bg-brand-blue/10 border-brand-blue ring-2 ring-brand-blue/40 shadow-sm'
-                            : 'bg-canvas border-border-subtle hover:border-border-strong'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between text-xs">
-                          <span
-                            data-testid={`summary-page-btn-speaker-${t.id}`}
-                            onClick={() => {
-                              setEditingSpeaker(t.speakerId || t.speaker);
-                              setNewSpeakerName(t.speaker);
-                            }}
-                            className="font-semibold text-text-primary hover:text-brand-blue cursor-pointer transition-colors"
-                            title="点击重命名发言人"
-                          >
-                            👤 {t.speaker}
-                          </span>
-                          <button type="button" data-testid={`summary-page-transcript-btn-seek-${t.id}`} onClick={() => handleSeekSegment(t.id)} className="font-mono text-[10px] text-brand-blue tabular-nums" aria-label={`定位 ${t.timestamp}`}>
-                            {t.timestamp}
-                          </button>
-                        </div>
-                        <p className="text-xs text-text-secondary leading-relaxed">{t.text}</p>
+              {rightPanelTab === 'transcripts' ? (
+                /* 逐字稿滚动列表 + 原声播放器 */
+                <div className="flex-1 overflow-hidden flex flex-col">
+                  <div
+                    ref={transcriptsContainerRef}
+                    data-testid="summary-page-list-transcripts"
+                    className="flex-1 overflow-y-auto p-4 space-y-3"
+                  >
+                    {transcripts.length === 0 ? (
+                      <div className="text-center py-12 text-xs text-text-tertiary">
+                        本场会议暂无逐字稿记录
                       </div>
-                    );
-                  })
-                )}
-              </div>
+                    ) : (
+                      transcripts.map((t) => {
+                        const isHighlighted = t.id === currentHighlightId;
+                        return (
+                          <div
+                            key={t.id}
+                            id={`summary-seg-${t.id}`}
+                            data-testid={`summary-page-row-transcript-${t.id}`}
+                            className={`p-3 rounded-xl border transition-all space-y-1.5 ${
+                              isHighlighted
+                                ? 'bg-brand-blue/10 border-brand-blue ring-2 ring-brand-blue/40 shadow-sm'
+                                : 'bg-canvas border-border-subtle hover:border-border-strong'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between text-xs">
+                              <span
+                                data-testid={`summary-page-btn-speaker-${t.id}`}
+                                onClick={() => {
+                                  setEditingSpeaker(t.speakerId || t.speaker);
+                                  setNewSpeakerName(t.speaker);
+                                }}
+                                className="font-semibold text-text-primary hover:text-brand-blue cursor-pointer transition-colors"
+                                title="点击重命名发言人"
+                              >
+                                👤 {t.speaker}
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  data-testid={`summary-page-transcript-btn-seek-${t.id}`}
+                                  onClick={() => handleSeekSegment(t.id)}
+                                  className="font-mono text-[10px] text-brand-blue tabular-nums"
+                                  aria-label={`定位 ${t.timestamp}`}
+                                >
+                                  {t.timestamp}
+                                </button>
+                                <button
+                                  type="button"
+                                  data-testid={`summary-page-btn-edit-transcript-row-${t.id}`}
+                                  onClick={() => handleStartEditTranscript(t.id, t.text)}
+                                  className="text-text-tertiary hover:text-brand-blue text-[11px] p-0.5"
+                                  title="校正逐字稿文字"
+                                >
+                                  ✏️
+                                </button>
+                              </div>
+                            </div>
+                            {editingTranscriptId === t.id ? (
+                              <div className="flex items-center gap-1.5 pt-1">
+                                <input
+                                  type="text"
+                                  data-testid={`summary-page-input-edit-transcript-row-${t.id}`}
+                                  value={transcriptDraft}
+                                  onChange={(e) => setTranscriptDraft(e.target.value)}
+                                  className="flex-1 px-2 py-1 text-xs bg-subtle border border-brand-blue rounded text-text-primary"
+                                />
+                                <button
+                                  type="button"
+                                  data-testid={`summary-page-btn-save-transcript-row-${t.id}`}
+                                  onClick={() => handleSaveEditTranscript(t.id)}
+                                  className="px-2 py-0.5 rounded bg-brand-blue text-white text-[11px] font-medium"
+                                >
+                                  保存
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingTranscriptId(null)}
+                                  className="px-2 py-0.5 rounded bg-subtle text-text-secondary text-[11px]"
+                                >
+                                  取消
+                                </button>
+                              </div>
+                            ) : (
+                              <p
+                                data-testid={`summary-page-text-transcript-${t.id}`}
+                                onClick={() => handleSeekSegment(t.id)}
+                                className="text-xs text-text-secondary leading-relaxed cursor-pointer hover:text-brand-blue transition-colors"
+                                title="点击直接定位至该句录音并播放"
+                              >
+                                {t.text}
+                              </p>
+                            )}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
 
-              <MeetingAudioPlayer ref={playerRef} meetingId={meeting.id} recording={meeting.recording} token={currentUser?.token} warning={meeting.recordingWarning} seekTo={seekRequest}
-                onTime={seconds => setPlayingSegmentId(playingSegment(transcripts, seconds))}
-                onDeleteRecording={() => { if (meeting.recording) void cleanupRecordings({ targetIds: [meeting.recording.id] }); }} />
+                  <MeetingAudioPlayer
+                    ref={playerRef}
+                    meetingId={meeting.id}
+                    recording={meeting.recording}
+                    token={currentUser?.token}
+                    warning={meeting.recordingWarning}
+                    seekTo={seekRequest}
+                    onTime={(seconds) => setPlayingSegmentId(playingSegment(transcripts, seconds))}
+                    onDeleteRecording={() => {
+                      if (meeting.recording) void cleanupRecordings({ targetIds: [meeting.recording.id] });
+                    }}
+                  />
+                </div>
+              ) : (
+                /* 会后 Copilot 智能问答与修订工作台 */
+                <div
+                  data-testid="summary-page-copilot-container"
+                  className="flex-1 overflow-hidden flex flex-col bg-canvas"
+                >
+                  {/* Copilot 顶部说明与快捷提问胶囊 */}
+                  <div className="p-3 bg-subtle/50 border-b border-border-subtle space-y-2 shrink-0">
+                    <div className="text-[11px] text-text-secondary flex items-center gap-1.5">
+                      <span>💡</span>
+                      <span>基于本场全量逐字稿与纪要深度问答，或指示 AI 修改报告</span>
+                    </div>
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { label: '🎯 一句话核心总结', prompt: '请用一句话精练概括本场会议的核心目的与最终结论。' },
+                        { label: '☑️ 汇总我的待办', prompt: '请列出本场会议中分配给全员的所有行动待办与责任人。' },
+                        { label: '⚠️ 潜在风险分歧', prompt: '本场讨论中参会人提出了哪些争议、分歧或潜在技术风险？' },
+                        { label: '📝 生成 100 字汇报', prompt: '请将本场会议提炼为适合发送给主管的 100 字通报邮件草稿。' },
+                      ].map((item, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          data-testid={`summary-page-copilot-quick-prompt-${idx}`}
+                          disabled={isCopilotLoading}
+                          onClick={() => handleSendCopilotMessage(item.prompt)}
+                          className="px-2 py-1 rounded bg-canvas border border-border-subtle hover:border-brand-blue text-[10px] text-text-secondary hover:text-brand-blue transition-colors disabled:opacity-50"
+                        >
+                          {item.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* 消息历史滚动区 */}
+                  <div
+                    data-testid="summary-page-copilot-messages-list"
+                    className="flex-1 overflow-y-auto p-4 space-y-3.5"
+                  >
+                    {(!meeting.chatHistory || meeting.chatHistory.length === 0) && (
+                      <div
+                        data-testid="summary-page-copilot-empty-hint"
+                        className="text-center py-12 text-xs text-text-tertiary space-y-2"
+                      >
+                        <span className="text-2xl">🤖</span>
+                        <p>还没有与会后 Copilot 的对话记录</p>
+                        <p className="text-[11px]">您可以直接在下方输入框提问，或点击上方快捷按钮</p>
+                      </div>
+                    )}
+
+                    {meeting.chatHistory?.map((msg, idx) => {
+                      const isUser = msg.sender === 'user';
+                      return (
+                        <div
+                          key={msg.id || idx}
+                          data-testid={
+                            isUser
+                              ? `summary-page-copilot-msg-user-${idx}`
+                              : `summary-page-copilot-msg-ai-${idx}`
+                          }
+                          className={`flex flex-col ${isUser ? 'items-end' : 'items-start'} space-y-1.5`}
+                        >
+                          <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary font-mono">
+                            <span>{isUser ? '我' : '听序 Copilot'}</span>
+                            <span>{msg.timestamp}</span>
+                          </div>
+
+                          <div
+                            className={`p-3 rounded-xl text-xs leading-relaxed max-w-[90%] shadow-xs ${
+                              isUser
+                                ? 'bg-brand-blue text-white rounded-tr-none'
+                                : 'bg-subtle text-text-primary border border-border-subtle rounded-tl-none space-y-2'
+                            }`}
+                          >
+                            <p className="whitespace-pre-wrap">{msg.content}</p>
+
+                            {/* 证据切片引证胶囊 (Citations) */}
+                            {!isUser && msg.citations && msg.citations.length > 0 && (
+                              <div className="pt-1 border-t border-border-subtle/50 space-y-1">
+                                <span className="text-[10px] text-text-tertiary font-medium">依据发言切片：</span>
+                                <div className="flex flex-wrap gap-1">
+                                  {msg.citations.map((c, cIdx) => (
+                                    <button
+                                      key={cIdx}
+                                      type="button"
+                                      data-testid={`summary-page-copilot-citation-${idx}-${cIdx}`}
+                                      onClick={() => handleSeekSegment(c.segmentId, c.timestamp)}
+                                      className="px-1.5 py-0.5 rounded bg-canvas border border-border-subtle text-[10px] text-brand-blue hover:underline font-mono flex items-center gap-0.5"
+                                      title={c.quote || '点击在左侧定位'}
+                                    >
+                                      <span>⏱ {c.timestamp || c.segmentId}</span>
+                                      <span>⤤</span>
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* 修订提案卡片 (Proposals) */}
+                            {!isUser && msg.proposals && msg.proposals.length > 0 && (
+                              <div className="pt-2 border-t border-border-subtle/60 space-y-2">
+                                <div className="text-[11px] font-bold text-brand-blue flex items-center gap-1">
+                                  <span>📝</span>
+                                  <span>纪要智能修订提案 ({msg.proposals.length})</span>
+                                </div>
+
+                                {msg.proposals.map((prop) => (
+                                  <div
+                                    key={prop.id}
+                                    data-testid={`summary-page-copilot-proposal-card-${prop.id}`}
+                                    className="p-2.5 rounded-lg bg-canvas border border-brand-blue/30 space-y-1.5 text-xs text-text-primary"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <span className="font-semibold text-brand-blue text-[11px]">
+                                        【
+                                        {prop.targetSection === 'overview'
+                                          ? '全局综述'
+                                          : prop.targetSection === 'actions'
+                                          ? '行动待办'
+                                          : '关键决策'}
+                                        ·
+                                        {prop.action === 'replace'
+                                          ? '修订替换'
+                                          : prop.action === 'add'
+                                          ? '新增'
+                                          : '移除'}
+                                        】
+                                      </span>
+                                      {prop.applied ? (
+                                        <span
+                                          data-testid={`summary-page-copilot-badge-applied-${prop.id}`}
+                                          className="text-[10px] font-semibold text-status-success bg-status-success-bg px-1.5 py-0.5 rounded"
+                                        >
+                                          ✓ 已采纳并同步
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
+                                          data-testid={`summary-page-copilot-btn-apply-proposal-${prop.id}`}
+                                          onClick={() => handleApplyProposal(prop)}
+                                          className="px-2 py-0.5 rounded bg-brand-blue text-white text-[10px] font-semibold hover:bg-brand-blue-hover transition-colors shadow-xs"
+                                        >
+                                          ✓ 采纳并更新报告
+                                        </button>
+                                      )}
+                                    </div>
+
+                                    {prop.originalText && (
+                                      <div className="text-[11px] text-text-tertiary line-through leading-snug">
+                                        原内容：{prop.originalText}
+                                      </div>
+                                    )}
+
+                                    <div className="text-[11px] font-medium text-text-primary leading-snug">
+                                      新提议：{prop.proposedText}
+                                    </div>
+
+                                    {prop.reason && (
+                                      <div className="text-[10px] text-text-secondary">
+                                        原因：{prop.reason}
+                                      </div>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {isCopilotLoading && (
+                      <div className="flex items-center gap-2 text-xs text-text-tertiary p-2">
+                        <span className="animate-spin">⏳</span>
+                        <span>听序 Copilot 正在查阅逐字稿与纪要生成回答...</span>
+                      </div>
+                    )}
+                    <div ref={copilotMessagesEndRef} />
+                  </div>
+
+                  {/* 底部提问与指令输入表单 */}
+                  <form
+                    data-testid="summary-page-copilot-form-ask"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendCopilotMessage();
+                    }}
+                    className="p-3 border-t border-border-subtle bg-subtle flex items-center gap-2 shrink-0"
+                  >
+                    <input
+                      type="text"
+                      data-testid="summary-page-copilot-input-ask"
+                      value={copilotInput}
+                      disabled={isCopilotLoading}
+                      onChange={(e) => setCopilotInput(e.target.value)}
+                      placeholder={
+                        isCopilotLoading
+                          ? '正在分析并生成回答...'
+                          : '发问（如：张总反对的原因是什么？）或指示（如：把第2条决策改成...）'
+                      }
+                      className="flex-1 px-3 py-2 text-xs bg-canvas border border-border-subtle rounded-md focus:outline-none focus:border-brand-blue text-text-primary placeholder:text-text-tertiary disabled:opacity-60"
+                    />
+                    <button
+                      type="submit"
+                      data-testid="summary-page-copilot-btn-send"
+                      disabled={isCopilotLoading || !copilotInput.trim()}
+                      className="px-3.5 py-2 rounded-md bg-brand-blue text-white text-xs font-semibold hover:bg-brand-blue-hover disabled:opacity-40 transition-colors shrink-0 shadow-xs"
+                    >
+                      发送
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           </div>
         )}

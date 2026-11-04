@@ -53,26 +53,52 @@ export function buildMeetingChatPrompt(req: MeetingChatRequest): {
   userPrompt: string;
 } {
   const systemPrompt = `你是一款专为中国大陆个人办公打造的极简无感 AI 会议助手「听序（Tingxu）」。
-你的职责是依据用户当前会议的本地真实逐字稿，回答用户的提问。
+你的职责是依据用户当前会议的本地真实逐字稿与现有纪要，回答用户的问题，或协助用户修改/纠错会议纪要。
 
 【极其严苛防臆造铁律】：
-1. 只能完全依据下方提供的【现场逐字稿切片】进行回答，严禁凭空臆造未提及的内容；
+1. 只能完全依据下方提供的【现场逐字稿切片】与【当前会议纪要】进行回答，严禁凭空臆造未提及的内容；
 2. 若逐字稿中未明确讨论该问题，必须如实回答：“根据当前讨论，会议中暂未提及该事项”；
-3. 输出格式必须为标准 JSON 格式，包含 answer 和 evidenceRefs；
-4. evidenceRefs 列表中的每一项必须真实对应给定的 segmentId 和精准 quote，严禁伪造 segmentId。
+3. 输出格式必须为标准 JSON 格式，包含 answer、evidenceRefs 以及可选的 proposals；
+4. evidenceRefs 列表中的每一项必须真实对应给定的 segmentId 和精准 quote，严禁伪造 segmentId；
+5. 【智能修订提案准则】：如果用户提出了修改、纠偏或调整纪要内容的要求（例如“把第二条决策改成...”、“待办负责人换成李工”、“综述修改一下”）：
+   - 在 answer 中简明礼貌确认拟修改的内容；
+   - 在 proposals 数组中给出精准的结构化补丁，供用户一键采纳（targetSection 为 overview/decisions/actions/risks/facts，action 为 replace/add/delete，给出 proposedText 与理由）。
+
 输出结构示例：
 {
   "answer": "结论陈述...",
   "evidenceRefs": [
     { "segmentId": "seg_xx", "quote": "对应发言原文" }
+  ],
+  "proposals": [
+    {
+      "targetSection": "decisions",
+      "action": "replace",
+      "itemIndex": 0,
+      "proposedText": "修改后的完整决策内容",
+      "reason": "纠正此前记录的方案选型"
+    }
   ]
 }`;
+
+  let contextStr = '';
+  if (req.currentSummary) {
+    contextStr += `【当前会议纪要】：\n`;
+    if (req.currentSummary.overview) contextStr += `- 全局综述：${req.currentSummary.overview}\n`;
+    if (req.currentSummary.decisions?.length) {
+      contextStr += `- 决策列表：\n${req.currentSummary.decisions.map((d, i) => `  ${i + 1}. [${d.title}] ${d.content}`).join('\n')}\n`;
+    }
+    if (req.currentSummary.actions?.length) {
+      contextStr += `- 待办行动：\n${req.currentSummary.actions.map((a, i) => `  ${i + 1}. ${a.title} (负责人: ${a.assignee || '无'}, 期限: ${a.dueDate || '无'})`).join('\n')}\n`;
+    }
+    contextStr += '\n';
+  }
 
   const transcriptContext = req.localStableTranscript
     .map((seg) => `[${seg.segmentId}] ${seg.speaker}: ${seg.text}`)
     .join('\n');
 
-  const userPrompt = `【现场逐字稿切片 (版本 ${req.asOfTextVersion})】：\n${transcriptContext}\n\n【用户提问】：\n${req.question}\n\n请依据上方逐字稿如实回答：`;
+  const userPrompt = `${contextStr}【现场逐字稿切片 (版本 ${req.asOfTextVersion})】：\n${transcriptContext}\n\n【用户提问或修订指示】：\n${req.question}\n\n请依据上方逐字稿与纪要如实回答：`;
 
   return { systemPrompt, userPrompt };
 }

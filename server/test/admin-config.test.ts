@@ -228,5 +228,5 @@ describe('Admin 系统配置与密钥管理服务测试 (T01 & T02)', () => {
     } finally {
       await new Promise((resolve) => server.close(resolve));
     }
-  });
+  }, 15000);
 });

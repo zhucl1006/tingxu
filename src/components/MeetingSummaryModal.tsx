@@ -241,7 +241,7 @@ export const MeetingSummaryModal: React.FC = () => {
             }`}
           >
             <span>🧠</span>
-            <span>讯飞听见式思维导图</span>
+            <span>会议思维导图</span>
           </button>
           <button
             type="button"

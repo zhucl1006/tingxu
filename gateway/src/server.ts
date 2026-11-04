@@ -169,6 +169,7 @@ export function createGatewayServer(options?: GatewayServerOptions) {
             speaker: s.speaker || '发言人',
             text: s.text || '',
           })),
+          currentSummary: rawPayload.currentSummary,
         };
 
         const result = await router.chat(payload);
@@ -194,6 +195,7 @@ export function createGatewayServer(options?: GatewayServerOptions) {
               answer: result.data.answer,
               evidenceRefs: result.data.evidenceRefs,
               citations: result.data.evidenceRefs || [],
+              proposals: result.data.proposals || [],
             },
             meta: {
               modelVersion: result.modelVersion,

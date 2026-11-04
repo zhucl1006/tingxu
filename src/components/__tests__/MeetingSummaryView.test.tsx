@@ -162,8 +162,13 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     expect(useMeetingStore.getState().activeSummaryMeeting).toBeNull();
   });
 
-  it('应该支持讯飞听见同款卡片看板与层级大纲视图切换 (Cards vs Outline)', () => {
+  it('应该支持重点卡片看板与层级大纲视图切换，且标题文案绝不体现竞品名称', () => {
     render(<MeetingSummaryView />);
+
+    // 文案去竞品化：绝不包含“讯飞”字样
+    const summaryTab = screen.getByTestId('summary-page-tab-summary');
+    expect(summaryTab.textContent).not.toContain('讯飞');
+    expect(summaryTab.textContent).toContain('结构化纪要与提炼');
 
     // 默认展示卡片看板
     expect(screen.getByTestId('summary-page-btn-mode-cards')).toBeInTheDocument();
@@ -177,6 +182,25 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     // 切回卡片模式
     fireEvent.click(screen.getByTestId('summary-page-btn-mode-cards'));
     expect(screen.getByTestId('summary-page-topic-cards-container')).toBeInTheDocument();
+  });
+
+  it('应该展示会议产出指标栏（决策数、待办数、风险数），并支持待办事项完成状态勾选与分节局部复制 (TDD)', () => {
+    render(<MeetingSummaryView />);
+
+    // 会议产出指标横幅
+    expect(screen.getByTestId('summary-page-metrics-bar')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-metric-decisions')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-metric-actions')).toBeInTheDocument();
+
+    // 分节局部复制按钮
+    expect(screen.getByTestId('summary-page-btn-copy-section-decisions')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-btn-copy-section-actions')).toBeInTheDocument();
+
+    // 待办事项勾选功能
+    const checkbox = screen.getByTestId('summary-page-checkbox-action-0');
+    expect(checkbox).toBeInTheDocument();
+    fireEvent.click(checkbox);
+    expect(screen.getByTestId('summary-page-item-action-0')).toHaveClass('opacity-60');
   });
 
   it('应该支持左右双栏工作台联动：点击时码气泡触发右侧逐字稿高亮与播放器控制器', () => {
@@ -199,7 +223,7 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     expect(targetTranscriptRow).toHaveClass('ring-2');
   });
 
-  it('应该渲染分步行动流时间线（Step 1/2/3）与讯飞同款加粗高亮键名标签', () => {
+  it('应该渲染分步行动流时间线（Step 1/2/3）与加粗高亮键名标签', () => {
     render(<MeetingSummaryView />);
 
     // 分步执行行动流
@@ -219,6 +243,10 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     await waitFor(() => expect(audio).toHaveAttribute('src'));
     Object.defineProperty(audio, 'duration', { configurable: true, value: 100 }); fireEvent.loadedMetadata(audio);
     fireEvent.click(screen.getByTestId('summary-page-transcript-btn-seek-seg_1')); expect(audio.currentTime).toBe(15);
+    // 测试点击逐字稿文字正文直接触发录音 seek 定位 (TDD)
+    audio.currentTime = 0;
+    fireEvent.click(screen.getByTestId('summary-page-text-transcript-seg_1'));
+    expect(audio.currentTime).toBe(15);
     const scroll = vi.spyOn(Element.prototype, 'scrollIntoView'); scroll.mockClear();
     audio.currentTime = 81; fireEvent.timeUpdate(audio);
     expect(screen.getByTestId('summary-page-row-transcript-seg_2')).toHaveClass('bg-brand-blue/10'); expect(scroll).not.toHaveBeenCalled();

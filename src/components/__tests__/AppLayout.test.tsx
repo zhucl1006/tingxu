@@ -130,4 +130,66 @@ describe('AppLayout 整体桌面端容器与导航测试', () => {
     fireEvent.click(screen.getByTestId('app-sidebar-btn-nav-home'));
     expect(screen.getByTestId('home-page-container')).toBeInTheDocument();
   });
+
+  it('空闲且检测到第三方会议软件启动时，顶部渲染无感提示横幅并支持一键开启或暂不记录', async () => {
+    useMeetingStore.getState().loginUser({
+      userId: 'test_u_banner',
+      token: 'jwt_valid_banner',
+      phone: '13800000002',
+    });
+    useMeetingStore.setState({
+      status: 'IDLE',
+      detectedMeetingApp: {
+        appName: 'Microsoft Teams',
+        appId: 'teams',
+        processName: 'Teams',
+      },
+    });
+
+    render(<AppLayout />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-layout-banner-detected-meeting')).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId('app-layout-banner-detected-meeting')).toHaveTextContent('Microsoft Teams');
+
+    const startBtn = screen.getByTestId('app-layout-banner-btn-start-detected-meeting');
+    expect(startBtn).toBeInTheDocument();
+
+    // 点击立即开启会议
+    fireEvent.click(startBtn);
+
+    expect(useMeetingStore.getState().status).toBe('RECORDING');
+    expect(useMeetingStore.getState().title).toBe('Microsoft Teams 讨论');
+    expect(useMeetingStore.getState().currentRoute).toBe('record');
+  });
+
+  it('点击横幅中的暂不记录按钮后横幅消失', async () => {
+    useMeetingStore.getState().loginUser({
+      userId: 'test_u_banner_2',
+      token: 'jwt_valid_banner_2',
+      phone: '13800000003',
+    });
+    useMeetingStore.setState({
+      status: 'IDLE',
+      detectedMeetingApp: {
+        appName: '腾讯会议',
+        appId: 'wemeet',
+        processName: 'wemeetapp',
+      },
+    });
+
+    render(<AppLayout />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId('app-layout-banner-detected-meeting')).toBeInTheDocument();
+    });
+
+    const dismissBtn = screen.getByTestId('app-layout-banner-btn-dismiss-detected-meeting');
+    fireEvent.click(dismissBtn);
+
+    expect(useMeetingStore.getState().detectedMeetingApp).toBeNull();
+    expect(screen.queryByTestId('app-layout-banner-detected-meeting')).not.toBeInTheDocument();
+  });
 });

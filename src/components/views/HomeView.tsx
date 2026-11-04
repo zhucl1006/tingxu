@@ -11,6 +11,7 @@ export const HomeView: React.FC = () => {
     toggleTask,
     setActiveSummaryMeeting,
     deleteHistoryMeeting,
+    toggleFloatingPill,
   } = useMeetingStore();
   const [newTitle, setNewTitle] = useState('');
 
@@ -37,15 +38,28 @@ export const HomeView: React.FC = () => {
           </p>
         </div>
 
-        <button
-          type="button"
-          data-testid="home-page-btn-quick-start"
-          onClick={handleStartNewMeeting}
-          className="px-4 py-2 rounded-lg bg-brand-blue hover:bg-brand-blue-hover text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-all"
-        >
-          <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
-          <span>立即开启新会议</span>
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            data-testid="home-page-btn-switch-to-pill"
+            onClick={() => toggleFloatingPill(true)}
+            className="px-3.5 py-2 rounded-lg bg-panel hover:bg-hover border border-border-subtle text-text-secondary hover:text-brand-blue text-xs font-semibold flex items-center gap-1.5 shadow-xs transition-all"
+            title="将应用收起为桌面常驻微型悬浮药丸（置顶且可任意拖拽）"
+          >
+            <span>💊</span>
+            <span>桌面悬浮胶囊</span>
+          </button>
+
+          <button
+            type="button"
+            data-testid="home-page-btn-quick-start"
+            onClick={handleStartNewMeeting}
+            className="px-4 py-2 rounded-lg bg-brand-blue hover:bg-brand-blue-hover text-white text-xs font-semibold flex items-center gap-2 shadow-sm transition-all"
+          >
+            <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+            <span>立即开启新会议</span>
+          </button>
+        </div>
       </div>
 
       {/* 快捷发起卡片 */}

@@ -49,16 +49,33 @@ export interface TranscriptSegment {
   text: string;
 }
 
+export interface ChatProposal {
+  targetSection: 'overview' | 'decisions' | 'actions' | 'risks' | 'facts';
+  action: 'replace' | 'add' | 'delete';
+  itemIndex?: number;
+  originalText?: string;
+  proposedText: string;
+  reason?: string;
+}
+
 export interface MeetingChatRequest {
   meetingId: string;
   question: string;
   asOfTextVersion: number;
   localStableTranscript: TranscriptSegment[];
+  currentSummary?: {
+    overview?: string;
+    decisions?: Array<{ title: string; content: string }>;
+    actions?: Array<{ title: string; assignee?: string; dueDate?: string }>;
+    risks?: Array<{ title: string; content: string }>;
+    facts?: Array<{ title: string; content: string }>;
+  };
 }
 
 export interface ChatResponsePayload {
   answer: string;
   evidenceRefs: EvidenceRef[];
+  proposals?: ChatProposal[];
 }
 
 export interface MeetingSummaryRequest {

@@ -553,7 +553,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
           style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
           className="absolute left-1/2 top-1/2 inline-flex items-center justify-center gap-12 lg:gap-16 w-max"
         >
-          {/* SVG 贝塞尔曲线连线层 (讯飞同款平滑曲线) */}
+          {/* SVG 贝塞尔曲线连线层 (平滑曲线) */}
           <svg
             data-testid="meeting-mindmap-svg-curves"
             className="absolute inset-0 w-full h-full pointer-events-none -z-0 opacity-40 dark:opacity-60"

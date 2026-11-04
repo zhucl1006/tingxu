@@ -130,6 +130,26 @@ export interface RecordingReference {
   sampleRate: number;
 }
 
+export interface SummaryRevisionProposal {
+  id: string;
+  targetSection: 'overview' | 'decisions' | 'actions' | 'risks' | 'facts';
+  action: 'replace' | 'add' | 'delete';
+  itemIndex?: number;
+  originalText?: string;
+  proposedText: string;
+  reason?: string;
+  applied?: boolean;
+}
+
+export interface MeetingChatMessage {
+  id: string;
+  sender: 'user' | 'assistant';
+  content: string;
+  timestamp: string;
+  citations?: Array<{ segmentId: string; speaker?: string; timestamp?: string; quote?: string }>;
+  proposals?: SummaryRevisionProposal[];
+}
+
 export interface HistoryMeeting {
   recording?: RecordingReference;
   recordingWarning?: string;
@@ -145,6 +165,7 @@ export interface HistoryMeeting {
   structuredSummary?: MeetingStructuredSummary;
   insights?: InsightCard[];
   transcripts?: TranscriptSegment[];
+  chatHistory?: MeetingChatMessage[];
 }
 
 export interface StorageSettings {
@@ -154,6 +175,22 @@ export interface StorageSettings {
 
 export const DEFAULT_STORAGE_SETTINGS: StorageSettings = {
   autoCleanupDays: 0,
+};
+
+export interface DetectedMeetingApp {
+  appName: string;
+  appId: string;
+  processName: string;
+}
+
+export interface MeetingDetectionSettings {
+  enabled: boolean;          // 是否启用第三方会议软件启动检测，默认 true
+  floatingWidget: boolean;   // 桌面是否默认常驻快速悬浮图示，默认 true
+}
+
+export const DEFAULT_DETECTION_SETTINGS: MeetingDetectionSettings = {
+  enabled: true,
+  floatingWidget: true,
 };
 
 export type ThemeMode = 'system' | 'light' | 'dark';
@@ -179,6 +216,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: UiAppearanceSettings = {
 export type VoiceprintPresetMode = 'single' | 'balanced' | 'sensitive' | 'custom';
 
 export interface VoiceprintConfigSettings {
+  enabled: boolean; // 是否开启说话人区分，默认 false（单轨会议录音识别，不区分发言人）
   presetMode: VoiceprintPresetMode;
   similarityThreshold: number; // 聚类相似度阈值 (0.45 ~ 0.75，默认 0.58)
   continuityThreshold: number; // 发言人连续性惯性阻尼阈值 (0.40 ~ 0.65，默认 0.48)
@@ -186,6 +224,7 @@ export interface VoiceprintConfigSettings {
 }
 
 export const DEFAULT_VOICEPRINT_SETTINGS: VoiceprintConfigSettings = {
+  enabled: false,
   presetMode: 'balanced',
   similarityThreshold: 0.58,
   continuityThreshold: 0.48,
@@ -194,7 +233,7 @@ export const DEFAULT_VOICEPRINT_SETTINGS: VoiceprintConfigSettings = {
 
 export const VOICEPRINT_PRESET_CONFIGS: Record<
   Exclude<VoiceprintPresetMode, 'custom'>,
-  Omit<VoiceprintConfigSettings, 'presetMode'>
+  Omit<VoiceprintConfigSettings, 'presetMode' | 'enabled'>
 > = {
   single: {
     similarityThreshold: 0.52,
@@ -281,11 +320,50 @@ export interface MeetingState {
   cleanupRecordings: (options?: { olderThanDays?: number; targetIds?: string[] }) => Promise<{ freedBytes: number; deletedCount: number; deletedIds: string[] }>;
   runAutoCleanupIfNeeded: () => Promise<void>;
 
+  // 第三方会议感知与桌面悬浮挂件
+  detectedMeetingApp: DetectedMeetingApp | null;
+  meetingDetectionSettings: MeetingDetectionSettings;
+  dismissedMeetingAppUntil: Record<string, number>;
+  setDetectedMeetingApp: (app: DetectedMeetingApp | null) => void;
+  dismissDetectedMeetingApp: (appId: string) => void;
+  quickStartDetectedMeeting: (app: DetectedMeetingApp) => Promise<void>;
+  updateMeetingDetectionSettings: (settings: Partial<MeetingDetectionSettings>) => Promise<void>;
+
   // 声纹识别与说话人分离参数配置
   voiceprintSettings: VoiceprintConfigSettings;
   setVoiceprintPresetMode: (mode: VoiceprintPresetMode) => void;
   updateVoiceprintSettings: (settings: Partial<VoiceprintConfigSettings>) => void;
   resetVoiceprintSettings: () => void;
+  setMeetingSpeakerMode: (mode: 'single' | 'balanced' | 'sensitive') => void;
+
+  // 实时会议管道状态与声学控制 (020)
+  insightError: string | null;
+  setInsightError: (err: string | null) => void;
+  micStatus: 'idle' | 'recording' | 'denied' | 'error';
+  micError: string;
+  asrStatus: 'disconnected' | 'connecting' | 'connected' | 'error';
+  asrError: string;
+  rmsLevel: number;
+  interimText: string;
+  interimParts: { stable: string; unstable: string };
+  isExtractingInsights: boolean;
+  isSystemAudioActive: boolean;
+  selectedMicId: string;
+  auxDeviceId: string;
+  captureMode: 'speaker_meeting' | 'mic_only';
+  availableMics: Array<{ deviceId: string; label: string }>;
+  audioAcousticMode: 'high_fidelity' | 'speaker_aec';
+  setMicStatus: (status: 'idle' | 'recording' | 'denied' | 'error', error?: string) => void;
+  setAsrStatus: (status: 'disconnected' | 'connecting' | 'connected' | 'error', error?: string) => void;
+  setRmsLevel: (rms: number) => void;
+  setInterimText: (text: string, parts?: { stable: string; unstable: string }) => void;
+  setIsExtractingInsights: (extracting: boolean) => void;
+  setIsSystemAudioActive: (active: boolean) => void;
+  setSelectedMicId: (micId: string) => void;
+  setAuxDeviceId: (deviceId: string) => void;
+  setCaptureMode: (mode: 'speaker_meeting' | 'mic_only') => void;
+  setAvailableMics: (mics: Array<{ deviceId: string; label: string }>) => void;
+  setAudioAcousticMode: (mode: 'high_fidelity' | 'speaker_aec') => void;
 
   // 当前采集会话的排空回调，仅驻留内存，绝不持久化。
   asrSessionDrain: (() => Promise<'complete' | 'timeout' | 'error'>) | null;
@@ -310,7 +388,20 @@ export interface MeetingState {
   acceptInsightRevision: (id: string) => void;
   setHighlightedTranscriptId: (id: string | null) => void;
   setActiveWindow: (window: 'workbench' | 'floating-pill') => void;
+  toggleFloatingPill: (toFloating?: boolean) => void;
   deleteHistoryMeeting: (id: string) => Promise<void>;
   clearAllHistory: () => Promise<void>;
   resetMeeting: () => void;
+
+  // 会后 Copilot 问答与纪要就地修订 (018)
+  updateMeetingOverview: (meetingId: string, overview: string) => void;
+  updateMeetingDecision: (meetingId: string, index: number, patch: Partial<SummaryDecisionItem>) => void;
+  addMeetingDecision: (meetingId: string, decision: SummaryDecisionItem) => void;
+  deleteMeetingDecision: (meetingId: string, index: number) => void;
+  updateMeetingAction: (meetingId: string, index: number, patch: Partial<SummaryActionItem>) => void;
+  addMeetingAction: (meetingId: string, action: SummaryActionItem) => void;
+  deleteMeetingAction: (meetingId: string, index: number) => void;
+  updateMeetingTranscriptText: (meetingId: string, segmentId: string, newText: string) => void;
+  applySummaryProposal: (meetingId: string, proposal: SummaryRevisionProposal) => void;
+  addMeetingChatMessage: (meetingId: string, message: MeetingChatMessage) => void;
 }

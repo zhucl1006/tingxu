@@ -8,12 +8,24 @@ describe('useMeetingStore - 声纹识别与说话人分离参数配置 (TDD)', (
     useMeetingStore.getState().resetVoiceprintSettings();
   });
 
-  it('初始状态应具备默认平衡模式参数', () => {
+  it('初始状态应具备默认平衡模式参数，且默认不区分说话人（enabled 为 false）', () => {
     const { voiceprintSettings } = useMeetingStore.getState();
+    expect(voiceprintSettings.enabled).toBe(false);
     expect(voiceprintSettings.presetMode).toBe('balanced');
     expect(voiceprintSettings.similarityThreshold).toBe(0.58);
     expect(voiceprintSettings.continuityThreshold).toBe(0.48);
     expect(voiceprintSettings.minClusterDurationMs).toBe(1200);
+  });
+
+  it('支持开启区分说话人并持久化到本地存储', () => {
+    useMeetingStore.getState().updateVoiceprintSettings({ enabled: true });
+    const state = useMeetingStore.getState();
+    expect(state.voiceprintSettings.enabled).toBe(true);
+
+    const savedRaw = localStorage.getItem('tingxu_voiceprint_settings');
+    expect(savedRaw).toBeTruthy();
+    const saved = JSON.parse(savedRaw!);
+    expect(saved.enabled).toBe(true);
   });
 
   it('切换到单人专注模式应自动调整阈值并落盘持久化', () => {

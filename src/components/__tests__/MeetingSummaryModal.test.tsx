@@ -115,7 +115,7 @@ describe('MeetingSummaryModal - 会议纪要与四维结构化总结报告 (TDD)
     expect(createObjectURLMock).toHaveBeenCalled();
   });
 
-  it('支持切换至思维导图 Tab 并展示讯飞听见式会议图谱', () => {
+  it('支持切换至思维导图 Tab 并展示全景会议图谱', () => {
     useMeetingStore.getState().setActiveSummaryMeeting(mockMeeting);
     render(<MeetingSummaryModal />);
 

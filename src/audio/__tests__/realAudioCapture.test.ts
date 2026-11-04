@@ -615,4 +615,88 @@ describe('RealAudioCapture 真实麦克风音频采集器测试 (T10)', () => {
     expect(view2[1]).toBe(150);
     expect(view2[2]).toBe(32767); // 溢出软保护
   });
+
+  describe('Plan 019: 真实声学场景外放扬声器回声消除 (AEC) 与杂音抑制优化', () => {
+    it('应支持显式开启声学回声消除与降噪配置，并在 getUserMedia 约束中精准下发', async () => {
+      const mockTrack = { stop: vi.fn() };
+      const getUserMediaMock = vi.fn().mockResolvedValue({
+        getTracks: () => [mockTrack],
+        getAudioTracks: () => [mockTrack],
+      });
+      Object.defineProperty(global.navigator, 'mediaDevices', {
+        value: { getUserMedia: getUserMediaMock },
+        configurable: true,
+        writable: true,
+      });
+
+      const mockFilter = {
+        connect: vi.fn(),
+        disconnect: vi.fn(),
+        frequency: { value: 0 },
+        type: 'highpass',
+      };
+      class MockAudioContext {
+        public state = 'running';
+        public sampleRate = 48000;
+        public destination = {};
+        public createMediaStreamSource = vi.fn().mockReturnValue({ connect: vi.fn(), disconnect: vi.fn() });
+        public createBiquadFilter = vi.fn().mockReturnValue(mockFilter);
+        public createGain = vi.fn().mockReturnValue({
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+          gain: { value: 0, setValueAtTime: vi.fn() },
+        });
+        public createScriptProcessor = vi.fn().mockReturnValue({ connect: vi.fn(), disconnect: vi.fn(), onaudioprocess: null });
+        public resume = vi.fn().mockResolvedValue(undefined);
+        public close = vi.fn().mockResolvedValue(undefined);
+      }
+      (global as any).AudioContext = MockAudioContext;
+
+      // 显式配置 AEC, NS, AGC
+      const capture = new RealAudioCapture({
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      });
+
+      await capture.start();
+
+      expect(getUserMediaMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          audio: expect.objectContaining({
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          }),
+        })
+      );
+
+      // 验证是否创建了 80Hz 高通滤波消除桌面与风扇低频机械杂音
+      const ctxInstance = (capture as any).audioContext;
+      expect(ctxInstance.createBiquadFilter).toHaveBeenCalled();
+      expect(mockFilter.type).toBe('highpass');
+      expect(mockFilter.frequency.value).toBe(80);
+
+      await capture.stop();
+    });
+
+    it('floatTo16BitPCM 在超大爆音信号下平滑软饱和，防止硬截断产生的金属谐波刺耳杂音', () => {
+      // 输入包含超出 [-1.0, 1.0] 动态范围的爆破音，例如 1.5, -1.8
+      const input = new Float32Array([0.0, 0.5, 1.0, 1.5, -1.8]);
+      const pcmBuffer = floatTo16BitPCM(input);
+      const view = new Int16Array(pcmBuffer);
+
+      // 0 与 0.5 在线性范围内
+      expect(view[0]).toBe(0);
+      expect(Math.abs(view[1] - 16383)).toBeLessThan(500);
+
+      // 1.5 爆破音软饱和后应接近但绝对不超过 32767
+      expect(view[3]).toBeLessThanOrEqual(32767);
+      expect(view[3]).toBeGreaterThan(30000);
+
+      // -1.8 爆破音软饱和后应接近但绝对不低于 -32768
+      expect(view[4]).toBeGreaterThanOrEqual(-32768);
+      expect(view[4]).toBeLessThan(-30000);
+    });
+  });
 });

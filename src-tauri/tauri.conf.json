@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "trayIcon": {
       "iconPath": "icons/tray-icon.png",
       "tooltip": "听序 — AI 会议助手"
@@ -23,19 +24,8 @@
         "minWidth": 900,
         "minHeight": 600,
         "center": true,
-        "decorations": true,
-        "transparent": false
-      },
-      {
-        "label": "floating-pill",
-        "title": "听序 悬浮条",
-        "width": 300,
-        "height": 42,
-        "resizable": false,
         "decorations": false,
-        "alwaysOnTop": true,
-        "transparent": true,
-        "visible": false
+        "transparent": true
       }
     ],
     "security": {

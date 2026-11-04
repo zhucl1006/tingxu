@@ -46,6 +46,7 @@ pub fn read_range(path: &Path, range: Option<&str>) -> Result<MediaRange, Tingxu
     if start >= total || requested_end < start {
         return Err(invalid());
     }
+    // 每次读取有界：即使客户端请求整场录音，也不将整个 WAV 载入内存（不超过 256KB 契约边界）
     let end = requested_end
         .min(total - 1)
         .min(start.saturating_add(262143));

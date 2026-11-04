@@ -15,36 +15,29 @@ pub struct AppError {
     pub message: String,
 }
 
-// 切换窗口模式：兼具独立多 Webview 窗口切换与单窗口原生动态缩放（对齐 AGENTS.md 5.1 领域错误规范）
+// 切换窗口模式：单窗口无缝形态变换（Single Window Morphing），保证音频流与内存状态永不断流
 #[tauri::command]
 fn toggle_floating_mode(app: AppHandle, to_floating: bool) -> Result<(), AppError> {
-    // 优先：如果配置了独立的 floating-pill 窗口
-    if let (Some(main_window), Some(pill_window)) = (
-        app.get_webview_window("main"),
-        app.get_webview_window("floating-pill"),
-    ) {
-        if to_floating {
-            let _ = main_window.hide();
-            let _ = pill_window.show();
-            let _ = pill_window.set_focus();
-        } else {
-            let _ = pill_window.hide();
-            let _ = main_window.show();
-            let _ = main_window.set_focus();
-        }
-        return Ok(());
-    }
-
-    // 备用：单窗口动态变形模式
     if let Some(main_window) = app.get_webview_window("main") {
         if to_floating {
-            let _ = main_window.set_size(LogicalSize::new(300.0, 42.0));
+            // 切换为桌面极简置顶悬浮胶囊：先解除 900x600 最小约束，再调整尺寸与原生置顶，并禁用系统矩形阴影防止四角透黑/透白
+            let _ = main_window.set_min_size(None::<LogicalSize<f64>>);
+            let _ = main_window.set_resizable(false);
             let _ = main_window.set_decorations(false);
             let _ = main_window.set_always_on_top(true);
+            let _ = main_window.set_shadow(false);
+            let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
+            let _ = main_window.set_size(LogicalSize::new(360.0, 44.0));
         } else {
-            let _ = main_window.set_size(LogicalSize::new(1200.0, 800.0));
-            let _ = main_window.set_decorations(true);
+            // 恢复主工作台：恢复最小约束、可调节尺寸、保持无边框沉浸外观（由前端自定义窗口控制接管）、居中展现与原生窗口阴影
+            let _ = main_window.set_min_size(Some(LogicalSize::new(900.0, 600.0)));
+            let _ = main_window.set_resizable(true);
+            let _ = main_window.set_decorations(false);
             let _ = main_window.set_always_on_top(false);
+            let _ = main_window.set_shadow(true);
+            let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
+            let _ = main_window.set_size(LogicalSize::new(1200.0, 800.0));
+            let _ = main_window.center();
         }
         return Ok(());
     }
@@ -53,6 +46,51 @@ fn toggle_floating_mode(app: AppHandle, to_floating: bool) -> Result<(), AppErro
         code: "WINDOW_NOT_FOUND".into(),
         message: "未找到目标窗口实例".into(),
     })
+}
+
+// 原生窗口拖拽命令：由 Rust 端直接调用 AppKit/Cocoa performWindowDragWithEvent，规避前端插件权限限制
+#[tauri::command]
+fn drag_window(app: AppHandle) -> Result<(), AppError> {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.start_dragging();
+    }
+    Ok(())
+}
+
+// 原生窗口最小化命令
+#[tauri::command]
+fn minimize_window(app: AppHandle) -> Result<(), AppError> {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.minimize();
+    }
+    Ok(())
+}
+
+// 原生窗口关闭或隐藏命令
+#[tauri::command]
+fn close_window(app: AppHandle) -> Result<(), AppError> {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.close();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_floating_pill_visible(app: AppHandle, visible: bool) -> Result<(), AppError> {
+    if let Some(pill_window) = app.get_webview_window("floating-pill") {
+        if visible {
+            let _ = pill_window.show();
+        } else {
+            let _ = pill_window.hide();
+        }
+        return Ok(());
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn check_running_meeting_apps() -> Result<Vec<tingxu_desktop::media::meeting_detector::DetectedMeetingApp>, AppError> {
+    Ok(tingxu_desktop::media::meeting_detector::scan_running_meeting_apps())
 }
 
 // 本地 192 维声纹嵌入提取命令（音频流不出本机，严格遵守 Local-First 隐私铁律）
@@ -163,8 +201,37 @@ fn main() {
                 }
             }
         })
+        .setup(|app| {
+            if let Some(main_window) = app.get_webview_window("main") {
+                // 确保 Webview 与 Window 底层物理完全透明，杜绝 macOS 下圆角边缘露出直角白底
+                let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
+            }
+
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+                let mut last_detected_app_id: Option<String> = None;
+                loop {
+                    interval.tick().await;
+                    let active_app = tingxu_desktop::media::meeting_detector::detect_active_meeting_app();
+                    let current_id = active_app.as_ref().map(|a| a.app_id.clone());
+
+                    // 状态产生变迁（0 -> 1 入会，或 1 -> 0 散会）时发射事件，杜绝高频无效唤醒
+                    if current_id != last_detected_app_id {
+                        last_detected_app_id = current_id;
+                        let _ = handle.emit("meeting_app_detected", active_app);
+                    }
+                }
+            });
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             toggle_floating_mode,
+            drag_window,
+            minimize_window,
+            close_window,
+            set_floating_pill_visible,
+            check_running_meeting_apps,
             speaker_embed,
             start_system_audio_capture,
             stop_system_audio_capture,

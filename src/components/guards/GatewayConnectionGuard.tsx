@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react';
 import { RefreshCw, Server, ShieldAlert, ArrowRight } from 'lucide-react';
 import { useMeetingStore } from '../../store/useMeetingStore';
+import { getTingxuClient } from '../../api/tingxuClient';
 
 interface GatewayConnectionGuardProps {
   children: ReactNode;
@@ -19,16 +20,12 @@ export function GatewayConnectionGuard({ children }: GatewayConnectionGuardProps
     setLastError(null);
     const urlToCheck = targetUrl || gatewayUrl || 'http://localhost:3201';
     try {
-      const res = await fetch(`${urlToCheck}/gateway/v1/health`, {
-        method: 'GET',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      if (res.ok) {
+      const result = await getTingxuClient().health.checkGateway(urlToCheck);
+      if (result.ok) {
         setIsGatewayHealthy(true);
       } else {
         setIsGatewayHealthy(false);
-        setLastError(`网关响应异常 HTTP ${res.status}`);
+        setLastError('网关响应异常或连接不可达');
       }
     } catch (err) {
       setIsGatewayHealthy(false);

@@ -19,164 +19,72 @@ import {
   VOICEPRINT_PRESET_CONFIGS,
   StorageSettings,
   DEFAULT_STORAGE_SETTINGS,
+  DetectedMeetingApp,
+  MeetingDetectionSettings,
+  DEFAULT_DETECTION_SETTINGS,
+  SummaryDecisionItem,
+  SummaryActionItem,
+  SummaryRevisionProposal,
+  MeetingChatMessage,
 } from '../types/meeting';
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
-import { l2Normalize } from '../audio/speakerEmbeddingEngine';
+import { getMeetingRepository } from '../storage/meetingRepository';
+import { getSpeakerRegistry } from '../speaker/speakerRegistry';
 
 import { finishLocalRecording, clearLocalMedia, deleteLocalMedia, getRecordingStorageUsage, pruneLocalRecordings } from '../audio/localRecording';
 
 const patchApplier = new InsightPatchApplier();
 
-// Local-First 本地优先持久化读取与写入方法（严格遵守 Zero-Content 与本地主权规范）
+// Local-First 本地优先持久化读取与写入：完全委托给 MeetingRepository 统一仓储模块
 function loadStoredHistoryMeetings(): HistoryMeeting[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem('tingxu_history_meetings');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch (e) {
-    console.warn('[MeetingStore] 读取本地历史会议失败:', e);
-  }
-  return [];
+  return getMeetingRepository().getHistoryMeetings();
 }
 
 function saveStoredHistoryMeetings(meetings: HistoryMeeting[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem('tingxu_history_meetings', JSON.stringify(meetings));
-  } catch (e) {
-    console.warn('[MeetingStore] 持久化历史会议失败:', e);
-  }
+  getMeetingRepository().saveHistoryMeetings(meetings);
 }
 
 function loadStoredTasks(): TaskItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem('tingxu_tasks');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch (e) {
-    console.warn('[MeetingStore] 读取本地任务失败:', e);
-  }
-  return [];
+  return getMeetingRepository().getTasks();
 }
 
 function saveStoredTasks(tasks: TaskItem[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem('tingxu_tasks', JSON.stringify(tasks));
-  } catch (e) {
-    console.warn('[MeetingStore] 持久化任务失败:', e);
-  }
+  getMeetingRepository().saveTasks(tasks);
 }
 
 function loadStoredSpeakerProfiles(): SpeakerVoiceprintProfile[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = localStorage.getItem('tingxu_speaker_profiles');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return parsed;
-    }
-  } catch (e) {
-    console.warn('[MeetingStore] 读取本地声纹档案失败:', e);
-  }
-  return [];
+  return getSpeakerRegistry().getProfiles();
 }
 
 function saveStoredSpeakerProfiles(profiles: SpeakerVoiceprintProfile[]) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem('tingxu_speaker_profiles', JSON.stringify(profiles));
-  } catch (e) {
-    console.warn('[MeetingStore] 持久化本地声纹档案失败:', e);
-  }
+  getMeetingRepository().saveSpeakerProfiles(profiles);
 }
 
 function loadStoredVoiceprintConsent(): number | null {
-  if (typeof window === 'undefined') return null;
-  try {
-    const raw = localStorage.getItem('tingxu_voiceprint_consent_at');
-    if (raw) {
-      const num = Number(raw);
-      if (Number.isFinite(num) && num > 0) return num;
-    }
-  } catch {
-    // ignore
-  }
-  return null;
+  return getSpeakerRegistry().getConsentAt();
 }
 
 function loadStoredAppearanceSettings(): UiAppearanceSettings {
-  if (typeof window === 'undefined') return { ...DEFAULT_APPEARANCE_SETTINGS };
-  try {
-    const raw = localStorage.getItem('tingxu_ui_appearance');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        return {
-          ...DEFAULT_APPEARANCE_SETTINGS,
-          ...parsed,
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('[MeetingStore] 读取外观配置失败:', e);
-  }
-  return { ...DEFAULT_APPEARANCE_SETTINGS };
+  return getMeetingRepository().getAppearanceSettings() || { ...DEFAULT_APPEARANCE_SETTINGS };
 }
 
 function saveStoredAppearanceSettings(settings: UiAppearanceSettings) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem('tingxu_ui_appearance', JSON.stringify(settings));
-  } catch (e) {
-    console.warn('[MeetingStore] 持久化外观配置失败:', e);
-  }
+  getMeetingRepository().saveAppearanceSettings(settings);
 }
 
 function loadStoredVoiceprintSettings(): VoiceprintConfigSettings {
-  if (typeof window === 'undefined') return { ...DEFAULT_VOICEPRINT_SETTINGS };
-  try {
-    const raw = localStorage.getItem('tingxu_voiceprint_settings');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') {
-        return {
-          ...DEFAULT_VOICEPRINT_SETTINGS,
-          ...parsed,
-        };
-      }
-    }
-  } catch (e) {
-    console.warn('[MeetingStore] 读取声纹参数配置失败:', e);
-  }
-  return { ...DEFAULT_VOICEPRINT_SETTINGS };
+  return getMeetingRepository().getVoiceprintSettings() || { ...DEFAULT_VOICEPRINT_SETTINGS };
 }
 
 function saveStoredVoiceprintSettings(settings: VoiceprintConfigSettings) {
-  if (typeof window === 'undefined') return;
-  try {
-    localStorage.setItem('tingxu_voiceprint_settings', JSON.stringify(settings));
-  } catch (e) {
-    console.warn('[MeetingStore] 持久化声纹参数配置失败:', e);
-  }
+  getMeetingRepository().saveVoiceprintSettings(settings);
 }
 
 function saveStoredVoiceprintConsent(consentAt: number | null) {
-  if (typeof window === 'undefined') return;
-  try {
-    if (consentAt && consentAt > 0) {
-      localStorage.setItem('tingxu_voiceprint_consent_at', String(consentAt));
-    } else {
-      localStorage.removeItem('tingxu_voiceprint_consent_at');
-    }
-  } catch {
-    // ignore
+  if (consentAt) {
+    getSpeakerRegistry().grantConsent();
+  } else {
+    getMeetingRepository().saveVoiceprintConsent(0);
   }
 }
 
@@ -227,12 +135,56 @@ function saveStoredStorageSettings(settings: StorageSettings) {
   }
 }
 
+// 第三方会议软件启动检测与常驻悬浮挂件配置持久化
+function loadStoredDetectionSettings(): MeetingDetectionSettings {
+  if (typeof window === 'undefined') return { ...DEFAULT_DETECTION_SETTINGS };
+  try {
+    const raw = localStorage.getItem('tingxu_meeting_detection_settings');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : DEFAULT_DETECTION_SETTINGS.enabled,
+          floatingWidget: typeof parsed.floatingWidget === 'boolean' ? parsed.floatingWidget : DEFAULT_DETECTION_SETTINGS.floatingWidget,
+        };
+      }
+    }
+  } catch (e) {
+    console.warn('[MeetingStore] 读取第三方会议感知配置失败:', e);
+  }
+  return { ...DEFAULT_DETECTION_SETTINGS };
+}
+
+function saveStoredDetectionSettings(settings: MeetingDetectionSettings) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem('tingxu_meeting_detection_settings', JSON.stringify(settings));
+  } catch (e) {
+    console.warn('[MeetingStore] 持久化第三方会议感知配置失败:', e);
+  }
+}
+
 const initialMeetingState = {
   status: 'IDLE' as MeetingStatus,
   asrSessionDrain: null,
   audioDeviceStop: null,
   isDrainingAsr: false,
   asrDrainWarning: null,
+  micStatus: 'idle' as 'idle' | 'recording' | 'denied' | 'error',
+  micError: '',
+  asrStatus: 'disconnected' as 'disconnected' | 'connecting' | 'connected' | 'error',
+  asrError: '',
+  rmsLevel: 0,
+  interimText: '',
+  interimParts: { stable: '', unstable: '' },
+  isExtractingInsights: false,
+  insightError: null as string | null,
+  isSystemAudioActive: false,
+  selectedMicId: '',
+  auxDeviceId: '',
+  captureMode: 'speaker_meeting' as 'speaker_meeting' | 'mic_only',
+  availableMics: [] as Array<{ deviceId: string; label: string }>,
+  audioAcousticMode: 'high_fidelity' as 'high_fidelity' | 'speaker_aec',
   meetingId: null as string | null,
   title: '未命名会议',
   elapsedSeconds: 0,
@@ -260,6 +212,9 @@ const initialMeetingState = {
   storageSettings: loadStoredStorageSettings(),
   storageUsage: { totalBytes: 0, recordingCount: 0 },
   isStorageLoading: false,
+  detectedMeetingApp: null as DetectedMeetingApp | null,
+  meetingDetectionSettings: loadStoredDetectionSettings(),
+  dismissedMeetingAppUntil: {} as Record<string, number>,
 };
 
 export const useMeetingStore = create<MeetingState>((set, get) => ({
@@ -412,6 +367,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       initialQuotaSeconds: initialSec,
       transcripts: [],
       insights: [],
+      insightError: null,
       speakerNames: {},
       highlightedTranscriptId: null,
       currentRoute: 'record',
@@ -884,6 +840,29 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     set({ activeWindow: window });
   },
 
+  toggleFloatingPill: (toFloating?: boolean) => {
+    const current = get().activeWindow === 'floating-pill';
+    const target = toFloating !== undefined ? toFloating : !current;
+    set({ activeWindow: target ? 'floating-pill' : 'workbench' });
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      import('@tauri-apps/api/core').then(({ invoke }) => {
+        invoke('toggle_floating_mode', { toFloating: target }).catch(() => {});
+      });
+    }
+  },
+
+  setMicStatus: (status, error = '') => set({ micStatus: status, micError: error }),
+  setAsrStatus: (status, error = '') => set({ asrStatus: status, asrError: error }),
+  setRmsLevel: (rms) => set({ rmsLevel: rms }),
+  setInterimText: (text, parts = { stable: '', unstable: '' }) => set({ interimText: text, interimParts: parts }),
+  setIsExtractingInsights: (extracting) => set({ isExtractingInsights: extracting }),
+  setIsSystemAudioActive: (active) => set({ isSystemAudioActive: active }),
+  setSelectedMicId: (micId) => set({ selectedMicId: micId }),
+  setAuxDeviceId: (deviceId) => set({ auxDeviceId: deviceId }),
+  setCaptureMode: (mode) => set({ captureMode: mode }),
+  setAvailableMics: (mics) => set({ availableMics: mics }),
+  setAudioAcousticMode: (mode) => set({ audioAcousticMode: mode }),
+
   resetMeeting: () => {
     set({
       status: 'IDLE',
@@ -896,9 +875,19 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       elapsedSeconds: 0,
       transcripts: [],
       insights: [],
+      insightError: null,
       speakerNames: {},
       highlightedTranscriptId: null,
       currentRoute: 'home',
+      micStatus: 'idle',
+      micError: '',
+      asrStatus: 'disconnected',
+      asrError: '',
+      rmsLevel: 0,
+      interimText: '',
+      interimParts: { stable: '', unstable: '' },
+      isExtractingInsights: false,
+      isSystemAudioActive: false,
     });
   },
 
@@ -933,102 +922,40 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   grantVoiceprintConsent: () => {
-    const now = Date.now();
-    saveStoredVoiceprintConsent(now);
+    const registry = getSpeakerRegistry();
+    const now = registry.grantConsent();
     set({ voiceprintConsentAt: now });
     return now;
   },
 
   registerSpeakerProfile: (input: RegisterSpeakerProfileInput) => {
-    const cleanName = input.displayName.trim();
-    if (!cleanName || !Array.isArray(input.embedding) || input.embedding.length === 0) {
-      return null;
-    }
-
-    // 显式授权门禁：consented === false 严禁保存声纹；consented === true 或此前已授权才允许落盘
-    if (input.consented === false) {
-      return null;
-    }
-
-    let consentAt = get().voiceprintConsentAt;
-    if (input.consented === true && !consentAt) {
-      consentAt = Date.now();
-      saveStoredVoiceprintConsent(consentAt);
-    }
-    if (!consentAt) {
-      return null;
-    }
-
-    const now = Date.now();
+    const registry = getSpeakerRegistry();
     const accountId = get().currentUser?.userId || 'local_default';
-    const normalized = l2Normalize(input.embedding);
-    const sampleDurationMs = Math.max(1200, input.sampleDurationMs ?? 3000);
-
-    const existingList = get().speakerProfiles;
-    const existingIdx = existingList.findIndex(
-      (p) => p.accountId === accountId && p.displayName === cleanName
-    );
-
-    let savedProfile: SpeakerVoiceprintProfile;
-    let nextProfiles: SpeakerVoiceprintProfile[];
-
-    if (existingIdx >= 0) {
-      const prev = existingList[existingIdx];
-      const mergedVec = l2Normalize(
-        prev.embedding.map((v, i) => v * 0.6 + (normalized[i] ?? 0) * 0.4)
-      );
-      savedProfile = {
-        ...prev,
-        displayName: cleanName,
-        embedding: mergedVec,
-        embeddingDim: mergedVec.length,
-        sampleDurationMs: prev.sampleDurationMs + sampleDurationMs,
-        consentAt,
-        lastMatchedAt: now,
-      };
-      nextProfiles = existingList.map((p, idx) => (idx === existingIdx ? savedProfile : p));
-    } else {
-      savedProfile = {
-        profileId: `vp_${now}_${Math.random().toString(36).slice(2, 6)}`,
-        accountId,
-        displayName: cleanName,
-        embedding: normalized,
-        embeddingDim: normalized.length,
-        modelId: 'campplus_zh_en_fp16',
-        modelVersion: '1.0',
-        sampleDurationMs,
-        consentAt,
-        createdAt: now,
-        lastMatchedAt: now,
-      };
-      nextProfiles = [...existingList, savedProfile];
+    const saved = registry.registerProfile(input, accountId);
+    if (saved) {
+      set({
+        voiceprintConsentAt: registry.getConsentAt(),
+        speakerProfiles: registry.getProfiles(),
+      });
     }
-
-    saveStoredSpeakerProfiles(nextProfiles);
-    set({
-      voiceprintConsentAt: consentAt,
-      speakerProfiles: nextProfiles,
-    });
-    return savedProfile;
+    return saved;
   },
 
   renameSpeakerProfile: (profileId: string, newName: string) => {
     const clean = newName.trim();
     if (!profileId || !clean) return;
-    set((state) => {
-      const target = state.speakerProfiles.find((p) => p.profileId === profileId);
-      const oldName = target?.displayName;
-      const nextProfiles = state.speakerProfiles.map((p) =>
-        p.profileId === profileId ? { ...p, displayName: clean } : p
-      );
-      saveStoredSpeakerProfiles(nextProfiles);
+    const registry = getSpeakerRegistry();
+    const target = registry.getProfiles().find((p) => p.profileId === profileId);
+    const oldName = target?.displayName;
+    registry.renameProfile(profileId, clean);
 
+    set((state) => {
+      const nextProfiles = registry.getProfiles();
       const updatedTranscripts = state.transcripts.map((t) =>
         t.matchedProfileId === profileId || (oldName && t.speaker === oldName)
           ? { ...t, speaker: clean }
           : t
       );
-
       return {
         speakerProfiles: nextProfiles,
         transcripts: updatedTranscripts,
@@ -1038,15 +965,14 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
   deleteSpeakerProfile: (profileId: string) => {
     if (!profileId) return;
-    set((state) => {
-      const nextProfiles = state.speakerProfiles.filter((p) => p.profileId !== profileId);
-      saveStoredSpeakerProfiles(nextProfiles);
-      return { speakerProfiles: nextProfiles };
-    });
+    const registry = getSpeakerRegistry();
+    registry.deleteProfile(profileId);
+    set({ speakerProfiles: registry.getProfiles() });
   },
 
   clearSpeakerProfiles: () => {
-    saveStoredSpeakerProfiles([]);
+    const registry = getSpeakerRegistry();
+    registry.clearProfiles();
     saveStoredVoiceprintConsent(null);
     set({
       speakerProfiles: [],
@@ -1093,6 +1019,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     } else {
       const config = VOICEPRINT_PRESET_CONFIGS[mode];
       nextSettings = {
+        enabled: get().voiceprintSettings.enabled,
         presetMode: mode,
         similarityThreshold: config.similarityThreshold,
         continuityThreshold: config.continuityThreshold,
@@ -1117,5 +1044,325 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   resetVoiceprintSettings: () => {
     saveStoredVoiceprintSettings({ ...DEFAULT_VOICEPRINT_SETTINGS });
     set({ voiceprintSettings: { ...DEFAULT_VOICEPRINT_SETTINGS } });
+  },
+
+  setInsightError: (err: string | null) => {
+    set({ insightError: err });
+  },
+
+  setMeetingSpeakerMode: (mode: 'single' | 'balanced' | 'sensitive') => {
+    if (mode === 'single') {
+      get().updateVoiceprintSettings({ enabled: false, presetMode: 'single' });
+    } else {
+      const config = VOICEPRINT_PRESET_CONFIGS[mode];
+      get().updateVoiceprintSettings({
+        enabled: true,
+        presetMode: mode,
+        similarityThreshold: config.similarityThreshold,
+        continuityThreshold: config.continuityThreshold,
+        minClusterDurationMs: config.minClusterDurationMs,
+      });
+    }
+  },
+
+  // 第三方会议软件感知与快捷悬浮挂件
+  setDetectedMeetingApp: (app: DetectedMeetingApp | null) => {
+    if (!app) {
+      set({
+        detectedMeetingApp: null,
+        // 会议结束后（麦克风释放）自动清空已忽略应用的防打扰锁，确保下次入会能够重新灵敏感知
+        dismissedMeetingAppUntil: {},
+      });
+      return;
+    }
+    const state = get();
+    if (!state.meetingDetectionSettings.enabled) {
+      set({ detectedMeetingApp: null });
+      return;
+    }
+    if (state.status !== 'IDLE') {
+      // 正在开会或结算中，绝对不打扰用户
+      set({ detectedMeetingApp: null });
+      return;
+    }
+    const dismissedUntil = state.dismissedMeetingAppUntil[app.appId] || 0;
+    if (dismissedUntil > Date.now()) {
+      // 处于 30 分钟防打扰静默期内
+      return;
+    }
+    set({ detectedMeetingApp: app });
+  },
+
+  dismissDetectedMeetingApp: (appId: string) => {
+    const until = Date.now() + 30 * 60 * 1000; // 30 分钟防打扰
+    set((state) => ({
+      dismissedMeetingAppUntil: {
+        ...state.dismissedMeetingAppUntil,
+        [appId]: until,
+      },
+      detectedMeetingApp: state.detectedMeetingApp?.appId === appId ? null : state.detectedMeetingApp,
+    }));
+  },
+
+  quickStartDetectedMeeting: async (app: DetectedMeetingApp) => {
+    get().startMeeting(`${app.appName} 讨论`);
+    set({ detectedMeetingApp: null, activeWindow: 'workbench', currentRoute: 'record' });
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('toggle_floating_mode', { toFloating: false });
+      } catch (e) {
+        console.warn('[MeetingStore] 展开工作台失败:', e);
+      }
+    }
+  },
+
+  updateMeetingDetectionSettings: async (settings: Partial<MeetingDetectionSettings>) => {
+    const next = { ...get().meetingDetectionSettings, ...settings };
+    saveStoredDetectionSettings(next);
+    set({
+      meetingDetectionSettings: next,
+      detectedMeetingApp: next.enabled ? get().detectedMeetingApp : null,
+    });
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('set_floating_pill_visible', { visible: next.floatingWidget });
+      } catch (e) {
+        console.warn('[MeetingStore] 调用 set_floating_pill_visible 失败:', e);
+      }
+    }
+  },
+
+  // 会后 Copilot 问答与纪要就地修订 (018)
+  updateMeetingOverview: (meetingId: string, overview: string) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId) return m;
+      const ss = m.structuredSummary ? { ...m.structuredSummary, overview } : {
+        suggestedTitle: m.title,
+        overview,
+        decisions: [],
+        actions: [],
+        risks: [],
+        facts: [],
+      };
+      return { ...m, structuredSummary: ss, summary: overview };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  updateMeetingDecision: (meetingId: string, index: number, patch: Partial<SummaryDecisionItem>) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId || !m.structuredSummary) return m;
+      const decisions = [...m.structuredSummary.decisions];
+      if (decisions[index]) {
+        decisions[index] = { ...decisions[index], ...patch };
+      }
+      return {
+        ...m,
+        structuredSummary: { ...m.structuredSummary, decisions },
+      };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  addMeetingDecision: (meetingId: string, decision: SummaryDecisionItem) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId) return m;
+      const ss = m.structuredSummary || {
+        suggestedTitle: m.title,
+        overview: m.summary || '',
+        decisions: [],
+        actions: [],
+        risks: [],
+        facts: [],
+      };
+      const decisions = [...ss.decisions, decision];
+      return {
+        ...m,
+        decisionsCount: decisions.length,
+        structuredSummary: { ...ss, decisions },
+      };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  deleteMeetingDecision: (meetingId: string, index: number) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId || !m.structuredSummary) return m;
+      const decisions = m.structuredSummary.decisions.filter((_, i) => i !== index);
+      return {
+        ...m,
+        decisionsCount: decisions.length,
+        structuredSummary: { ...m.structuredSummary, decisions },
+      };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  updateMeetingAction: (meetingId: string, index: number, patch: Partial<SummaryActionItem>) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId || !m.structuredSummary) return m;
+      const actions = [...m.structuredSummary.actions];
+      if (actions[index]) {
+        actions[index] = { ...actions[index], ...patch };
+      }
+      return {
+        ...m,
+        structuredSummary: { ...m.structuredSummary, actions },
+      };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  addMeetingAction: (meetingId: string, action: SummaryActionItem) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId) return m;
+      const ss = m.structuredSummary || {
+        suggestedTitle: m.title,
+        overview: m.summary || '',
+        decisions: [],
+        actions: [],
+        risks: [],
+        facts: [],
+      };
+      const actions = [...ss.actions, action];
+      return {
+        ...m,
+        tasksCount: actions.length,
+        structuredSummary: { ...ss, actions },
+      };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  deleteMeetingAction: (meetingId: string, index: number) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId || !m.structuredSummary) return m;
+      const actions = m.structuredSummary.actions.filter((_, i) => i !== index);
+      return {
+        ...m,
+        tasksCount: actions.length,
+        structuredSummary: { ...m.structuredSummary, actions },
+      };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  updateMeetingTranscriptText: (meetingId: string, segmentId: string, newText: string) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId || !m.transcripts) return m;
+      const transcripts = m.transcripts.map((t) => (t.id === segmentId ? { ...t, text: newText } : t));
+      return { ...m, transcripts };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  addMeetingChatMessage: (meetingId: string, message: MeetingChatMessage) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId) return m;
+      const chatHistory = [...(m.chatHistory || []), message];
+      return { ...m, chatHistory };
+    });
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  applySummaryProposal: (meetingId: string, proposal: SummaryRevisionProposal) => {
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId) return m;
+      const ss = m.structuredSummary ? { ...m.structuredSummary } : {
+        suggestedTitle: m.title,
+        overview: m.summary || '',
+        decisions: [],
+        actions: [],
+        risks: [],
+        facts: [],
+      };
+
+      if (proposal.targetSection === 'overview') {
+        ss.overview = proposal.proposedText;
+      } else if (proposal.targetSection === 'decisions') {
+        const decisions = [...ss.decisions];
+        if (proposal.action === 'replace' && typeof proposal.itemIndex === 'number' && decisions[proposal.itemIndex]) {
+          decisions[proposal.itemIndex] = { ...decisions[proposal.itemIndex], content: proposal.proposedText };
+        } else if (proposal.action === 'add') {
+          decisions.push({ title: proposal.proposedText, content: proposal.reason || proposal.proposedText });
+        } else if (proposal.action === 'delete' && typeof proposal.itemIndex === 'number') {
+          decisions.splice(proposal.itemIndex, 1);
+        }
+        ss.decisions = decisions;
+      } else if (proposal.targetSection === 'actions') {
+        const actions = [...ss.actions];
+        if (proposal.action === 'replace' && typeof proposal.itemIndex === 'number' && actions[proposal.itemIndex]) {
+          actions[proposal.itemIndex] = { ...actions[proposal.itemIndex], title: proposal.proposedText };
+        } else if (proposal.action === 'add') {
+          let text = proposal.proposedText;
+          let assignee = '待确认';
+          let dueDate = '尽快推进';
+          const assigneeMatch = text.match(/\[负责人:\s*([^\]]+)\]/);
+          if (assigneeMatch) {
+            assignee = assigneeMatch[1].trim();
+            text = text.replace(assigneeMatch[0], '').trim();
+          }
+          const dueMatch = text.match(/\[期限:\s*([^\]]+)\]/);
+          if (dueMatch) {
+            dueDate = dueMatch[1].trim();
+            text = text.replace(dueMatch[0], '').trim();
+          }
+          actions.push({ title: text, assignee, dueDate });
+        } else if (proposal.action === 'delete' && typeof proposal.itemIndex === 'number') {
+          actions.splice(proposal.itemIndex, 1);
+        }
+        ss.actions = actions;
+      }
+
+      // 标记该 proposal 为已应用
+      const chatHistory = m.chatHistory?.map((msg) => {
+        if (!msg.proposals) return msg;
+        const proposals = msg.proposals.map((p) => (p.id === proposal.id ? { ...p, applied: true } : p));
+        return { ...msg, proposals };
+      });
+
+      return {
+        ...m,
+        structuredSummary: ss,
+        summary: ss.overview,
+        decisionsCount: ss.decisions.length,
+        tasksCount: ss.actions.length,
+        chatHistory,
+      };
+    });
+
+    saveStoredHistoryMeetings(history);
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
+    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
   },
 }));

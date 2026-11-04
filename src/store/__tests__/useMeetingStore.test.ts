@@ -426,4 +426,31 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
 
     pruneSpy.mockRestore();
   });
+
+  it('第三方会议感知边沿触发：入会设置应用，散会传 null 时清空应用并重置防打扰锁', () => {
+    const store = useMeetingStore.getState();
+    const app = {
+      appName: 'Microsoft Teams',
+      appId: 'teams',
+      processName: 'MSTeams',
+    };
+
+    // 1. 入会探测
+    store.setDetectedMeetingApp(app);
+    expect(useMeetingStore.getState().detectedMeetingApp).toEqual(app);
+
+    // 2. 用户忽略 30 分钟
+    store.dismissDetectedMeetingApp('teams');
+    expect(useMeetingStore.getState().detectedMeetingApp).toBeNull();
+    expect(useMeetingStore.getState().dismissedMeetingAppUntil.teams).toBeGreaterThan(Date.now());
+
+    // 3. 散会或麦克风释放（传 null）
+    store.setDetectedMeetingApp(null);
+    expect(useMeetingStore.getState().detectedMeetingApp).toBeNull();
+    expect(useMeetingStore.getState().dismissedMeetingAppUntil).toEqual({});
+
+    // 4. 下一场会议再次进入，能够重新灵敏提示
+    store.setDetectedMeetingApp(app);
+    expect(useMeetingStore.getState().detectedMeetingApp).toEqual(app);
+  });
 });

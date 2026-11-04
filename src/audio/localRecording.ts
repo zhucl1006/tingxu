@@ -27,7 +27,7 @@ export class LocalRecordingSession {
   this.samples += chunk.byteLength / 2;
   if (!this.id || this.error) return;
   if (this.queuedBytes + chunk.byteLength > 1024 * 1024) { this.error = '本机录音写入跟不上，录音不完整'; return; }
-  const pcm = Array.from(new Uint8Array(chunk)); this.queuedBytes += chunk.byteLength;
+  const pcm = new Uint8Array(chunk); this.queuedBytes += chunk.byteLength;
   this.tail = this.tail.then(() => this.invoke('append_local_recording', { id: this.id, pcm }))
    .catch(() => { this.error = '本机录音写入失败，录音不完整'; })
    .finally(() => { this.queuedBytes -= chunk.byteLength; });

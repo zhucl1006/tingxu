@@ -6,3 +6,4 @@ pub mod system_audio;
 pub mod recording;
 pub mod playback;
 pub mod recording_commands;
+pub mod meeting_detector;

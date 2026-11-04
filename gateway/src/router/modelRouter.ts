@@ -10,7 +10,7 @@ import type {
   ModelExecutionResult,
 } from '../adapters/types.js';
 
-export interface ModelRouterOptions {
+export interface ResilientModelEngineOptions {
   primaryAdapter: ModelAdapter;
   fallbackAdapter: ModelAdapter;
   primaryBreakerOptions?: {
@@ -25,13 +25,17 @@ export interface ModelRouterOptions {
   };
 }
 
-export class ModelRouter {
+/**
+ * 听序 AI Gateway — 深度容灾调度引擎 (ResilientModelEngine)
+ * 封装主备模型执行、滑动窗口熔断器与自动无缝切备，统一消除任务间的重复 try/catch 与重试样板。
+ */
+export class ResilientModelEngine {
   public primaryAdapter: ModelAdapter;
   public fallbackAdapter: ModelAdapter;
   public readonly primaryBreaker: CircuitBreaker;
   public readonly fallbackBreaker: CircuitBreaker;
 
-  constructor(options: ModelRouterOptions) {
+  constructor(options: ResilientModelEngineOptions) {
     this.primaryAdapter = options.primaryAdapter;
     this.fallbackAdapter = options.fallbackAdapter;
     this.primaryBreaker = new CircuitBreaker(options.primaryBreakerOptions);
@@ -45,21 +49,24 @@ export class ModelRouter {
     }
   }
 
-  public async generateInsightStream(
-    req: LiveInsightRequest,
-    onPatch: (patch: InsightPatchPayload) => void
-  ): Promise<ModelExecutionResult<InsightPatchPayload[]>> {
+  /**
+   * 统一容灾执行骨架：优先主模型与熔断保护，故障时降级至备用模型
+   */
+  public async executeWithFallback<T>(
+    operationName: string,
+    run: (adapter: ModelAdapter) => Promise<ModelExecutionResult<T>>
+  ): Promise<ModelExecutionResult<T>> {
     try {
       return await this.primaryBreaker.execute(async () => {
-        return await this.primaryAdapter.generateInsightStream(req, onPatch);
+        return await run(this.primaryAdapter);
       });
     } catch (primaryError) {
       console.warn(
-        `[ModelRouter] Primary model ${this.primaryAdapter.provider} failed or breaker open. Falling back to ${this.fallbackAdapter.provider}. Reason: ${(primaryError as Error).message}`
+        `[ResilientModelEngine] Primary model ${this.primaryAdapter.provider} failed for ${operationName}. Falling back to ${this.fallbackAdapter.provider}. Reason: ${(primaryError as Error).message}`
       );
 
       const fallbackResult = await this.fallbackBreaker.execute(async () => {
-        return await this.fallbackAdapter.generateInsightStream(req, onPatch);
+        return await run(this.fallbackAdapter);
       });
 
       return {
@@ -69,48 +76,23 @@ export class ModelRouter {
     }
   }
 
+  public async generateInsightStream(
+    req: LiveInsightRequest,
+    onPatch: (patch: InsightPatchPayload) => void
+  ): Promise<ModelExecutionResult<InsightPatchPayload[]>> {
+    return this.executeWithFallback('generateInsightStream', (adapter) =>
+      adapter.generateInsightStream(req, onPatch)
+    );
+  }
+
   public async chat(req: MeetingChatRequest): Promise<ModelExecutionResult<ChatResponsePayload>> {
-    try {
-      return await this.primaryBreaker.execute(async () => {
-        return await this.primaryAdapter.chat(req);
-      });
-    } catch (primaryError) {
-      console.warn(
-        `[ModelRouter] Primary model ${this.primaryAdapter.provider} failed. Falling back to ${this.fallbackAdapter.provider}. Reason: ${(primaryError as Error).message}`
-      );
-
-      const fallbackResult = await this.fallbackBreaker.execute(async () => {
-        return await this.fallbackAdapter.chat(req);
-      });
-
-      return {
-        ...fallbackResult,
-        fallbackTriggered: true,
-      };
-    }
+    return this.executeWithFallback('chat', (adapter) => adapter.chat(req));
   }
 
   public async summarize(
     req: MeetingSummaryRequest
   ): Promise<ModelExecutionResult<MeetingStructuredSummary>> {
-    try {
-      return await this.primaryBreaker.execute(async () => {
-        return await this.primaryAdapter.summarize(req);
-      });
-    } catch (primaryError) {
-      console.warn(
-        `[ModelRouter] Primary model ${this.primaryAdapter.provider} failed during summarize. Falling back to ${this.fallbackAdapter.provider}. Reason: ${(primaryError as Error).message}`
-      );
-
-      const fallbackResult = await this.fallbackBreaker.execute(async () => {
-        return await this.fallbackAdapter.summarize(req);
-      });
-
-      return {
-        ...fallbackResult,
-        fallbackTriggered: true,
-      };
-    }
+    return this.executeWithFallback('summarize', (adapter) => adapter.summarize(req));
   }
 
   public getBreakerStats() {
@@ -126,3 +108,7 @@ export class ModelRouter {
     };
   }
 }
+
+// 保持历史导出别名完全兼容
+export { ResilientModelEngine as ModelRouter };
+export type { ResilientModelEngineOptions as ModelRouterOptions };

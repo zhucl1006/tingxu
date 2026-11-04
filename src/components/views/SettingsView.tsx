@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { streamingAsrUrl } from '../../audio/realStreamingAsrClient';
+import { getTingxuClient } from '../../api/tingxuClient';
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -34,6 +35,8 @@ export const SettingsView: React.FC = () => {
     refreshStorageUsage,
     updateStorageSettings,
     cleanupRecordings,
+    meetingDetectionSettings,
+    updateMeetingDetectionSettings,
   } = useMeetingStore();
   const [gatewayDraft, setGatewayDraft] = useState(gatewayUrl);
   const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
@@ -89,11 +92,11 @@ export const SettingsView: React.FC = () => {
     try {
       streamingAsrUrl(gatewayDraft);
       setGatewayUrl(gatewayDraft.trim());
-      const res = await fetch(`${gatewayDraft.trim()}/gateway/v1/health`);
-      if (res.ok) {
+      const result = await getTingxuClient().health.checkGateway(gatewayDraft.trim());
+      if (result.ok) {
         setGatewayStatus('✓ AI Gateway 智能网关连接正常，全双工转写与推理通道就绪');
       } else {
-        setGatewayStatus(`× 连接失败: HTTP ${res.status}`);
+        setGatewayStatus('× 连接失败: 无法连接到网关或网关响应异常');
       }
     } catch (err) {
       setGatewayStatus(`× 无法连接到网关: ${(err as Error).message}`);
@@ -582,6 +585,37 @@ export const SettingsView: React.FC = () => {
           </button>
         </div>
 
+        {/* 区分说话人主开关 */}
+        <div className="p-3.5 rounded-lg bg-subtle border border-border-subtle flex items-center justify-between">
+          <div className="space-y-1 pr-4">
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-text-primary">区分说话人（Diarization）</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                voiceprintSettings.enabled
+                  ? 'bg-status-success-bg text-status-success'
+                  : 'bg-canvas text-text-tertiary border border-border-subtle'
+              }`}>
+                {voiceprintSettings.enabled ? '已开启多人分离' : '默认关闭（单轨录音转写）'}
+              </span>
+            </div>
+            <p className="text-[11px] text-text-secondary leading-relaxed">
+              {voiceprintSettings.enabled
+                ? '已开启多人说话人分离：会中将结合本地声学特征分析，尽量识别并分离出每位发言人。'
+                : '默认不区分发言人：采用连续单轨会议录音识别，逐字稿不强行标记发言人，文本纯净连贯无干扰。'}
+            </p>
+          </div>
+          <label className="relative inline-flex items-center cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              data-testid="settings-page-switch-voiceprint-enabled"
+              checked={voiceprintSettings.enabled}
+              onChange={(e) => updateVoiceprintSettings({ enabled: e.target.checked })}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-border-subtle peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-brand-blue"></div>
+          </label>
+        </div>
+
         {/* 预设模式快捷选择 */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <button
@@ -848,6 +882,136 @@ export const SettingsView: React.FC = () => {
                 {cleanupFeedback}
               </p>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* 🎙️ 音频拾音与声学增强模式 (Plan 020) */}
+      <div
+        data-testid="settings-page-audio-section"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4"
+      >
+        <div>
+          <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+            <span>🎙️ 音频拾音与声学增强偏好</span>
+          </h2>
+          <p className="text-[11px] text-text-secondary mt-0.5">
+            智能声学策略优化：解决录音过程中系统声音被自动压小、变闷的声学衰减现象（macOS CoreAudio 通信模式闪避防抑）
+          </p>
+        </div>
+
+        <div className="space-y-3 pt-1">
+          <label className="block text-xs font-semibold text-text-primary">声学拾音模式</label>
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              type="button"
+              data-testid="settings-page-audio-btn-mode-fidelity"
+              onClick={() => useMeetingStore.getState().setAudioAcousticMode('high_fidelity')}
+              className={`p-3.5 rounded-xl border text-left transition-all ${
+                useMeetingStore.getState().audioAcousticMode === 'high_fidelity'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue shadow-sm'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold flex items-center gap-1.5">
+                  <span>🎧 高保真防闪避模式</span>
+                  <span className="text-[10px] px-1.5 py-0.2 rounded bg-status-success/15 text-status-success font-medium">推荐</span>
+                </span>
+                {useMeetingStore.getState().audioAcousticMode === 'high_fidelity' && (
+                  <span className="text-xs font-bold">✓</span>
+                )}
+              </div>
+              <p className="text-[11px] text-text-tertiary mt-1.5 leading-relaxed">
+                适合佩戴耳机或免驱数字内录（ScreenCaptureKit）场景。彻底关闭 macOS 通信模式音频闪避与动态 AGC 压制，电脑播放声音与背景音量 100% 原始饱满不变小。
+              </p>
+            </button>
+
+            <button
+              type="button"
+              data-testid="settings-page-audio-btn-mode-aec"
+              onClick={() => useMeetingStore.getState().setAudioAcousticMode('speaker_aec')}
+              className={`p-3.5 rounded-xl border text-left transition-all ${
+                useMeetingStore.getState().audioAcousticMode === 'speaker_aec'
+                  ? 'bg-brand-blue/10 border-brand-blue text-brand-blue shadow-sm'
+                  : 'bg-subtle border-border-subtle text-text-primary hover:border-brand-blue/40'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold flex items-center gap-1.5">
+                  <span>📢 扬声器强力消回声模式</span>
+                </span>
+                {useMeetingStore.getState().audioAcousticMode === 'speaker_aec' && (
+                  <span className="text-xs font-bold">✓</span>
+                )}
+              </div>
+              <p className="text-[11px] text-text-tertiary mt-1.5 leading-relaxed">
+                当电脑扬声器外放大音量开会且房间产生回音啸叫时启用。通过操作系统底层声学算法抑制外放串音循环录入。
+              </p>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 🎯 会议感知与桌面悬浮挂件 (Plan 017) */}
+      <div
+        data-testid="settings-page-detection-section"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4"
+      >
+        <div>
+          <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+            <span>🎯 会议感知与桌面悬浮挂件</span>
+          </h2>
+          <p className="text-[11px] text-text-secondary mt-0.5">
+            本地无感感知第三方会议软件启动并主动提醒，桌面极简置顶挂件支持一键开会与呼吸监控（所有比对均在本地沙箱完成，绝不向云端上传进程数据）
+          </p>
+        </div>
+
+        <div className="space-y-4 pt-1">
+          {/* 开关 1：第三方会议软件智能感知 */}
+          <div className="flex items-start justify-between gap-4 p-3 rounded-lg bg-subtle border border-border-subtle">
+            <div className="space-y-0.5">
+              <label
+                htmlFor="detection-enabled-checkbox"
+                className="text-xs font-semibold text-text-primary cursor-pointer"
+              >
+                第三方会议软件启动智能感知
+              </label>
+              <p className="text-[11px] text-text-tertiary">
+                支持 Teams、腾讯会议、Zoom、飞书、钉钉；一旦检测到开会立即提示是否开会，若点击“暂不记录”则 30 分钟内免打扰。
+              </p>
+            </div>
+            <input
+              id="detection-enabled-checkbox"
+              type="checkbox"
+              data-testid="settings-page-detection-checkbox-enabled"
+              checked={meetingDetectionSettings.enabled}
+              onChange={(e) => void updateMeetingDetectionSettings({ enabled: e.target.checked })}
+              className="mt-1 h-4 w-4 rounded border-border-subtle text-brand-blue focus:ring-brand-blue accent-brand-blue cursor-pointer"
+            />
+          </div>
+
+          {/* 开关 2：桌面常驻快速悬浮挂件 */}
+          <div className="flex items-start justify-between gap-4 p-3 rounded-lg bg-subtle border border-border-subtle">
+            <div className="space-y-0.5">
+              <label
+                htmlFor="detection-floating-checkbox"
+                className="text-xs font-semibold text-text-primary cursor-pointer"
+              >
+                桌面常驻微型快捷悬浮挂件 (42px)
+              </label>
+              <p className="text-[11px] text-text-tertiary">
+                在屏幕角落显示原生极简胶囊浮条。空闲时提供快速开启入口，开会时实时跳动秒表与最新洞察，始终置顶且不遮挡第三方会议画面。
+              </p>
+            </div>
+            <input
+              id="detection-floating-checkbox"
+              type="checkbox"
+              data-testid="settings-page-detection-checkbox-floating-widget"
+              checked={meetingDetectionSettings.floatingWidget}
+              onChange={(e) => void updateMeetingDetectionSettings({ floatingWidget: e.target.checked })}
+              className="mt-1 h-4 w-4 rounded border-border-subtle text-brand-blue focus:ring-brand-blue accent-brand-blue cursor-pointer"
+            />
           </div>
         </div>
       </div>

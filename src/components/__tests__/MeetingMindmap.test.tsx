@@ -86,7 +86,7 @@ describe('MeetingMindmap - 会议思维导图组件 (TDD)', () => {
     expect(screen.getByText('• 周五前打通所有门禁')).toBeInTheDocument();
   });
 
-  it('渲染双向发散平衡树结构、SVG 曲线连接层与时码小气泡 (讯飞听见模式)', () => {
+  it('渲染双向发散平衡树结构、SVG 曲线连接层与时码小气泡', () => {
     const onSeekMock = vi.fn();
     render(<MeetingMindmap meeting={mockMeeting} onSeekTimestamp={onSeekMock} />);
 

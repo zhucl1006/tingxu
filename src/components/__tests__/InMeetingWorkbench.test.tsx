@@ -5,6 +5,7 @@ import { useMeetingStore } from '../../store/useMeetingStore';
 import { RealAudioCapture } from '../../audio/realAudioCapture';
 import { LocalSpeakerEmbeddingEngine } from '../../audio/speakerEmbeddingEngine';
 import { SentenceAudioBuffer } from '../../audio/sentenceAudioBuffer';
+import { resetMeetingPipelineService } from '../../audio/meetingPipelineService';
 
 describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
   beforeEach(() => {
@@ -431,10 +432,61 @@ describe('InMeetingWorkbench - 会中双栏工作台组件 (TDD)', () => {
       screen.queryByTestId('workbench-page-transcript-panel-modal-audio-help')
     ).toBeNull();
   });
+
+  it('支持在会中随时动态切换三种会议场景模式（单人/标准多人/多人激辩）', () => {
+    useMeetingStore.getState().resetVoiceprintSettings();
+    expect(useMeetingStore.getState().voiceprintSettings.enabled).toBe(false);
+
+    render(<InMeetingWorkbench />);
+    const singleBtn = screen.getByTestId('workbench-page-transcript-panel-btn-mode-single');
+    const balancedBtn = screen.getByTestId('workbench-page-transcript-panel-btn-mode-balanced');
+    const sensitiveBtn = screen.getByTestId('workbench-page-transcript-panel-btn-mode-sensitive');
+
+    expect(singleBtn).toBeInTheDocument();
+    expect(balancedBtn).toBeInTheDocument();
+    expect(sensitiveBtn).toBeInTheDocument();
+
+    // 点击切换为标准多人
+    fireEvent.click(balancedBtn);
+    expect(useMeetingStore.getState().voiceprintSettings.enabled).toBe(true);
+    expect(useMeetingStore.getState().voiceprintSettings.presetMode).toBe('balanced');
+
+    // 点击切换为多人激辩
+    fireEvent.click(sensitiveBtn);
+    expect(useMeetingStore.getState().voiceprintSettings.enabled).toBe(true);
+    expect(useMeetingStore.getState().voiceprintSettings.presetMode).toBe('sensitive');
+
+    // 点击切换回单人录音
+    fireEvent.click(singleBtn);
+    expect(useMeetingStore.getState().voiceprintSettings.enabled).toBe(false);
+  });
+
+  it('当洞察提取发生网络或大模型异常时，左侧看板顶部应渲染错误警示条并支持关闭', () => {
+    act(() => {
+      useMeetingStore.getState().setInsightError('AI 洞察服务繁忙（DeepSeek 503），正在自动重试');
+    });
+
+    render(<InMeetingWorkbench />);
+    const errorBanner = screen.getByTestId('workbench-page-insights-panel-banner-error');
+    expect(errorBanner).toBeInTheDocument();
+    expect(errorBanner).toHaveTextContent('DeepSeek 503');
+
+    // 点击关闭按钮可清除错误提示
+    const dismissBtn = screen.getByTestId('workbench-page-insights-panel-btn-dismiss-error');
+    fireEvent.click(dismissBtn);
+    expect(useMeetingStore.getState().insightError).toBeNull();
+  });
 });
 
 describe('014 final先显示，身份后补齐', () => {
-  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+  beforeEach(async () => {
+    await resetMeetingPipelineService();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    await resetMeetingPipelineService();
+  });
   it('声纹未完成也显示final，重复final不重复插入，离开会议后推理不写新会话', async () => {
     useMeetingStore.getState().resetMeeting();
     useMeetingStore.getState().startMeeting('synthetic');
@@ -495,7 +547,9 @@ describe('014 final先显示，身份后补齐', () => {
   it('声纹超时后本会话停止新推理，不累计不可取消的原生任务', async () => {
     vi.useFakeTimers();
     try {
-      useMeetingStore.getState().resetMeeting(); useMeetingStore.getState().startMeeting('synthetic');
+      useMeetingStore.getState().resetMeeting();
+      useMeetingStore.getState().updateVoiceprintSettings({ enabled: true });
+      useMeetingStore.getState().startMeeting('synthetic');
       const socket = { readyState: 1, send: vi.fn(), close: vi.fn(), onopen: null as (() => void) | null,
         onmessage: null as ((event: { data: string }) => void) | null };
       vi.stubGlobal('WebSocket', vi.fn(() => socket));

@@ -2,6 +2,7 @@ import React from 'react';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { NavRoute } from '../types/meeting';
 import { TingxuLogo } from './TingxuLogo';
+import { WindowControls } from './WindowControls';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -13,6 +14,7 @@ export const Sidebar: React.FC = () => {
     logoutUser,
     quotaMinutes,
     totalQuotaMinutes,
+    toggleFloatingPill,
   } = useMeetingStore();
 
   const navItems: Array<{ id: NavRoute; label: string; icon: string }> = [
@@ -31,8 +33,10 @@ export const Sidebar: React.FC = () => {
       data-testid="app-sidebar-container"
       className="w-64 h-screen bg-subtle border-r border-border-subtle flex flex-col justify-between p-3 select-none shrink-0"
     >
-      {/* 顶部 Logo 品牌区 */}
+      {/* 顶部 Logo 品牌区与原生沉浸窗口控制栏 */}
       <div>
+        <WindowControls />
+
         <div
           data-testid="app-sidebar-div-brand"
           className="flex items-center gap-2.5 px-3 py-2.5 mb-4 rounded-lg bg-panel border border-border-subtle"
@@ -52,6 +56,23 @@ export const Sidebar: React.FC = () => {
             </div>
             <div className="text-[10px] font-sans tracking-wide text-text-tertiary">会议助手</div>
           </div>
+        </div>
+
+        {/* 桌面悬浮条快捷模式切换 */}
+        <div className="mb-3 px-1">
+          <button
+            type="button"
+            data-testid="app-sidebar-btn-toggle-floating-pill"
+            onClick={() => toggleFloatingPill(true)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-text-secondary hover:text-brand-blue bg-panel hover:bg-hover border border-border-subtle transition-all shadow-xs"
+            title="将窗口切换为桌面常驻悬浮药丸，置顶并支持在桌面任意位置自由拖拽"
+          >
+            <div className="flex items-center gap-2">
+              <span>💊</span>
+              <span>切换为桌面悬浮胶囊</span>
+            </div>
+            <span className="text-[10px] text-text-tertiary">↗</span>
+          </button>
         </div>
 
         {/* 导航菜单列表 */}

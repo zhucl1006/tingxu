@@ -26,4 +26,20 @@ describe('bounded local recording session', () => {
   expect(await getRecordingStorageUsage()).toEqual({ totalBytes: 0, recordingCount: 0 });
   expect(await pruneLocalRecordings({})).toEqual({ freedBytes: 0, deletedCount: 0, deletedIds: [] });
  });
+ it('append 应直接透传高效二进制 Uint8Array 直通 IPC，杜绝普通大数组 JSON 序列化导致 GC 卡顿 (TDD)', async () => {
+  let passedPcm: unknown = null;
+  const invoke = vi.fn(async (name: string, args?: Record<string, unknown>) => {
+   if (name === 'start_local_recording') return 'rec_id_binary';
+   if (name === 'append_local_recording') { passedPcm = args?.pcm; return undefined; }
+   return undefined;
+  });
+  const s = new LocalRecordingSession(invoke);
+  await s.start('test-token');
+  const buffer = new ArrayBuffer(640);
+  s.append(buffer);
+  await s.checkpoint();
+
+  expect(passedPcm).toBeInstanceOf(Uint8Array);
+  expect(Array.isArray(passedPcm)).toBe(false);
+ });
 });

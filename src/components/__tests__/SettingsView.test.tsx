@@ -108,4 +108,50 @@ describe('SettingsView - 本地声纹档案与隐私管理面板 (TDD T09)', () 
     fireEvent.click(screen.getByTestId('settings-page-storage-btn-modal-confirm'));
     expect(cleanupSpy).toHaveBeenCalled();
   });
+
+  it('展示会议感知与桌面悬浮挂件区块，并支持切换开关状态', () => {
+    useMeetingStore.setState({
+      meetingDetectionSettings: { enabled: true, floatingWidget: true },
+    });
+
+    render(<SettingsView />);
+
+    const section = screen.getByTestId('settings-page-detection-section');
+    expect(section).toBeInTheDocument();
+
+    const enabledCheckbox = screen.getByTestId('settings-page-detection-checkbox-enabled');
+    const floatingCheckbox = screen.getByTestId('settings-page-detection-checkbox-floating-widget');
+
+    expect(enabledCheckbox).toBeChecked();
+    expect(floatingCheckbox).toBeChecked();
+
+    fireEvent.click(enabledCheckbox);
+    expect(useMeetingStore.getState().meetingDetectionSettings.enabled).toBe(false);
+
+    fireEvent.click(floatingCheckbox);
+    expect(useMeetingStore.getState().meetingDetectionSettings.floatingWidget).toBe(false);
+  });
+
+  it('展示音频拾音与声学增强偏好区块，支持切换高保真防闪避模式与扬声器消回声模式 (020)', () => {
+    render(<SettingsView />);
+    const section = screen.getByTestId('settings-page-audio-section');
+    expect(section).toBeInTheDocument();
+
+    const fidelityBtn = screen.getByTestId('settings-page-audio-btn-mode-fidelity');
+    const aecBtn = screen.getByTestId('settings-page-audio-btn-mode-aec');
+
+    expect(fidelityBtn).toBeInTheDocument();
+    expect(aecBtn).toBeInTheDocument();
+
+    // 默认高保真防闪避模式
+    expect(useMeetingStore.getState().audioAcousticMode).toBe('high_fidelity');
+
+    // 切换至扬声器强力消回声模式
+    fireEvent.click(aecBtn);
+    expect(useMeetingStore.getState().audioAcousticMode).toBe('speaker_aec');
+
+    // 切换回高保真模式
+    fireEvent.click(fidelityBtn);
+    expect(useMeetingStore.getState().audioAcousticMode).toBe('high_fidelity');
+  });
 });

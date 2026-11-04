@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
+import { getTingxuClient } from '../../api/tingxuClient';
 
 export const BillingView: React.FC = () => {
   const { quotaMinutes, setQuotaMinutes, refreshUserBalance, currentUser } = useMeetingStore();
@@ -40,26 +41,16 @@ export const BillingView: React.FC = () => {
 
   const handleCreateOrder = async (planId: typeof selectedPlan) => {
     try {
-      const res = await fetch('http://localhost:3200/v1/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: currentUser?.userId || 'usr_client_local',
-          planId,
-        }),
-      }).catch(() => null);
-
-      if (res && res.ok) {
-        const json = await res.json();
-        setOrderModal({
-          orderNo: json.data.orderNo,
-          planName: json.data.planName,
-          priceYuan: json.data.actualPriceCents / 100,
-          codeUrl: json.data.codeUrl,
-        });
-      } else {
-        alert('无法连接控制面服务端创建微信支付订单，请确认服务端已启动。');
-      }
+      const order = await getTingxuClient().billing.createOrder(
+        planId,
+        currentUser?.userId || 'usr_client_local'
+      );
+      setOrderModal({
+        orderNo: order.orderNo,
+        planName: order.planName,
+        priceYuan: order.priceYuan,
+        codeUrl: order.codeUrl || '',
+      });
     } catch (e) {
       alert(`创建订单异常: ${(e as Error).message}`);
     }
@@ -71,15 +62,7 @@ export const BillingView: React.FC = () => {
 
     try {
       // 触发控制面异步回调接口
-      await fetch('http://localhost:3200/v1/pay/wechat/notify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          orderNo: orderModal.orderNo,
-          transactionId: `wx_mock_${Date.now()}`,
-          amountCents: orderModal.priceYuan * 100,
-        }),
-      }).catch(() => null);
+      await getTingxuClient().billing.notifyPayment(orderModal.orderNo, orderModal.priceYuan);
 
       const targetPlan = plans.find((p) => p.name === orderModal.planName);
       const addedMinutes = (targetPlan?.hours || 30) * 60;

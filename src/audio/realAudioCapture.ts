@@ -10,6 +10,10 @@ export interface RealAudioCaptureOptions {
   deviceId?: string;
   auxDeviceId?: string;
   captureMode?: CaptureMode;
+  echoCancellation?: boolean;
+  noiseSuppression?: boolean;
+  autoGainControl?: boolean;
+  highpassFilter?: boolean;
   onAudioChunk?: (pcmChunk: ArrayBuffer) => void;
   onRmsLevel?: (rms: number) => void;
   onDeviceEnded?: () => void;
@@ -19,20 +23,80 @@ export interface RealAudioCaptureOptions {
 
 /**
  * 将 Float32 音频数据 [-1.0, 1.0] 编码为 16-bit 线性 PCM ArrayBuffer
+ * 内置大动态平滑软削波（Soft Limiting），消除扬声器瞬间爆音导致的刺耳金属谐波方波杂音
  */
 export function floatTo16BitPCM(input: Float32Array): ArrayBuffer {
   const output = new ArrayBuffer(input.length * 2);
   const view = new DataView(output);
   for (let i = 0; i < input.length; i++) {
-    const s = Math.max(-1, Math.min(1, input[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+    let s = input[i];
+    // 平滑软饱和保护：对超出 [-1.0, 1.0] 动态范围的信号进行一阶连续平滑压缩
+    if (s > 1.0) {
+      s = 1.0 - Math.exp(-(s - 1.0)) * 0.05;
+    } else if (s < -1.0) {
+      s = -1.0 + Math.exp(s + 1.0) * 0.05;
+    }
+    const clamped = Math.max(-1, Math.min(1, s));
+    view.setInt16(i * 2, clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff, true);
   }
   return output;
 }
 
 /**
- * 高保真抗混叠降采样器：将任意采样率（如 48000Hz、44100Hz）抗混叠重采样至 16000Hz
- * 具备积分平均低通抗混叠特性，杜绝 CoreAudio 重采样高频毛刺与时钟抖动
+ * 听序（Tingxu）— 高保真带状态连续抗混叠重采样器 (Stateful Audio Resampler)
+ * 解决任意硬件原生采样率（如 48000Hz、44100Hz）跨 chunk 降采样至 16000Hz 时的边界丢点与相位跳变问题。
+ * 在内部维护积分累加器与浮点时间指针，保证跨块波形 100% 连续平滑无毛刺，杜绝音频断流与杂音。
+ */
+export class StatefulAudioResampler {
+  private fromRate: number;
+  private toRate: number;
+  private ratio: number;
+  private accum: number = 0;
+  private count: number = 0;
+  private inputPos: number = 0;
+  private outputPos: number = 0;
+
+  constructor(fromRate: number, toRate: number = 16000) {
+    this.fromRate = fromRate;
+    this.toRate = toRate;
+    this.ratio = fromRate / toRate;
+  }
+
+  public reset(): void {
+    this.accum = 0;
+    this.count = 0;
+    this.inputPos = 0;
+    this.outputPos = 0;
+  }
+
+  public process(input: Float32Array): Float32Array {
+    if (this.fromRate === this.toRate || input.length === 0) {
+      return input;
+    }
+    const ratio = this.ratio;
+    const out: number[] = [];
+
+    for (let i = 0; i < input.length; i++) {
+      this.accum += input[i];
+      this.count++;
+      this.inputPos++;
+
+      // 当输入的累积点数到达当前输出采样点的时间窗右边界
+      const targetInputPos = Math.round((this.outputPos + 1) * ratio);
+      if (this.inputPos >= targetInputPos) {
+        out.push(this.count > 0 ? this.accum / this.count : 0);
+        this.accum = 0;
+        this.count = 0;
+        this.outputPos++;
+      }
+    }
+
+    return new Float32Array(out);
+  }
+}
+
+/**
+ * 兼容性降采样单例/一次性函数导出
  */
 export function downsampleTo16kHz(
   input: Float32Array,
@@ -41,25 +105,8 @@ export function downsampleTo16kHz(
   if (sampleRate === 16000 || input.length === 0) {
     return input;
   }
-  const ratio = sampleRate / 16000;
-  const newLength = Math.round(input.length / ratio);
-  const result = new Float32Array(newLength);
-  let offsetResult = 0;
-  let offsetBuffer = 0;
-
-  while (offsetResult < result.length) {
-    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
-    let accum = 0;
-    let count = 0;
-    for (let i = offsetBuffer; i < nextOffsetBuffer && i < input.length; i++) {
-      accum += input[i];
-      count++;
-    }
-    result[offsetResult] = count > 0 ? accum / count : input[offsetBuffer] || 0;
-    offsetResult++;
-    offsetBuffer = nextOffsetBuffer;
-  }
-  return result;
+  const resampler = new StatefulAudioResampler(sampleRate, 16000);
+  return resampler.process(input);
 }
 
 /**
@@ -156,12 +203,26 @@ export function calculateRms(samples: Float32Array): number {
 }
 
 export class RealAudioCapture {
-  private options: Required<RealAudioCaptureOptions>;
+  private options: RealAudioCaptureOptions & {
+    sampleRate: number;
+    bufferSize: number;
+    deviceId: string;
+    auxDeviceId: string;
+    captureMode: CaptureMode;
+    onAudioChunk: (pcmChunk: ArrayBuffer) => void;
+    onRmsLevel: (rms: number) => void;
+    onDeviceEnded: () => void;
+    onDeviceChange: () => void;
+    onSystemAudioStateChange: (active: boolean) => void;
+  };
   private stream: MediaStream | null = null;
   private auxStream: MediaStream | null = null;
   private systemStream: MediaStream | null = null;
   private audioContext: AudioContext | null = null;
   private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private resampler: StatefulAudioResampler | null = null;
+  private highpassFilter: BiquadFilterNode | null = null;
   private source: MediaStreamAudioSourceNode | null = null;
   private auxSource: MediaStreamAudioSourceNode | null = null;
   private systemSource: MediaStreamAudioSourceNode | null = null;
@@ -181,6 +242,10 @@ export class RealAudioCapture {
       deviceId: options?.deviceId || '',
       auxDeviceId: options?.auxDeviceId || '',
       captureMode: options?.captureMode || 'speaker_meeting',
+      echoCancellation: options?.echoCancellation,
+      noiseSuppression: options?.noiseSuppression,
+      autoGainControl: options?.autoGainControl,
+      highpassFilter: options?.highpassFilter,
       onAudioChunk: options?.onAudioChunk || (() => {}),
       onRmsLevel: options?.onRmsLevel || (() => {}),
       onDeviceEnded: options?.onDeviceEnded || (() => {}),
@@ -190,6 +255,26 @@ export class RealAudioCapture {
     this.dualTrackMixer = new DualTrackAudioMixer((chunk) => {
       this.options.onAudioChunk(chunk);
     });
+  }
+
+  private handleAudioFrame(inputData: Float32Array): void {
+    if (!this.capturing) return;
+
+    if (!this.resampler) {
+      const currentRate = this.audioContext ? this.audioContext.sampleRate : this.options.sampleRate;
+      this.resampler = new StatefulAudioResampler(currentRate, this.options.sampleRate);
+    }
+    const resampledData = this.resampler.process(inputData);
+    if (resampledData.length === 0) return;
+
+    // 计算真实电平并回调通知
+    const rms = calculateRms(resampledData);
+    this.options.onRmsLevel(rms);
+
+    // 转换为 16-bit 线性 PCM 并通过双轨时钟对齐混音器派发（防止时钟错位与数据率翻倍）
+    const pcmBuffer = floatTo16BitPCM(resampledData);
+    const alignedBuffer = this.dualTrackMixer.mixWithMic(pcmBuffer);
+    this.options.onAudioChunk(alignedBuffer);
   }
 
   public getCaptureMode(): CaptureMode {
@@ -213,16 +298,29 @@ export class RealAudioCapture {
 
     try {
       // 1. 请求物理麦克风权限与音频流（支持指定 deviceId 与模式）
-      // 当处于 speaker_meeting（扬声器外放开会）模式且未开启系统数字内录时，关闭 echoCancellation 与 noiseSuppression，
-      // 确保扬声器放出的声音能灵敏收音；若已开启系统音频内录（如戴耳机通过 ScreenCaptureKit 无损截流），
-      // 则麦克风自动启用降噪与回声消除，杜绝耳机侧音杂音与环境底噪。
-      const isMeetingMode = this.options.captureMode === 'speaker_meeting' && !this.isSystemAudioCapturing();
+      // 声学防闪避优化策略 (020)：
+      // 当显式配置了 echoCancellation/autoGainControl/noiseSuppression 时，优先遵从显式配置；
+      // 默认策略：默认关闭 echoCancellation 与 autoGainControl（设为 false），
+      // 杜绝 macOS WebKit 触发 CoreAudio 通信模式 Voice Ducking（将系统扬声器/耳机音量下压衰减 3~6dB 并改变频响），
+      // 确保用户电脑播放的会议远端声音和媒体音量 100% 原始饱满。
+      // 在 speaker_meeting 且未开启内录时同时关闭 noiseSuppression，避免外放声音被降噪过滤。
+      const isSpeakerMeeting = this.options.captureMode === 'speaker_meeting';
+      const echoCancellation = this.options.echoCancellation !== undefined
+        ? this.options.echoCancellation
+        : (this.options.captureMode === 'mic_only' && !this.isSystemAudioCapturing());
+      const noiseSuppression = this.options.noiseSuppression !== undefined
+        ? this.options.noiseSuppression
+        : !isSpeakerMeeting;
+      const autoGainControl = this.options.autoGainControl !== undefined
+        ? this.options.autoGainControl
+        : false;
+
       const audioConstraints: MediaTrackConstraints = {
         channelCount: 1,
         sampleRate: this.options.sampleRate,
-        echoCancellation: !isMeetingMode,
-        noiseSuppression: !isMeetingMode,
-        autoGainControl: true,
+        echoCancellation,
+        noiseSuppression,
+        autoGainControl,
       };
       if (this.options.deviceId) {
         audioConstraints.deviceId = { exact: this.options.deviceId };
@@ -260,42 +358,78 @@ export class RealAudioCapture {
         this.audioContext = new AudioCtx({ sampleRate: this.options.sampleRate });
       }
 
-      // 3. 构建节点图
+      // 3. 构建节点图：优先利用独立音频工作线程 AudioWorklet 彻底隔离主线程卡顿与 GC 丢帧，不支持时优雅降级
       this.source = this.audioContext.createMediaStreamSource(this.stream);
-      this.processor = this.audioContext.createScriptProcessor(this.options.bufferSize, 1, 1);
+      let workletSupported = false;
 
-      this.processor.onaudioprocess = (e) => {
-        if (!this.capturing) return;
-        const inputData = e.inputBuffer.getChannelData(0);
+      if (this.audioContext.audioWorklet && typeof this.audioContext.audioWorklet.addModule === 'function' && typeof AudioWorkletNode !== 'undefined') {
+        try {
+          const workletCode = `
+            class TingxuAudioProcessor extends AudioWorkletProcessor {
+              process(inputs) {
+                const input = inputs[0];
+                if (input && input[0] && input[0].length > 0) {
+                  const channelData = input[0];
+                  const buffer = new Float32Array(channelData.length);
+                  buffer.set(channelData);
+                  this.port.postMessage(buffer.buffer, [buffer.buffer]);
+                }
+                return true;
+              }
+            }
+            registerProcessor('tingxu-audio-processor', TingxuAudioProcessor);
+          `;
+          const blob = new Blob([workletCode], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          await this.audioContext.audioWorklet.addModule(url);
+          URL.revokeObjectURL(url);
+          this.workletNode = new AudioWorkletNode(this.audioContext, 'tingxu-audio-processor');
+          this.workletNode.port.onmessage = (e) => {
+            if (!this.capturing) return;
+            const inputData = new Float32Array(e.data);
+            this.handleAudioFrame(inputData);
+          };
+          workletSupported = true;
+          console.info('[RealAudioCapture] AudioWorklet 独立音频硬件线程已激活 (零欠载断流防护)');
+        } catch (workletErr) {
+          console.warn('[RealAudioCapture] AudioWorklet 载入未就绪，使用 ScriptProcessor 降级模式:', workletErr);
+          this.workletNode = null;
+          workletSupported = false;
+        }
+      }
 
-        // 彻底清空所有输出声道缓冲区（无论单双声道），100% 杜绝漏音与爆音杂音
-        if (e.outputBuffer) {
-          const channels = e.outputBuffer.numberOfChannels || 1;
-          for (let ch = 0; ch < channels; ch++) {
-            if (typeof e.outputBuffer.getChannelData === 'function') {
-              e.outputBuffer.getChannelData(ch).fill(0);
+      if (!workletSupported) {
+        this.processor = this.audioContext.createScriptProcessor(this.options.bufferSize, 1, 1);
+        this.processor.onaudioprocess = (e) => {
+          if (!this.capturing) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+
+          // 彻底清空所有输出声道缓冲区（无论单双声道），100% 杜绝漏音与爆音杂音
+          if (e.outputBuffer) {
+            const channels = e.outputBuffer.numberOfChannels || 1;
+            for (let ch = 0; ch < channels; ch++) {
+              if (typeof e.outputBuffer.getChannelData === 'function') {
+                e.outputBuffer.getChannelData(ch).fill(0);
+              }
             }
           }
-        }
 
-        // 高保真降采样至 16000Hz (若当前声卡运行在 48kHz/44.1kHz)
-        const currentRate = this.audioContext ? this.audioContext.sampleRate : this.options.sampleRate;
-        const resampledData =
-          currentRate === this.options.sampleRate
-            ? inputData
-            : downsampleTo16kHz(inputData, currentRate);
+          this.handleAudioFrame(inputData);
+        };
+      }
 
-        // 计算真实电平并回调通知
-        const rms = calculateRms(resampledData);
-        this.options.onRmsLevel(rms);
+      const activeTarget: AudioNode = ((this.workletNode as unknown as AudioNode) || (this.processor as unknown as AudioNode));
 
-        // 转换为 16-bit 线性 PCM 并通过双轨时钟对齐混音器派发（防止时钟错位与数据率翻倍）
-        const pcmBuffer = floatTo16BitPCM(resampledData);
-        const alignedBuffer = this.dualTrackMixer.mixWithMic(pcmBuffer);
-        this.options.onAudioChunk(alignedBuffer);
-      };
-
-      this.source.connect(this.processor);
+      // 声学前置处理：串接 80Hz 高通滤波，彻底过滤桌面敲击共振与笔记本散热风扇高频运转产生的次声波机械杂音
+      let sourceOutput: AudioNode = this.source;
+      if (typeof this.audioContext.createBiquadFilter === 'function' && this.options.highpassFilter !== false) {
+        this.highpassFilter = this.audioContext.createBiquadFilter();
+        this.highpassFilter.type = 'highpass';
+        this.highpassFilter.frequency.value = 80;
+        this.source.connect(this.highpassFilter as any);
+        sourceOutput = this.highpassFilter;
+      }
+      sourceOutput.connect(activeTarget as any);
 
       // 4. 如果配置了辅助会议音频通道 (如 Microsoft Teams Audio)，同时捕获并混音
       if (this.options.auxDeviceId) {
@@ -311,7 +445,7 @@ export class RealAudioCapture {
             },
           });
           this.auxSource = this.audioContext.createMediaStreamSource(this.auxStream);
-          this.auxSource.connect(this.processor);
+          this.auxSource.connect(activeTarget as any);
           console.info(`[RealAudioCapture] 辅助会议音频通道 (Teams/内录) 已成功混音并轨: ${this.options.auxDeviceId}`);
         } catch (e) {
           console.warn('[RealAudioCapture] 辅助会议音频通道初始化失败:', e);
@@ -327,12 +461,12 @@ export class RealAudioCapture {
       if (typeof this.audioContext.createGain === 'function') {
         this.silenceGain = this.audioContext.createGain();
         this.silenceGain.gain.setValueAtTime(0, this.audioContext.currentTime);
-        this.processor.connect(this.silenceGain);
+        activeTarget.connect(this.silenceGain);
         if (this.audioContext.destination) {
           this.silenceGain.connect(this.audioContext.destination);
         }
       } else if (this.audioContext.destination) {
-        this.processor.connect(this.audioContext.destination);
+        activeTarget.connect(this.audioContext.destination);
       }
 
       if (this.audioContext.state === 'suspended') {
@@ -359,10 +493,19 @@ export class RealAudioCapture {
         this.auxStream.getTracks().forEach(track => track.stop());
         this.auxStream = null;
       }
+      if (this.workletNode) {
+        if (typeof this.workletNode.disconnect === 'function') this.workletNode.disconnect();
+        if (this.workletNode.port && typeof this.workletNode.port.close === 'function') this.workletNode.port.close();
+        this.workletNode = null;
+      }
       if (this.processor) {
         this.processor.onaudioprocess = null;
         this.processor.disconnect();
         this.processor = null;
+      }
+      if (this.resampler) {
+        this.resampler.reset();
+        this.resampler = null;
       }
       if (this.source) { this.source.disconnect(); this.source = null; }
       const failedContext = this.audioContext;
@@ -481,7 +624,7 @@ export class RealAudioCapture {
         };
       });
 
-      if (this.audioContext && this.processor) {
+      if (this.audioContext && (this.workletNode || this.processor)) {
         this.attachSystemAudioStream(this.systemStream);
       }
 
@@ -493,14 +636,15 @@ export class RealAudioCapture {
   }
 
   private attachSystemAudioStream(stream: MediaStream): void {
-    if (!this.audioContext || !this.processor) return;
+    const target = ((this.workletNode as unknown as AudioNode) || (this.processor as unknown as AudioNode));
+    if (!this.audioContext || !target) return;
     try {
       if (this.systemSource) {
         this.systemSource.disconnect();
       }
       this.systemSource = this.audioContext.createMediaStreamSource(stream);
-      // Web Audio API: 多个 source 节点同时 connect 到同一个 processor，会自动以高保真浮点线性相加混音
-      this.systemSource.connect(this.processor);
+      // Web Audio API: 多个 source 节点同时 connect 到同一个处理器节点，会自动以高保真浮点线性相加混音
+      this.systemSource.connect(target as any);
       console.info('[RealAudioCapture] 系统内部扬声器音频流已成功混音并轨');
     } catch (e) {
       console.warn('[RealAudioCapture] 混音系统音频流异常:', e);
@@ -563,7 +707,8 @@ export class RealAudioCapture {
       this.auxStream = null;
     }
 
-    if (newAuxDeviceId && this.capturing && this.audioContext && this.processor) {
+    const activeTarget = ((this.workletNode as unknown as AudioNode) || (this.processor as unknown as AudioNode));
+    if (newAuxDeviceId && this.capturing && this.audioContext && activeTarget) {
       try {
         this.auxStream = await navigator.mediaDevices.getUserMedia({
           audio: {
@@ -576,7 +721,7 @@ export class RealAudioCapture {
           },
         });
         this.auxSource = this.audioContext.createMediaStreamSource(this.auxStream);
-        this.auxSource.connect(this.processor);
+        this.auxSource.connect(activeTarget as any);
         console.info(`[RealAudioCapture] 已切换辅助音频设备: ${newAuxDeviceId}`);
       } catch (e) {
         console.warn('[RealAudioCapture] 切换辅助音频设备失败:', e);
@@ -628,12 +773,34 @@ export class RealAudioCapture {
       this.silenceGain = null;
     }
 
+    if (this.workletNode) {
+      if (typeof this.workletNode.disconnect === 'function') {
+        this.workletNode.disconnect();
+      }
+      if (this.workletNode.port && typeof this.workletNode.port.close === 'function') {
+        this.workletNode.port.close();
+      }
+      this.workletNode = null;
+    }
+
     if (this.processor) {
       if (typeof this.processor.disconnect === 'function') {
         this.processor.disconnect();
       }
       this.processor.onaudioprocess = null;
       this.processor = null;
+    }
+
+    if (this.resampler) {
+      this.resampler.reset();
+      this.resampler = null;
+    }
+
+    if (this.highpassFilter) {
+      if (typeof this.highpassFilter.disconnect === 'function') {
+        this.highpassFilter.disconnect();
+      }
+      this.highpassFilter = null;
     }
 
     if (this.source) {
