@@ -1,0 +1,78 @@
+name: 'Release Desktop Apps'
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '发布版本标签 (例如 v0.2.0)'
+        required: false
+        default: 'v0.2.0'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: 'macos-latest'
+            args: '--target universal-apple-darwin'
+          - platform: 'windows-latest'
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Run Unit Tests & Typecheck
+        run: |
+          npx tsc --noEmit
+          npm test
+
+      - name: Build Tauri Desktop App & Create Release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.event.inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v__VERSION__' }}
+          releaseName: '听序 Tingxu v__VERSION__'
+          releaseBody: |
+            ## 听序（Tingxu）开源单机版 v__VERSION__ 正式发布 🎉
+
+            极简无感、开源优先的本地 AI 会议助手（Local-First Desktop App）。
+
+            ### 🌟 核心特性
+            - 🎙️ **单机 BYOK 模式**：自备 API Key（DeepSeek、阿里云百炼通义千问、本地 Ollama 等），无需云端服务中转
+            - 🔒 **本地数据主权**：录音与逐字稿仅在本地 SQLite 落盘，断网环境亦可离线查阅
+            - 💡 **实时洞察控频降费**：支持手动提炼、周期可调与完全关闭模式，算力成本大幅降低
+            - 📋 **四维结构化纪要**：会后自动提炼关键决策、行动待办与事实依据，支持人工编辑保护
+            - 💻 **跨平台原生桌面体验**：支持 macOS（Universal 通用二进制，同时适配 Apple Silicon 与 Intel Mac）与 Windows（MSI / EXE）
+
+            ### 📦 安装包下载说明
+            - **macOS 用户**：下载 `.dmg` 文件直接拖拽至“应用程序”即可
+            - **Windows 用户**：下载 `.msi` 或 `.exe` 安装程序按向导安装
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

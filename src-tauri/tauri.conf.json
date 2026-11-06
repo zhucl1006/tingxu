@@ -35,6 +35,13 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "shortDescription": "听序 — 专为个人办公打造的极简无感 AI 会议助手",
     "longDescription": "听序（Tingxu）是一款专注于中国大陆办公场景的高性能本地优先 AI 实时会议记录与智能纪要助手。",
     "category": "Productivity",
