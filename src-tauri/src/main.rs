@@ -93,6 +93,12 @@ fn check_running_meeting_apps() -> Result<Vec<tingxu_desktop::media::meeting_det
     Ok(tingxu_desktop::media::meeting_detector::scan_running_meeting_apps())
 }
 
+#[tauri::command]
+fn check_local_asr_model(model_id: Option<String>) -> Result<tingxu_desktop::asr::local_model::LocalModelStatus, AppError> {
+    let id = model_id.unwrap_or_default();
+    Ok(tingxu_desktop::asr::local_model::inspect_local_asr_model(&id))
+}
+
 // 本地 192 维声纹嵌入提取命令（音频流不出本机，严格遵守 Local-First 隐私铁律）
 #[tauri::command]
 fn speaker_embed(samples: Vec<f32>, sample_rate: u32) -> Result<Vec<f32>, AppError> {
@@ -232,6 +238,7 @@ fn main() {
             close_window,
             set_floating_pill_visible,
             check_running_meeting_apps,
+            check_local_asr_model,
             speaker_embed,
             start_system_audio_capture,
             stop_system_audio_capture,

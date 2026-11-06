@@ -247,7 +247,8 @@ export const DEFAULT_APPEARANCE_SETTINGS: UiAppearanceSettings = {
 
 export type AppRunMode = 'standalone';
 export type LlmProviderType = 'deepseek' | 'qwen' | 'custom' | 'ollama';
-export type AsrProviderType = 'dashscope' | 'custom';
+export type AsrProviderType = 'dashscope' | 'custom' | 'local_endpoint' | 'local_embedded';
+export type LocalAsrProtocol = 'openai_http' | 'sherpa_ws';
 
 export interface ByokSettings {
   mode?: AppRunMode;
@@ -258,6 +259,8 @@ export interface ByokSettings {
   asrProvider: AsrProviderType;
   asrApiKey: string;
   asrEndpoint: string;
+  localAsrProtocol?: LocalAsrProtocol;
+  localAsrModel?: string;
 }
 
 export const DEFAULT_BYOK_SETTINGS: ByokSettings = {
@@ -269,6 +272,8 @@ export const DEFAULT_BYOK_SETTINGS: ByokSettings = {
   asrProvider: 'dashscope',
   asrApiKey: '',
   asrEndpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+  localAsrProtocol: 'openai_http',
+  localAsrModel: 'whisper-1',
 };
 
 // 实时洞察模式与控频配置 (026 算力降费)

@@ -673,4 +673,46 @@ describe('014 final先显示，身份后补齐', () => {
     expect(segment.recordingBeginMs).toBe(6234); expect(segment.timestamp).toBe('00:06');
   });
 
+  it('当配置为本地 ASR 时，逐字稿顶栏准确反映就绪与连接状态', () => {
+    useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().updateByokSettings({ asrProvider: 'local_endpoint' });
+    useMeetingStore.getState().setAsrStatus('connected', '');
+
+    render(<InMeetingWorkbench />);
+    const badge = screen.getByTestId('workbench-page-transcript-panel-badge-channel-source');
+    expect(badge.textContent).toContain('本地ASR就绪');
+
+    act(() => {
+      useMeetingStore.getState().setAsrStatus('connecting', '');
+    });
+    expect(badge.textContent).toContain('本地ASR连接中');
+
+    act(() => {
+      useMeetingStore.getState().setAsrStatus('error', '端点拒绝连接');
+    });
+    expect(badge.textContent).toContain('本地ASR未连接');
+  });
+
+  it('当本地 ASR 发生连接异常时，展示排查提示并提供一键跳转设置操作', () => {
+    useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().setCurrentRoute('record');
+    useMeetingStore.getState().updateByokSettings({ asrProvider: 'local_endpoint' });
+    useMeetingStore.getState().setAsrStatus('error', '无法连接本地 ASR 服务: http://127.0.0.1:8000');
+
+    render(<InMeetingWorkbench />);
+
+    const alertBox = screen.getByTestId('workbench-page-transcript-panel-alert-asr-error');
+    expect(alertBox).toBeInTheDocument();
+    expect(alertBox.textContent).toContain('无法连接本地 ASR 服务');
+
+    const configBtn = screen.getByTestId('workbench-page-transcript-panel-btn-open-asr-settings');
+    expect(configBtn).toBeInTheDocument();
+    fireEvent.click(configBtn);
+
+    expect(useMeetingStore.getState().currentRoute).toBe('settings');
+
+    const dismissBtn = screen.getByTestId('workbench-page-transcript-panel-btn-dismiss-asr-error');
+    fireEvent.click(dismissBtn);
+    expect(useMeetingStore.getState().asrError).toBe('');
+  });
 });

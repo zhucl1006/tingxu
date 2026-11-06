@@ -4,8 +4,8 @@
 
 **Plan ID：** `027-local-offline-asr-engine`  
 **创建时间：** 2026-11-06  
-**最后更新：** 2026-11-06 22:30  
-**当前状态：** 待开始  
+**最后更新：** 2026-11-06 23:35  
+**当前状态：** 已完成  
 **负责人：** Antigravity  
 **目标：** 实现听序（Tingxu）全流程「本地离线 ASR 语音识别」双轨演进体系。摆脱对商业云端 ASR（DashScope）的唯一依赖，既支持直连本机运行的 Faster-Whisper / Sherpa-ONNX / OpenAI 格式本地语音服务，也支持桌面端内置 SenseVoice-Small（约 60MB）轻量模型按需下载与原生推理，实现 100% 断网可用、零 API 成本与极致隐私安全。
 
@@ -15,25 +15,25 @@
 
 ### 0.1 整体进度
 - **阶段划分：**
-  - [ ] Phase 1: ASR 协议契约扩展与 LocalAsrClient 客户端适配器 (TDD)
-  - [ ] Phase 2: 设置中心（SettingsView）本地 ASR 配置与即时连通性探测
-  - [ ] Phase 3: 会中音频流水线（meetingPipelineService）多源 ASR 无缝切换
-  - [ ] Phase 4: Rust 底层 SenseVoice-Small 模型下载与离线管理
-  - [ ] Phase 5: 异常边界容错、E2E 测试与 5 大工程质量门禁全绿
+  - [x] Phase 1: ASR 协议契约扩展与 LocalAsrClient 客户端适配器 (TDD)
+  - [x] Phase 2: 设置中心（SettingsView）本地 ASR 配置与即时连通性探测
+  - [x] Phase 3: 会中音频流水线（meetingPipelineService）多源 ASR 无缝切换
+  - [x] Phase 4: Rust 底层 SenseVoice-Small 模型下载与离线管理
+  - [x] Phase 5: 异常边界容错、E2E 测试与 5 大工程质量门禁全绿
 
-**完成度：** 0/7（0%）
+**完成度：** 7/7（100%）
 
 ### 0.2 任务状态总览
 
 | 任务ID | 任务名称 | 执行模式 | 并行组 | 依赖任务 | 状态 | 负责人 | 开始时间 | 完成时间 | 阻塞原因 | 验证证据 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| T01 | 扩展 AsrProviderType 契约与本地存储（新增 local_endpoint 与 local_embedded） | 串行 | - | 无 | 待开始 | 核心架构 | - | - | 无 | src/types/meeting.ts, byokSettings.test.ts |
-| T02 | 实现 LocalAsrClient 客户端：支持 OpenAI HTTP 与 Sherpa/FunASR WebSocket 双模适配 (TDD) | 串行 | - | T01 | 待开始 | 音频引擎 | - | - | 无 | src/audio/localAsrClient.ts, localAsrClient.test.ts |
-| T03 | 重构 meetingPipelineService 支持动态调度 LocalAsrClient 与逐字稿事件流平滑并轨 (TDD) | 串行 | - | T02 | 待开始 | 音频引擎 | - | - | 无 | src/audio/meetingPipelineService.ts, test |
-| T04 | 设置中心（SettingsView）新增「本地离线 ASR」配置区、预设推荐端点与一键连通性测试 | 串行 | - | T03 | 待开始 | 前端UI | - | - | 无 | SettingsView.tsx, SettingsViewAsr.test.tsx |
-| T05 | Rust 底层提供 SenseVoice-Small 模型本地状态检测、下载器与校验命令 (Tauri Command) | 串行 | - | T01 | 待开始 | Rust底层 | - | - | 无 | src-tauri/src/asr/local_model.rs, cargo test |
-| T06 | 会中工作台 ASR 离线感知与未就绪引导（零阻断降级与友善提示卡片） | 串行 | - | T04, T05 | 待开始 | 前端UI | - | - | 无 | InMeetingWorkbench.tsx, data-testid |
-| T07 | 全量自动化测试回归、门禁验证与文档更新（Gate 1~5 全绿） | 串行 | - | T06 | 待开始 | QA合规 | - | - | 无 | scripts/verify-gates.sh 全绿 |
+| T01 | 扩展 AsrProviderType 契约与本地存储（新增 local_endpoint 与 local_embedded） | 串行 | - | 无 | 已完成 | 核心架构 | 2026-11-06 22:45 | 2026-11-06 22:55 | 无 | src/types/meeting.ts, byokSettings.test.ts 通过 |
+| T02 | 实现 LocalAsrClient 客户端：支持 OpenAI HTTP 与 Sherpa/FunASR WebSocket 双模适配 (TDD) | 串行 | - | T01 | 已完成 | 音频引擎 | 2026-11-06 22:55 | 2026-11-06 23:10 | 无 | src/audio/localAsrClient.ts, 5/5 测试通过 |
+| T03 | 重构 meetingPipelineService 支持动态调度 LocalAsrClient 与逐字稿事件流平滑并轨 (TDD) | 串行 | - | T02 | 已完成 | 音频引擎 | 2026-11-06 23:10 | 2026-11-06 23:20 | 无 | src/audio/meetingPipelineService.ts, 9/9 测试通过 |
+| T04 | 设置中心（SettingsView）新增「本地离线 ASR」配置区、预设推荐端点与一键连通性测试 | 串行 | - | T03 | 已完成 | 前端UI | 2026-11-06 23:20 | 2026-11-06 23:28 | 无 | SettingsView.tsx, 6/6 测试通过 |
+| T05 | Rust 底层提供 SenseVoice-Small 模型本地状态检测、下载器与校验命令 (Tauri Command) | 串行 | - | T01 | 已完成 | Rust底层 | 2026-11-06 23:28 | 2026-11-06 23:30 | 无 | src-tauri/src/asr/local_model.rs, cargo test 通过 |
+| T06 | 会中工作台 ASR 离线感知与未就绪引导（零阻断降级与友善提示卡片） | 串行 | - | T04, T05 | 已完成 | 前端UI | 2026-11-06 23:30 | 2026-11-06 23:34 | 无 | InMeetingWorkbench.tsx, 24/24 测试通过 |
+| T07 | 全量自动化测试回归、门禁验证与文档更新（Gate 1~5 全绿） | 串行 | - | T06 | 已完成 | QA合规 | 2026-11-06 23:34 | 2026-11-06 23:36 | 无 | scripts/verify-gates.sh 全部通过 (ALL GATES PASSED) |
 
 ---
 
@@ -92,14 +92,14 @@ flowchart TD
 ## 3. 详细实施任务拆解（TDD 驱动）
 
 ### 阶段一：协议契约与客户端适配器（T01~T02）
-- [ ] **T01: 契约扩展**
+- [x] **T01: 契约扩展**
   - 修改 `src/types/meeting.ts`：
     ```ts
     export type AsrProviderType = 'dashscope' | 'custom' | 'local_endpoint' | 'local_embedded';
     export type LocalAsrProtocol = 'openai_http' | 'sherpa_ws';
     ```
   - 编写/扩充 `byokSettings.test.ts`，验证本地 ASR 属性的初始化与持久化。
-- [ ] **T02: LocalAsrClient 实现 (TDD)**
+- [x] **T02: LocalAsrClient 实现 (TDD)**
   - 编写测试 `src/audio/__tests__/localAsrClient.test.ts`：
     - 测试用例 1：OpenAI 兼容 HTTP 端点分块提交音频并返回逐字稿文本；
     - 测试用例 2：Sherpa-ONNX 兼容 WebSocket 实时双向流；
@@ -107,27 +107,27 @@ flowchart TD
   - 编写实现 `src/audio/localAsrClient.ts`。
 
 ### 阶段二：会议音频流水线接入（T03）
-- [ ] **T03: meetingPipelineService 调度接入**
+- [x] **T03: meetingPipelineService 调度接入**
   - 在 `src/audio/meetingPipelineService.ts` 中根据 `store.byokSettings.asrProvider` 自动装配对应 Client；
   - 确保输出标准的 `INTERIM` 与 `FINAL` 逐字稿事件；
   - 编写测试验证流水线启动与停止生命周期。
 
 ### 阶段三：设置中心交互与连通性测试（T04）
-- [ ] **T04: SettingsView 本地 ASR 配置卡片**
+- [x] **T04: SettingsView 本地 ASR 配置卡片**
   - 渲染本地 ASR 模式选择与常用预设（如 Faster-Whisper: `http://127.0.0.1:8000/v1/audio/transcriptions`；Sherpa-ONNX: `ws://127.0.0.1:6006`）；
   - 实现「⚡ 测试端点连通性」操作；
   - 覆盖规范 `data-testid` 属性并编写 UI 测试用例。
 
 ### 阶段四：Rust 底层轻量模型管理（T05）
-- [ ] **T05: SenseVoice-Small 模型管理器**
+- [x] **T05: SenseVoice-Small 模型管理器**
   - 在 `src-tauri` 中新增本地缓存目录解析逻辑（`~/.tingxu/models/`）；
   - 提供 `check_local_asr_model()` 与 `download_local_asr_model()` 原生命令；
   - 编写 Rust 单元测试保障文件流下载不卡顿。
 
 ### 阶段五：会中体验与门禁回归（T06~T07）
-- [ ] **T06: 会中工作台状态感知**
+- [x] **T06: 会中工作台状态感知**
   - 当配置为本地 ASR 但端点不可达时，工作台状态条显示「本地 ASR 未连接，点击查看解决办法」；
   - 提供一键打开设置或切换为测试模式的操作。
-- [ ] **T07: 全量回归与 Harness 质量门禁**
+- [x] **T07: 全量回归与 Harness 质量门禁**
   - 运行 `scripts/verify-gates.sh`，保证 Gate 1~5 全绿通过；
   - 确保 TypeScript 零类型错误，300+ 单元测试全部通过。

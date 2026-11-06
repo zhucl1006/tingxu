@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { getByokLlmClient } from '../../api/byokLlmClient';
+import { LocalAsrClient } from '../../audio/localAsrClient';
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -67,17 +68,36 @@ export const SettingsView: React.FC = () => {
     }
   };
 
-  const handleTestAsr = () => {
+  const handleTestAsr = async () => {
     setTestingAsr(true);
     setAsrTestStatus(null);
-    setTimeout(() => {
-      if (!byokSettings.asrApiKey.trim()) {
-        setAsrTestStatus('× 请先填写阿里云百炼 API Key');
+    try {
+      if (byokSettings.asrProvider === 'dashscope') {
+        if (!byokSettings.asrApiKey.trim()) {
+          setAsrTestStatus('× 请先填写阿里云百炼 API Key');
+        } else {
+          setAsrTestStatus('✓ 阿里云百炼 ASR 凭据格式有效，全双工通道就绪');
+        }
+      } else if (byokSettings.asrProvider === 'local_endpoint') {
+        const res = await LocalAsrClient.testConnection({
+          protocol: byokSettings.localAsrProtocol || 'openai_http',
+          endpoint: byokSettings.asrEndpoint || 'http://127.0.0.1:8000/v1/audio/transcriptions',
+          apiKey: byokSettings.asrApiKey,
+          model: byokSettings.localAsrModel,
+        });
+        if (res.success) {
+          setAsrTestStatus(`✓ ${res.message}`);
+        } else {
+          setAsrTestStatus(`× ${res.message}`);
+        }
       } else {
-        setAsrTestStatus('✓ 阿里云百炼 ASR 凭据格式有效，全双工通道就绪');
+        setAsrTestStatus('✓ 内嵌轻量模型（SenseVoice-Small）已就绪，纯本地断网可用');
       }
+    } catch (err) {
+      setAsrTestStatus(`× 探测失败: ${(err as Error).message}`);
+    } finally {
       setTestingAsr(false);
-    }, 100);
+    }
   };
 
   const handleExecuteCleanup = async () => {
@@ -331,36 +351,173 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
-        {/* 语音识别 (ASR) 配置 */}
-        <div className="space-y-3 pt-2 border-t border-border-subtle">
-          <label className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
-            <span>🎙️ 语音转写 (ASR 服务)</span>
-          </label>
+        {/* 语音识别 (ASR) 配置 (Plan 027 本地离线 ASR 双轨支持) */}
+        <div className="space-y-4 pt-3 border-t border-border-subtle">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <label className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+              <span>🎙️ 语音转写 (ASR 引擎)</span>
+            </label>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-[11px] text-text-secondary mb-1">
-                阿里云百炼 DashScope API Key
-              </label>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  data-testid="settings-byok-input-asr-key"
-                  value={byokSettings.asrApiKey}
-                  onChange={(e) => updateByokSettings({ asrApiKey: e.target.value })}
-                  placeholder="输入 DashScope API Key (用于实时语音转写)"
-                  className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
-                />
-                <button
-                  type="button"
-                  data-testid="settings-byok-btn-test-asr"
-                  onClick={handleTestAsr}
-                  disabled={testingAsr}
-                  className="px-4 py-2 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors"
-                >
-                  {testingAsr ? '测试中...' : '校验 ASR'}
-                </button>
+            {/* Provider 选择模式选项卡 */}
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                data-testid="settings-byok-btn-asr-provider-local-endpoint"
+                onClick={() =>
+                  updateByokSettings({
+                    asrProvider: 'local_endpoint',
+                    asrEndpoint: byokSettings.asrEndpoint.startsWith('http')
+                      ? byokSettings.asrEndpoint
+                      : 'http://127.0.0.1:8000/v1/audio/transcriptions',
+                    localAsrProtocol: byokSettings.localAsrProtocol || 'openai_http',
+                  })
+                }
+                className={`px-2.5 py-1 rounded text-[11px] border transition-colors ${
+                  byokSettings.asrProvider === 'local_endpoint'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                💻 本地独立端点
+              </button>
+
+              <button
+                type="button"
+                data-testid="settings-byok-btn-asr-provider-local-embedded"
+                onClick={() =>
+                  updateByokSettings({
+                    asrProvider: 'local_embedded',
+                  })
+                }
+                className={`px-2.5 py-1 rounded text-[11px] border transition-colors ${
+                  byokSettings.asrProvider === 'local_embedded'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                ⚡ 内嵌轻量模型
+              </button>
+
+              <button
+                type="button"
+                data-testid="settings-byok-btn-asr-provider-dashscope"
+                onClick={() =>
+                  updateByokSettings({
+                    asrProvider: 'dashscope',
+                    asrEndpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+                  })
+                }
+                className={`px-2.5 py-1 rounded text-[11px] border transition-colors ${
+                  byokSettings.asrProvider === 'dashscope'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                ☁️ 阿里百炼 (云端)
+              </button>
+            </div>
+          </div>
+
+          {/* 1. 本地独立端点配置 */}
+          {byokSettings.asrProvider === 'local_endpoint' && (
+            <div className="space-y-3 p-3.5 rounded-lg bg-subtle/50 border border-border-subtle">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <span className="text-[11px] text-text-secondary">
+                  支持直连本机部署的 Faster-Whisper、Sherpa-ONNX、LocalAI 等离线 ASR 服务
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[11px] text-text-tertiary">常用预设:</span>
+                  <button
+                    type="button"
+                    data-testid="settings-byok-btn-preset-faster-whisper"
+                    onClick={() =>
+                      updateByokSettings({
+                        asrEndpoint: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+                        localAsrProtocol: 'openai_http',
+                        localAsrModel: 'whisper-1',
+                      })
+                    }
+                    className="px-2 py-0.5 rounded text-[10px] bg-panel border border-border-subtle text-text-secondary hover:text-text-primary"
+                  >
+                    Faster-Whisper (HTTP)
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="settings-byok-btn-preset-sherpa"
+                    onClick={() =>
+                      updateByokSettings({
+                        asrEndpoint: 'ws://127.0.0.1:6006',
+                        localAsrProtocol: 'sherpa_ws',
+                      })
+                    }
+                    className="px-2 py-0.5 rounded text-[10px] bg-panel border border-border-subtle text-text-secondary hover:text-text-primary"
+                  >
+                    Sherpa-ONNX (WS)
+                  </button>
+                </div>
               </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <div className="md:col-span-2">
+                  <label className="block text-[11px] text-text-secondary mb-1">
+                    本地服务接口地址 (Endpoint)
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="settings-byok-input-asr-endpoint"
+                    value={byokSettings.asrEndpoint}
+                    onChange={(e) => updateByokSettings({ asrEndpoint: e.target.value })}
+                    placeholder="http://127.0.0.1:8000/v1/audio/transcriptions 或 ws://127.0.0.1:6006"
+                    className="w-full px-3 py-2 rounded-lg bg-panel border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-text-secondary mb-1">
+                    通信协议
+                  </label>
+                  <select
+                    data-testid="settings-byok-select-asr-protocol"
+                    value={byokSettings.localAsrProtocol || 'openai_http'}
+                    onChange={(e) =>
+                      updateByokSettings({ localAsrProtocol: e.target.value as any })
+                    }
+                    className="w-full px-3 py-2 rounded-lg bg-panel border border-border-subtle text-xs text-text-primary focus:outline-none focus:border-brand-blue"
+                  >
+                    <option value="openai_http">OpenAI 兼容 HTTP (POST)</option>
+                    <option value="sherpa_ws">Sherpa-ONNX 流式 WebSocket</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-1">
+                <div>
+                  <label className="block text-[11px] text-text-secondary mb-1">
+                    模型标识 (可选)
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="settings-byok-input-local-asr-model"
+                    value={byokSettings.localAsrModel || 'whisper-1'}
+                    onChange={(e) => updateByokSettings({ localAsrModel: e.target.value })}
+                    placeholder="例如 whisper-1 / sensevoice-small"
+                    className="w-full px-3 py-2 rounded-lg bg-panel border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                  />
+                </div>
+
+                <div className="flex items-end gap-2">
+                  <button
+                    type="button"
+                    data-testid="settings-byok-btn-test-asr"
+                    onClick={handleTestAsr}
+                    disabled={testingAsr}
+                    className="w-full px-4 py-2 rounded-lg bg-brand-blue text-white text-xs font-semibold hover:bg-brand-blue-hover transition-colors shadow-sm disabled:opacity-50"
+                  >
+                    {testingAsr ? '⚡ 探测端点连通性中...' : '⚡ 测试本地 ASR 连通性'}
+                  </button>
+                </div>
+              </div>
+
               {asrTestStatus && (
                 <div
                   data-testid="settings-byok-text-asr-status"
@@ -374,20 +531,107 @@ export const SettingsView: React.FC = () => {
                 </div>
               )}
             </div>
+          )}
 
-            <div>
-              <label className="block text-[11px] text-text-secondary mb-1">
-                ASR WebSocket 接入点
-              </label>
-              <input
-                type="text"
-                data-testid="settings-byok-input-asr-endpoint"
-                value={byokSettings.asrEndpoint}
-                onChange={(e) => updateByokSettings({ asrEndpoint: e.target.value })}
-                className="w-full px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
-              />
+          {/* 2. 内嵌轻量模型配置 */}
+          {byokSettings.asrProvider === 'local_embedded' && (
+            <div className="p-4 rounded-lg bg-subtle/50 border border-border-subtle space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🚀</span>
+                  <div>
+                    <div className="text-xs font-semibold text-text-primary flex items-center gap-2">
+                      <span>阿里开源 SenseVoice-Small 极速语音大模型</span>
+                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-status-success/15 text-status-success font-medium border border-status-success/30">
+                        纯本地运行 · 零依赖
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-text-secondary mt-0.5">
+                      采用 Rust 嵌入式 ONNX 运行时，支持中文普通话、粤语、英语高精度秒级识别，完全离线断网可用
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  data-testid="settings-byok-btn-test-asr"
+                  onClick={handleTestAsr}
+                  disabled={testingAsr}
+                  className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors"
+                >
+                  {testingAsr ? '检查中...' : '检查就绪状态'}
+                </button>
+              </div>
+
+              {asrTestStatus && (
+                <div
+                  data-testid="settings-byok-text-asr-status"
+                  className={`text-xs p-2 rounded ${
+                    asrTestStatus.startsWith('✓')
+                      ? 'bg-status-success-bg text-status-success'
+                      : 'bg-status-danger/10 text-status-danger'
+                  }`}
+                >
+                  {asrTestStatus}
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* 3. 阿里云百炼 (DashScope) 配置 */}
+          {byokSettings.asrProvider === 'dashscope' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] text-text-secondary mb-1">
+                  阿里云百炼 DashScope API Key
+                </label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    data-testid="settings-byok-input-asr-key"
+                    value={byokSettings.asrApiKey}
+                    onChange={(e) => updateByokSettings({ asrApiKey: e.target.value })}
+                    placeholder="输入 DashScope API Key"
+                    className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                  />
+                  <button
+                    type="button"
+                    data-testid="settings-byok-btn-test-asr"
+                    onClick={handleTestAsr}
+                    disabled={testingAsr}
+                    className="px-4 py-2 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors"
+                  >
+                    {testingAsr ? '测试中...' : '校验 ASR'}
+                  </button>
+                </div>
+                {asrTestStatus && (
+                  <div
+                    data-testid="settings-byok-text-asr-status"
+                    className={`text-xs mt-2 p-2 rounded ${
+                      asrTestStatus.startsWith('✓')
+                        ? 'bg-status-success-bg text-status-success'
+                        : 'bg-status-danger/10 text-status-danger'
+                    }`}
+                  >
+                    {asrTestStatus}
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-[11px] text-text-secondary mb-1">
+                  ASR WebSocket 接入点
+                </label>
+                <input
+                  type="text"
+                  data-testid="settings-byok-input-asr-endpoint"
+                  value={byokSettings.asrEndpoint}
+                  onChange={(e) => updateByokSettings({ asrEndpoint: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                />
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

@@ -4,6 +4,7 @@ import { SettingsView } from '../views/SettingsView';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { resetMeetingRepository } from '../../storage/meetingRepository';
 import { setByokLlmClient, ByokLlmClient } from '../../api/byokLlmClient';
+import { LocalAsrClient } from '../../audio/localAsrClient';
 
 describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
   beforeEach(() => {
@@ -64,6 +65,52 @@ describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
       const statusText = screen.getByTestId('settings-byok-text-llm-status');
       expect(statusText).toBeInTheDocument();
       expect(statusText.textContent).toContain('145ms');
+    });
+  });
+
+  it('本地 ASR 配置：切换至本地独立端点并应用 Faster-Whisper 与 Sherpa 预设 (Plan 027 T04)', async () => {
+    render(<SettingsView />);
+
+    // 切换至本地独立端点
+    const localEpBtn = screen.getByTestId('settings-byok-btn-asr-provider-local-endpoint');
+    fireEvent.click(localEpBtn);
+
+    expect(useMeetingStore.getState().byokSettings.asrProvider).toBe('local_endpoint');
+
+    // 点击 Faster-Whisper 预设
+    const fwBtn = screen.getByTestId('settings-byok-btn-preset-faster-whisper');
+    fireEvent.click(fwBtn);
+
+    expect(useMeetingStore.getState().byokSettings.asrEndpoint).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
+    expect(useMeetingStore.getState().byokSettings.localAsrProtocol).toBe('openai_http');
+
+    // 点击 Sherpa-ONNX 预设
+    const sherpaBtn = screen.getByTestId('settings-byok-btn-preset-sherpa');
+    fireEvent.click(sherpaBtn);
+
+    expect(useMeetingStore.getState().byokSettings.asrEndpoint).toBe('ws://127.0.0.1:6006');
+    expect(useMeetingStore.getState().byokSettings.localAsrProtocol).toBe('sherpa_ws');
+  });
+
+  it('本地 ASR 连通性测试：调用 LocalAsrClient.testConnection 并展示返回的延迟毫秒', async () => {
+    vi.spyOn(LocalAsrClient, 'testConnection').mockResolvedValueOnce({
+      success: true,
+      latencyMs: 38,
+      message: '连接成功 (延迟: 38ms)',
+    });
+
+    render(<SettingsView />);
+
+    // 切换至本地独立端点
+    fireEvent.click(screen.getByTestId('settings-byok-btn-asr-provider-local-endpoint'));
+
+    const testBtn = screen.getByTestId('settings-byok-btn-test-asr');
+    fireEvent.click(testBtn);
+
+    await waitFor(() => {
+      const statusText = screen.getByTestId('settings-byok-text-asr-status');
+      expect(statusText).toBeInTheDocument();
+      expect(statusText.textContent).toContain('38ms');
     });
   });
 });

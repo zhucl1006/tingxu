@@ -3,6 +3,7 @@ import { useMeetingStore } from '../../store/useMeetingStore';
 import { MeetingPipelineService } from '../meetingPipelineService';
 import { RealAudioCapture } from '../realAudioCapture';
 import { RealStreamingAsrClient } from '../realStreamingAsrClient';
+import { LocalAsrClient } from '../localAsrClient';
 
 // Mock 底层类与原生通道
 vi.mock('../realAudioCapture', () => {
@@ -46,18 +47,36 @@ vi.mock('../realStreamingAsrClient', () => {
   };
 });
 
+vi.mock('../localAsrClient', () => {
+  const mockLocalAsrInstance = {
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn(),
+    isConnected: vi.fn().mockReturnValue(true),
+    sendPcmChunk: vi.fn(),
+    finish: vi.fn().mockResolvedValue('complete'),
+  };
+  return {
+    LocalAsrClient: vi.fn().mockImplementation((options: any) => {
+      (mockLocalAsrInstance as any)._options = options;
+      return mockLocalAsrInstance;
+    }),
+  };
+});
+
 describe('MeetingPipelineService - 全局常驻会议流与洞察管道服务 (TDD)', () => {
   let service: MeetingPipelineService;
 
   beforeEach(() => {
     vi.clearAllMocks();
     useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().resetByokSettings();
     service = new MeetingPipelineService();
   });
 
   afterEach(async () => {
     await service.destroy();
     useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().resetByokSettings();
   });
 
   it('会议状态流转至 RECORDING 时，自动启动麦克风物理采集与 ASR 连接', async () => {
@@ -69,6 +88,23 @@ describe('MeetingPipelineService - 全局常驻会议流与洞察管道服务 (T
       expect(RealAudioCapture).toHaveBeenCalled();
       expect(RealStreamingAsrClient).toHaveBeenCalled();
       expect(useMeetingStore.getState().micStatus).toBe('recording');
+      expect(useMeetingStore.getState().asrStatus).toBe('connected');
+    });
+  });
+
+  it('当 byokSettings.asrProvider 为 local_endpoint 时，应动态挂载 LocalAsrClient (T03)', async () => {
+    useMeetingStore.getState().updateByokSettings({
+      asrProvider: 'local_endpoint',
+      asrEndpoint: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+      localAsrProtocol: 'openai_http',
+    });
+
+    service.attach();
+    useMeetingStore.getState().startMeeting('本地离线 ASR 会议');
+
+    await vi.waitFor(() => {
+      expect(LocalAsrClient).toHaveBeenCalled();
+      expect(RealStreamingAsrClient).not.toHaveBeenCalled();
       expect(useMeetingStore.getState().asrStatus).toBe('connected');
     });
   });

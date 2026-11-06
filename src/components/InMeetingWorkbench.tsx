@@ -471,6 +471,7 @@ export const InMeetingWorkbench: React.FC = () => {
     liveInsightSettings,
     updateLiveInsightSettings,
     triggerManualInsight,
+    byokSettings,
   } = useMeetingStore();
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -1393,9 +1394,19 @@ export const InMeetingWorkbench: React.FC = () => {
                   : micStatus === 'error'
                   ? '设备异常'
                   : asrStatus === 'connected'
-                  ? '已就绪'
+                  ? byokSettings.asrProvider === 'local_endpoint'
+                    ? '本地ASR就绪'
+                    : byokSettings.asrProvider === 'local_embedded'
+                    ? '内嵌ASR就绪'
+                    : '已就绪'
                   : asrStatus === 'connecting'
-                  ? '连接中'
+                  ? byokSettings.asrProvider === 'local_endpoint'
+                    ? '本地ASR连接中'
+                    : '连接中'
+                  : asrStatus === 'error'
+                  ? byokSettings.asrProvider === 'local_endpoint'
+                    ? '本地ASR未连接'
+                    : 'ASR异常'
                   : '拾音中'}
               </span>
 
@@ -1556,18 +1567,33 @@ export const InMeetingWorkbench: React.FC = () => {
           {asrError && (
             <div
               data-testid="workbench-page-transcript-panel-alert-asr-error"
-              className="m-3 p-2.5 rounded bg-status-warning-bg border border-status-warning-border text-status-warning text-xs flex items-center justify-between"
+              className="m-3 p-2.5 rounded bg-status-warning-bg border border-status-warning-border text-status-warning text-xs flex items-center justify-between gap-2"
             >
-              <span>⚠️ {asrError}</span>
-              <button
-                type="button"
-                data-testid="workbench-page-transcript-panel-btn-dismiss-asr-error"
-                onClick={() => setAsrStatus(asrStatus, '')}
-                className="text-text-tertiary hover:text-text-primary px-1.5 py-0.5 rounded text-xs font-bold transition-colors"
-                title="关闭提示"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                <span className="shrink-0">⚠️</span>
+                <span className="leading-snug truncate" title={asrError}>{asrError}</span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {byokSettings.asrProvider === 'local_endpoint' && (
+                  <button
+                    type="button"
+                    data-testid="workbench-page-transcript-panel-btn-open-asr-settings"
+                    onClick={() => setCurrentRoute('settings')}
+                    className="px-2 py-0.5 rounded bg-brand-blue text-white text-[11px] font-medium hover:bg-brand-blue-hover transition-colors shadow-2xs whitespace-nowrap"
+                  >
+                    配置端点
+                  </button>
+                )}
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-dismiss-asr-error"
+                  onClick={() => setAsrStatus(asrStatus, '')}
+                  className="text-text-tertiary hover:text-text-primary px-1.5 py-0.5 rounded text-xs font-bold transition-colors"
+                  title="关闭提示"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
           )}
 

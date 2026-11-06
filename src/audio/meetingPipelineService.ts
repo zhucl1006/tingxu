@@ -10,6 +10,7 @@
 import { getLocalRecording } from './localRecording';
 import { RealAudioCapture } from './realAudioCapture';
 import { RealStreamingAsrClient, streamingAsrUrl } from './realStreamingAsrClient';
+import { LocalAsrClient } from './localAsrClient';
 import { TranscriptEventState } from './transcriptEventState';
 import { InterimTextStabilizer } from './interimTextStabilizer';
 import { SentenceAudioBuffer } from './sentenceAudioBuffer';
@@ -26,7 +27,7 @@ export class MeetingPipelineService {
   private unsubscribeStore: (() => void) | null = null;
 
   private audioCapture: RealAudioCapture | null = null;
-  private asrClient: RealStreamingAsrClient | null = null;
+  private asrClient: RealStreamingAsrClient | LocalAsrClient | null = null;
   private sentenceBuffer: SentenceAudioBuffer = new SentenceAudioBuffer();
   private embeddingEngine: LocalSpeakerEmbeddingEngine = new LocalSpeakerEmbeddingEngine();
   private speakerClusterer: OnlineSpeakerClusterer = new OnlineSpeakerClusterer();
@@ -101,10 +102,8 @@ export class MeetingPipelineService {
     let queuedIdentities = 0;
     let identityDisabled = false;
 
-    const asrClient = new RealStreamingAsrClient({
-      wsUrl: streamingAsrUrl(store.gatewayUrl),
-      meetingId,
-      onTranscriptEvent: (rawEvent) => {
+    const asrOptions = {
+      onTranscriptEvent: (rawEvent: any) => {
         if (!isCurrent()) return;
         const event = eventState.accept(rawEvent);
         if (!event) return;
@@ -269,16 +268,34 @@ export class MeetingPipelineService {
           }
         });
       },
-      onStatus: (st) => {
-        if (st.status === 'READY') {
+      onStatus: (st: any) => {
+        if (st.status === 'READY' || st.status === 'connected') {
           asrReady = true;
           useMeetingStore.getState().setAsrStatus('connected');
         }
       },
-      onError: (err) => {
+      onError: (err: any) => {
         useMeetingStore.getState().setAsrStatus('error', err.message);
       },
-    });
+    };
+
+    const byok = store.byokSettings;
+    const isLocalAsr = byok.asrProvider === 'local_endpoint' || byok.asrProvider === 'local_embedded';
+
+    const asrClient: RealStreamingAsrClient | LocalAsrClient = isLocalAsr
+      ? new LocalAsrClient({
+          protocol: byok.localAsrProtocol || 'openai_http',
+          endpoint: byok.asrEndpoint || 'http://127.0.0.1:8000/v1/audio/transcriptions',
+          model: byok.localAsrModel || 'whisper-1',
+          apiKey: byok.asrApiKey || undefined,
+          meetingId,
+          ...asrOptions,
+        })
+      : new RealStreamingAsrClient({
+          wsUrl: streamingAsrUrl(store.gatewayUrl),
+          meetingId,
+          ...asrOptions,
+        });
 
     this.asrClient = asrClient;
 
