@@ -12,7 +12,7 @@ export function GatewayConnectionGuard({ children }: GatewayConnectionGuardProps
   const [isGatewayHealthy, setIsGatewayHealthy] = useState(false);
   const [lastError, setLastError] = useState<string | null>(null);
 
-  const { gatewayUrl, setGatewayUrl, setCurrentRoute } = useMeetingStore();
+  const { gatewayUrl, setGatewayUrl, setCurrentRoute, byokSettings } = useMeetingStore();
   const [customUrl, setCustomUrl] = useState(gatewayUrl || 'http://localhost:3201');
 
   const checkHealth = useCallback(async (targetUrl?: string) => {
@@ -49,7 +49,11 @@ export function GatewayConnectionGuard({ children }: GatewayConnectionGuardProps
     checkHealth(trimmed);
   };
 
-  if (isGatewayHealthy) {
+  const isStandaloneConfigured =
+    byokSettings.mode === 'standalone' &&
+    (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
+
+  if (isGatewayHealthy || isStandaloneConfigured) {
     return <>{children}</>;
   }
 
@@ -74,8 +78,7 @@ export function GatewayConnectionGuard({ children }: GatewayConnectionGuardProps
             无法连接至听序 AI 网关 (AI Gateway)
           </h2>
           <p className="text-xs text-slate-400 leading-relaxed">
-            根据听序安全与数据真实性铁律（Fail-Closed 原则），系统严禁在无网关环境下生成离线假数据。请确保自建
-            AI Gateway 服务已启动且网络通畅。
+            若未部署自建 AI Gateway，您可以前往设置页面填入自备 API Key（如阿里云百炼、DeepSeek、本地 Ollama），直接以单机模式使用，无需启动后端服务。
           </p>
         </div>
 
@@ -110,12 +113,12 @@ export function GatewayConnectionGuard({ children }: GatewayConnectionGuardProps
             type="button"
             data-testid="app-layout-gateway-guard-btn-offline"
             onClick={() => {
-              // 允许离线返回首页或设置页，解除死锁
+              // 前往设置页配置自备密钥 (BYOK)
               setCurrentRoute('settings');
             }}
             className="py-2.5 px-4 rounded-xl font-medium text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 transition-all flex items-center justify-center gap-1.5"
           >
-            前往设置页
+            前往设置自备 Key (BYOK)
           </button>
           <button
             type="button"

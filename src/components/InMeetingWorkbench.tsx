@@ -4,6 +4,7 @@ import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
 import { getMeetingPipelineService, type CaptureMode } from '../audio/meetingPipelineService';
 import { getTingxuClient } from '../api/tingxuClient';
+import { getByokLlmClient } from '../api/byokLlmClient';
 
 const SPEAKER_DOT_CLASSES = [
   'bg-brand-blue',
@@ -48,6 +49,8 @@ const InsightCardItem = memo<InsightCardItemProps>(({
   onKeepCurrent,
   onAcceptRevision,
 }) => {
+  const [copiedQa, setCopiedQa] = useState(false);
+
   // 专属 Q&A 问答卡片（解决即时问答直观识别与对话呈现）
   if (card.type === 'qa') {
     const questionText =
@@ -98,10 +101,29 @@ const InsightCardItem = memo<InsightCardItemProps>(({
         {/* 听序智能解答 */}
         <div
           data-testid={`workbench-page-insights-panel-div-qa-answer-${card.id}`}
-          className="p-2.5 rounded bg-panel/70 border border-border-subtle text-xs text-text-primary leading-relaxed space-y-1"
+          className="p-2.5 rounded bg-panel/70 border border-border-subtle text-xs text-text-primary leading-relaxed space-y-1.5"
         >
-          <div className="flex items-center gap-1.5 text-[10px] text-brand-blue font-semibold">
-            <span>🤖 听序回答</span>
+          <div className="flex items-center justify-between text-[10px] text-brand-blue font-semibold">
+            <span className="flex items-center gap-1.5">
+              <span>🤖</span>
+              <span>听序回答</span>
+            </span>
+            <button
+              type="button"
+              data-testid={`workbench-page-insights-panel-btn-copy-qa-${card.id}`}
+              onClick={() => {
+                if (navigator?.clipboard?.writeText) {
+                  navigator.clipboard.writeText(card.content).catch(() => {});
+                }
+                setCopiedQa(true);
+                setTimeout(() => setCopiedQa(false), 1500);
+              }}
+              className="text-text-secondary hover:text-brand-blue text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-canvas border border-transparent hover:border-border-subtle transition-colors cursor-pointer"
+              title="复制回答内容"
+            >
+              <span>{copiedQa ? '✓' : '📋'}</span>
+              <span>{copiedQa ? '已复制' : '复制'}</span>
+            </button>
           </div>
           <p className="whitespace-pre-wrap text-text-primary leading-relaxed">
             {card.content}
@@ -445,7 +467,14 @@ export const InMeetingWorkbench: React.FC = () => {
     setCaptureMode,
     availableMics,
     setAvailableMics,
+    updateMeetingTitle,
+    liveInsightSettings,
+    updateLiveInsightSettings,
+    triggerManualInsight,
   } = useMeetingStore();
+
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
 
   const [activeFilter, setActiveFilter] = useState<'all' | InsightType>('all');
   const [filterKeyword, setFilterKeyword] = useState('');
@@ -702,17 +731,29 @@ export const InMeetingWorkbench: React.FC = () => {
     setIsAsking(true);
 
     try {
-      const client = getTingxuClient();
-      if ('setGatewayUrl' in client) {
-        (client as any).setGatewayUrl(useMeetingStore.getState().gatewayUrl);
-      }
-      const data = await client.copilot.chat({
+      const { byokSettings, gatewayUrl } = useMeetingStore.getState();
+      const isStandaloneConfigured =
+        byokSettings.mode === 'standalone' &&
+        (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
+
+      let data: any;
+      const chatReq = {
         meetingId: meetingId || 'meet_live',
         question: q,
         transcripts: transcripts.length
           ? transcripts.map((t) => ({ id: t.id, speaker: t.speaker, text: t.text }))
           : [{ id: 'seg_init', speaker: '系统', text: '本场会议已开启，正在监听双轨音频。' }],
-      });
+      };
+
+      if (isStandaloneConfigured) {
+        data = await getByokLlmClient().chatCopilot(chatReq, byokSettings);
+      } else {
+        const client = getTingxuClient();
+        if ('setGatewayUrl' in client) {
+          (client as any).setGatewayUrl(gatewayUrl);
+        }
+        data = await client.copilot.chat(chatReq);
+      }
 
       const evidenceId =
         data.citations?.[0]?.segmentId ||
@@ -780,13 +821,64 @@ export const InMeetingWorkbench: React.FC = () => {
             }`}
             title={status === 'RECORDING' ? '正在录音' : '已暂停'}
           />
-          <h1
-            data-testid="workbench-page-header-text-title"
-            className="text-base font-semibold truncate max-w-[180px] xl:max-w-xs shrink min-w-0"
-            title={title}
-          >
-            {title}
-          </h1>
+          {isEditingTitle ? (
+            <div className="flex items-center gap-1 shrink min-w-0">
+              <input
+                type="text"
+                data-testid="workbench-page-header-input-edit-title"
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    if (titleDraft.trim()) updateMeetingTitle(titleDraft.trim());
+                    setIsEditingTitle(false);
+                  } else if (e.key === 'Escape') {
+                    setIsEditingTitle(false);
+                  }
+                }}
+                autoFocus
+                className="px-2 py-0.5 text-xs bg-canvas border border-brand-blue rounded text-text-primary outline-hidden max-w-[160px] xl:max-w-xs shadow-2xs"
+                placeholder="修改会议主题..."
+              />
+              <button
+                type="button"
+                data-testid="workbench-page-header-btn-save-title"
+                onClick={() => {
+                  if (titleDraft.trim()) updateMeetingTitle(titleDraft.trim());
+                  setIsEditingTitle(false);
+                }}
+                className="px-1.5 py-0.5 text-[10px] bg-brand-blue text-white rounded font-medium hover:bg-brand-blue-hover transition-colors shrink-0 shadow-2xs cursor-pointer"
+              >
+                保存
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1 min-w-0 max-w-[180px] xl:max-w-xs shrink group">
+              <h1
+                data-testid="workbench-page-header-text-title"
+                onClick={() => {
+                  setTitleDraft(title);
+                  setIsEditingTitle(true);
+                }}
+                className="text-base font-semibold truncate cursor-pointer hover:text-brand-blue transition-colors"
+                title={`${title} (点击修改主题)`}
+              >
+                {title}
+              </h1>
+              <button
+                type="button"
+                data-testid="workbench-page-header-btn-edit-title"
+                onClick={() => {
+                  setTitleDraft(title);
+                  setIsEditingTitle(true);
+                }}
+                className="opacity-0 group-hover:opacity-100 hover:text-brand-blue text-text-tertiary transition-opacity p-0.5 rounded text-xs cursor-pointer shrink-0"
+                title="修改会议主题"
+              >
+                ✏️
+              </button>
+            </div>
+          )}
           <HeaderTimer />
 
           {/* 会中参会人员信息识别展示（支持直接点击胶囊重命名对应声纹说话人） */}
@@ -1086,6 +1178,86 @@ export const InMeetingWorkbench: React.FC = () => {
               {filteredInsights.length} 项
             </span>
           </div>
+
+          {/* 实时洞察控频与手动提炼工具栏 (Plan 026 算力降费) */}
+          <div
+            data-testid="workbench-page-insights-panel-toolbar-control"
+            className="px-3 py-1.5 border-b border-border-subtle bg-panel/40 flex items-center justify-between gap-2 shrink-0 text-xs"
+          >
+            {/* 模式切换小胶囊 */}
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-text-tertiary">模式:</span>
+              <button
+                type="button"
+                data-testid="workbench-page-insights-panel-btn-mode-manual"
+                onClick={() => updateLiveInsightSettings({ mode: 'manual' })}
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  liveInsightSettings.mode === 'manual'
+                    ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/30 font-semibold'
+                    : 'text-text-tertiary hover:text-text-secondary'
+                }`}
+                title="手动按需提炼：开会过程不自动消耗 Token，点击【立即提炼】才触发，最省钱"
+              >
+                ⚡ 手动按需
+              </button>
+              <button
+                type="button"
+                data-testid="workbench-page-insights-panel-btn-mode-periodic"
+                onClick={() => updateLiveInsightSettings({ mode: 'periodic' })}
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  liveInsightSettings.mode === 'periodic'
+                    ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/30 font-semibold'
+                    : 'text-text-tertiary hover:text-text-secondary'
+                }`}
+                title={`自动周期提炼：每隔 ${liveInsightSettings.intervalSeconds || 120} 秒自动提炼一次`}
+              >
+                ⏱ 自动 ({liveInsightSettings.intervalSeconds || 120}s)
+              </button>
+              <button
+                type="button"
+                data-testid="workbench-page-insights-panel-btn-mode-disabled"
+                onClick={() => updateLiveInsightSettings({ mode: 'disabled' })}
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                  liveInsightSettings.mode === 'disabled'
+                    ? 'bg-status-danger/15 text-status-danger border border-status-danger/30 font-semibold'
+                    : 'text-text-tertiary hover:text-text-secondary'
+                }`}
+                title="完全关闭：会中不进行任何实时洞察，0 AI 费用；会后仍可一键总结"
+              >
+                ⏸ 关闭
+              </button>
+            </div>
+
+            {/* 手动提炼按钮 */}
+            <button
+              type="button"
+              data-testid="workbench-page-insights-panel-btn-trigger-manual"
+              disabled={isExtractingInsights || transcripts.length === 0}
+              onClick={() => void triggerManualInsight()}
+              className="px-2.5 py-0.5 rounded bg-brand-blue text-white hover:bg-brand-blue-hover text-[11px] font-medium flex items-center gap-1 shadow-2xs transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              title="立即提取当前未整理的发言结论与待办"
+            >
+              <span>{isExtractingInsights ? '⏳' : '⚡'}</span>
+              <span>{isExtractingInsights ? '提炼中...' : '立即提炼洞察'}</span>
+            </button>
+          </div>
+
+          {/* 洞察已关闭提示条 */}
+          {liveInsightSettings.mode === 'disabled' && (
+            <div
+              data-testid="workbench-page-insights-panel-banner-disabled"
+              className="px-3.5 py-1.5 bg-subtle border-b border-border-subtle flex items-center justify-between text-[11px] text-text-tertiary shrink-0"
+            >
+              <span>💡 会中实时洞察已暂停（0 算力开销）。可点击右上角「立即提炼」或等待会后完整纪要。</span>
+              <button
+                type="button"
+                onClick={() => updateLiveInsightSettings({ mode: 'manual' })}
+                className="text-brand-blue hover:underline ml-2 whitespace-nowrap"
+              >
+                开启手动提炼
+              </button>
+            </div>
+          )}
 
           {/* AI 增量洞察提炼中指示条 */}
           {isExtractingInsights && (

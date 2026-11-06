@@ -1,10 +1,7 @@
 .DS_Store
 node_modules/
 dist/
-gateway/dist/
-server/dist/
 src-tauri/target/
-server/data/
 data/
 src-tauri/resources/models/*.onnx
 *.local

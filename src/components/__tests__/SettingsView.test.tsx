@@ -4,16 +4,13 @@ import { SettingsView } from '../views/SettingsView';
 import { useMeetingStore } from '../../store/useMeetingStore';
 
 describe('SettingsView - 本地声纹档案与隐私管理面板 (TDD T09)', () => {
-  it('014：网关设置读写实际会话配置，而非仅修改健康检查地址', () => {
-    useMeetingStore.getState().setGatewayUrl('http://127.0.0.1:3214');
+  it('025：单机设置面板应展示绝对隐私主权卡片并支持配置模型端点', () => {
     render(<SettingsView />);
-    const input = screen.getByTestId('settings-input-gateway-url');
-    expect(input).toHaveValue('http://127.0.0.1:3214');
-    fireEvent.change(input, { target: { value: 'http://127.0.0.1:3215' } });
-    expect(useMeetingStore.getState().gatewayUrl).toBe('http://127.0.0.1:3214');
-    fireEvent.blur(input);
-    expect(useMeetingStore.getState().gatewayUrl).toBe('http://127.0.0.1:3215');
-    useMeetingStore.getState().setGatewayUrl('http://localhost:3201');
+    expect(screen.getByTestId('settings-page-section-privacy')).toBeInTheDocument();
+    expect(screen.getByTestId('settings-page-section-privacy')).toHaveTextContent('Zero-Content Policy');
+    const input = screen.getByTestId('settings-byok-input-llm-url');
+    fireEvent.change(input, { target: { value: 'https://api.custom-llm.com/v1' } });
+    expect(useMeetingStore.getState().byokSettings.llmBaseUrl).toBe('https://api.custom-llm.com/v1');
   });
   beforeEach(() => {
     const store = useMeetingStore.getState();

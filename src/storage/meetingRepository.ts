@@ -14,6 +14,8 @@ import type {
   VoiceprintConfigSettings,
   StorageSettings,
   MeetingDetectionSettings,
+  ByokSettings,
+  LiveInsightSettings,
 } from '../types/meeting';
 
 export interface StorageAdapter {
@@ -40,6 +42,12 @@ export interface StorageAdapter {
 
   getDetectionSettings(): MeetingDetectionSettings | null;
   saveDetectionSettings(settings: MeetingDetectionSettings): void;
+
+  getByokSettings(): ByokSettings | null;
+  saveByokSettings(settings: ByokSettings): void;
+
+  getLiveInsightSettings(): LiveInsightSettings | null;
+  saveLiveInsightSettings(settings: LiveInsightSettings): void;
 }
 
 /**
@@ -150,6 +158,22 @@ export class WebStorageAdapter implements StorageAdapter {
   public saveDetectionSettings(settings: MeetingDetectionSettings): void {
     this.saveJson('tingxu_detection_settings', settings);
   }
+
+  public getByokSettings(): ByokSettings | null {
+    return this.loadJson<ByokSettings | null>('tingxu_byok_settings', null);
+  }
+
+  public saveByokSettings(settings: ByokSettings): void {
+    this.saveJson('tingxu_byok_settings', settings);
+  }
+
+  public getLiveInsightSettings(): LiveInsightSettings | null {
+    return this.loadJson<LiveInsightSettings | null>('tingxu_live_insight_settings', null);
+  }
+
+  public saveLiveInsightSettings(settings: LiveInsightSettings): void {
+    this.saveJson('tingxu_live_insight_settings', settings);
+  }
 }
 
 /**
@@ -228,6 +252,22 @@ export class MeetingRepository {
 
   public saveDetectionSettings(settings: MeetingDetectionSettings): void {
     this.adapter.saveDetectionSettings(settings);
+  }
+
+  public getByokSettings(): ByokSettings | null {
+    return this.adapter.getByokSettings();
+  }
+
+  public saveByokSettings(settings: ByokSettings): void {
+    this.adapter.saveByokSettings(settings);
+  }
+
+  public getLiveInsightSettings(): LiveInsightSettings | null {
+    return this.adapter.getLiveInsightSettings();
+  }
+
+  public saveLiveInsightSettings(settings: LiveInsightSettings): void {
+    this.adapter.saveLiveInsightSettings(settings);
   }
 }
 

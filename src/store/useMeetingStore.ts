@@ -8,6 +8,7 @@ import {
   NavRoute,
   UserProfile,
   TaskItem,
+  TaskStatus,
   HistoryMeeting,
   SpeakerVoiceprintProfile,
   RegisterSpeakerProfileInput,
@@ -26,10 +27,16 @@ import {
   SummaryActionItem,
   SummaryRevisionProposal,
   MeetingChatMessage,
+  MeetingAiCost,
+  ByokSettings,
+  DEFAULT_BYOK_SETTINGS,
+  LiveInsightSettings,
+  DEFAULT_LIVE_INSIGHT_SETTINGS,
 } from '../types/meeting';
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
 import { getMeetingRepository } from '../storage/meetingRepository';
 import { getSpeakerRegistry } from '../speaker/speakerRegistry';
+import { getByokLlmClient } from '../api/byokLlmClient';
 
 import { finishLocalRecording, clearLocalMedia, deleteLocalMedia, getRecordingStorageUsage, pruneLocalRecordings } from '../audio/localRecording';
 
@@ -164,6 +171,22 @@ function saveStoredDetectionSettings(settings: MeetingDetectionSettings) {
   }
 }
 
+function loadStoredByokSettings(): ByokSettings {
+  return getMeetingRepository().getByokSettings() || { ...DEFAULT_BYOK_SETTINGS };
+}
+
+function saveStoredByokSettings(settings: ByokSettings) {
+  getMeetingRepository().saveByokSettings(settings);
+}
+
+function loadStoredLiveInsightSettings(): LiveInsightSettings {
+  return getMeetingRepository().getLiveInsightSettings() || { ...DEFAULT_LIVE_INSIGHT_SETTINGS };
+}
+
+function saveStoredLiveInsightSettings(settings: LiveInsightSettings) {
+  getMeetingRepository().saveLiveInsightSettings(settings);
+}
+
 const initialMeetingState = {
   status: 'IDLE' as MeetingStatus,
   asrSessionDrain: null,
@@ -187,6 +210,7 @@ const initialMeetingState = {
   audioAcousticMode: 'high_fidelity' as 'high_fidelity' | 'speaker_aec',
   meetingId: null as string | null,
   title: '未命名会议',
+  isTitleManuallyEdited: false,
   elapsedSeconds: 0,
   transcripts: [] as TranscriptSegment[],
   insights: [] as InsightCard[],
@@ -207,6 +231,9 @@ const initialMeetingState = {
   voiceprintConsentAt: loadStoredVoiceprintConsent(),
   isGeneratingSummary: false,
   gatewayUrl: 'http://localhost:3201',
+  byokSettings: loadStoredByokSettings(),
+  liveInsightSettings: loadStoredLiveInsightSettings(),
+  aiCost: null as MeetingAiCost | null,
   appearanceSettings: loadStoredAppearanceSettings(),
   voiceprintSettings: loadStoredVoiceprintSettings(),
   storageSettings: loadStoredStorageSettings(),
@@ -222,6 +249,86 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
   setGatewayUrl: (url: string) => {
     set({ gatewayUrl: url });
+  },
+
+  updateByokSettings: (partial: Partial<ByokSettings>) => {
+    const next = { ...get().byokSettings, ...partial };
+    set({ byokSettings: next });
+    saveStoredByokSettings(next);
+  },
+
+  resetByokSettings: () => {
+    const next = { ...DEFAULT_BYOK_SETTINGS };
+    set({ byokSettings: next });
+    saveStoredByokSettings(next);
+  },
+
+  updateLiveInsightSettings: (partial: Partial<LiveInsightSettings>) => {
+    const next = { ...get().liveInsightSettings, ...partial };
+    set({ liveInsightSettings: next });
+    saveStoredLiveInsightSettings(next);
+  },
+
+  resetLiveInsightSettings: () => {
+    const next = { ...DEFAULT_LIVE_INSIGHT_SETTINGS };
+    set({ liveInsightSettings: next });
+    saveStoredLiveInsightSettings(next);
+  },
+
+  triggerManualInsight: async (): Promise<boolean> => {
+    const { transcripts, isExtractingInsights, byokSettings, insights } = get();
+    if (!transcripts || transcripts.length === 0) {
+      return false;
+    }
+    if (isExtractingInsights) {
+      return false;
+    }
+
+    set({ isExtractingInsights: true, insightError: null });
+
+    try {
+      const recentSegments = transcripts.slice(-25);
+      const combinedText = recentSegments
+        .map((s) => `${s.speaker}: ${s.text}`)
+        .join('\n');
+
+      const latestTopic = insights.length > 0 ? insights[insights.length - 1].title : undefined;
+      const contextAnchors = recentSegments.slice(-5).map((s) => ({
+        segmentId: s.id,
+        quote: s.text.slice(0, 30),
+      }));
+
+      const res = await getByokLlmClient().extractLiveInsights(
+        {
+          newStableText: combinedText,
+          currentTopicSummary: latestTopic,
+          contextAnchors,
+        },
+        byokSettings
+      );
+
+      if (res && res.patch) {
+        const { patch, topicId } = res;
+        const evidence = patch.evidenceRefs?.[0];
+
+        get().addInsight({
+          id: topicId || `ins_manual_${Date.now()}`,
+          type: patch.type || (res.action === 'ADD_TODO' ? 'action' : 'decision'),
+          title: patch.title || '阶段关键洞察',
+          content: patch.content || (patch.decisions ? patch.decisions.join('；') : patch.title),
+          timestamp: recentSegments[recentSegments.length - 1]?.timestamp || '00:00:00',
+          evidenceSegmentId: evidence?.segmentId || recentSegments[recentSegments.length - 1]?.id,
+        });
+        return true;
+      }
+      return false;
+    } catch (e) {
+      console.warn('[MeetingStore] 手动提炼洞察异常:', e);
+      set({ insightError: (e as Error).message });
+      return false;
+    } finally {
+      set({ isExtractingInsights: false });
+    }
   },
 
   setCurrentRoute: (route: NavRoute) => {
@@ -280,6 +387,53 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
     void get().refreshStorageUsage();
     void get().runAutoCleanupIfNeeded();
+  },
+
+  fetchMeetingAiCost: async (meetingId: string) => {
+    if (!meetingId) return null;
+    const gatewayUrl = get().gatewayUrl || 'http://localhost:3201';
+    try {
+      const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/gateway/v1/billing/ai-usage?meetingId=${encodeURIComponent(meetingId)}`);
+      if (res.ok) {
+        const json = await res.json();
+        if (json && json.code === 0 && json.data) {
+          const costData: MeetingAiCost = {
+            totalCostYuan: Number(json.data.totalCostYuan || 0),
+            totalTokens: Number(json.data.totalTokens || 0),
+            audioSeconds: Number(json.data.totalAudioSeconds || 0),
+            breakdown: json.data.breakdown || {
+              asrCostYuan: 0,
+              asrAudioSeconds: 0,
+              insightsCostYuan: 0,
+              insightsTokens: 0,
+              summaryCostYuan: 0,
+              summaryTokens: 0,
+              chatCostYuan: 0,
+              chatTokens: 0,
+            },
+            recordsCount: Number(json.data.recordsCount || 0),
+            updatedAt: new Date().toISOString(),
+          };
+
+          set((state) => ({
+            aiCost: state.meetingId === meetingId ? costData : state.aiCost,
+            historyMeetings: state.historyMeetings.map((m) =>
+              m.id === meetingId ? { ...m, aiCost: costData } : m
+            ),
+            activeSummaryMeeting:
+              state.activeSummaryMeeting && state.activeSummaryMeeting.id === meetingId
+                ? { ...state.activeSummaryMeeting, aiCost: costData }
+                : state.activeSummaryMeeting,
+          }));
+
+          saveStoredHistoryMeetings(get().historyMeetings);
+          return costData;
+        }
+      }
+    } catch {
+      // 离线容错降级
+    }
+    return null;
   },
 
   refreshStorageUsage: async () => {
@@ -343,14 +497,334 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     set({ storageSettings: updated });
   },
 
-  toggleTask: (id: string) => {
-    set((state) => {
-      const newTasks = state.tasks.map((t) =>
-        t.id === id ? { ...t, completed: !t.completed } : t
-      );
-      saveStoredTasks(newTasks);
-      return { tasks: newTasks };
+  createTask: (input) => {
+    const now = new Date().toISOString().slice(0, 10);
+    const id = `task_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+    const status: TaskStatus = 'todo';
+    const newTask: TaskItem = {
+      id,
+      title: input.title.trim(),
+      meetingId: input.meetingId,
+      meetingTitle: input.meetingTitle || '独立待办任务',
+      assignee: input.assignee?.trim() || '待确认',
+      completed: false,
+      status,
+      priority: input.priority || 'medium',
+      dueDate: input.dueDate,
+      description: input.description,
+      createdAt: now,
+      updatedAt: now,
+      evidenceSegmentId: input.evidenceSegmentId,
+    };
+    const newTasks = [newTask, ...get().tasks];
+    saveStoredTasks(newTasks);
+    set({ tasks: newTasks });
+    return newTask;
+  },
+
+  updateTask: (id, patch) => {
+    const now = new Date().toISOString().slice(0, 10);
+    const newTasks = get().tasks.map((t) => {
+      if (t.id !== id) return t;
+      const updated: TaskItem = {
+        ...t,
+        ...patch,
+        updatedAt: now,
+      };
+      if (patch.status) {
+        updated.completed = patch.status === 'done';
+      } else if (patch.completed !== undefined) {
+        updated.status = patch.completed ? 'done' : (t.status === 'done' ? 'todo' : (t.status || 'todo'));
+      }
+      return updated;
     });
+    saveStoredTasks(newTasks);
+    set({ tasks: newTasks });
+  },
+
+  deleteTask: (id) => {
+    const newTasks = get().tasks.filter((t) => t.id !== id);
+    saveStoredTasks(newTasks);
+
+    // 如果该任务关联了某个历史会议中的 action，同步解绑 isConfirmed
+    const historyMeetings = get().historyMeetings.map((m) => {
+      if (!m.structuredSummary?.actions) return m;
+      let changed = false;
+      const actions = m.structuredSummary.actions.map((a) => {
+        if (a.taskId === id) {
+          changed = true;
+          return { ...a, isConfirmed: false, taskId: undefined };
+        }
+        return a;
+      });
+      return changed ? { ...m, structuredSummary: { ...m.structuredSummary, actions } } : m;
+    });
+    saveStoredHistoryMeetings(historyMeetings);
+
+    let activeSummaryMeeting = get().activeSummaryMeeting;
+    if (activeSummaryMeeting?.structuredSummary?.actions) {
+      const actions = activeSummaryMeeting.structuredSummary.actions.map((a) => {
+        if (a.taskId === id) {
+          return { ...a, isConfirmed: false, taskId: undefined };
+        }
+        return a;
+      });
+      activeSummaryMeeting = {
+        ...activeSummaryMeeting,
+        structuredSummary: { ...activeSummaryMeeting.structuredSummary, actions },
+      };
+    }
+
+    set({ tasks: newTasks, historyMeetings, activeSummaryMeeting });
+  },
+
+  setTaskStatus: (id, status) => {
+    get().updateTask(id, { status, completed: status === 'done' });
+  },
+
+  batchSetTaskStatus: (ids, status) => {
+    if (!ids || ids.length === 0) return;
+    const targetSet = new Set(ids);
+    const now = new Date().toISOString().slice(0, 10);
+    const newTasks = get().tasks.map((t) => {
+      if (!targetSet.has(t.id)) return t;
+      return {
+        ...t,
+        status,
+        completed: status === 'done',
+        updatedAt: now,
+      };
+    });
+    saveStoredTasks(newTasks);
+    set({ tasks: newTasks });
+  },
+
+  batchDeleteTasks: (ids) => {
+    if (!ids || ids.length === 0) return;
+    const deleteSet = new Set(ids);
+    const newTasks = get().tasks.filter((t) => !deleteSet.has(t.id));
+    saveStoredTasks(newTasks);
+
+    // 同步历史会议解除关联
+    const historyMeetings = get().historyMeetings.map((m) => {
+      if (!m.structuredSummary?.actions) return m;
+      let changed = false;
+      const actions = m.structuredSummary.actions.map((a) => {
+        if (a.taskId && deleteSet.has(a.taskId)) {
+          changed = true;
+          return { ...a, isConfirmed: false, taskId: undefined };
+        }
+        return a;
+      });
+      return changed ? { ...m, structuredSummary: { ...m.structuredSummary, actions } } : m;
+    });
+    saveStoredHistoryMeetings(historyMeetings);
+
+    let activeSummaryMeeting = get().activeSummaryMeeting;
+    if (activeSummaryMeeting?.structuredSummary?.actions) {
+      const actions = activeSummaryMeeting.structuredSummary.actions.map((a) => {
+        if (a.taskId && deleteSet.has(a.taskId)) {
+          return { ...a, isConfirmed: false, taskId: undefined };
+        }
+        return a;
+      });
+      activeSummaryMeeting = {
+        ...activeSummaryMeeting,
+        structuredSummary: { ...activeSummaryMeeting.structuredSummary, actions },
+      };
+    }
+
+    set({ tasks: newTasks, historyMeetings, activeSummaryMeeting });
+  },
+
+  toggleTask: (id: string) => {
+    const target = get().tasks.find((t) => t.id === id);
+    if (!target) return;
+    const nextCompleted = !target.completed;
+    const nextStatus: TaskStatus = nextCompleted ? 'done' : 'todo';
+    get().updateTask(id, { completed: nextCompleted, status: nextStatus });
+  },
+
+  clearCompletedTasks: () => {
+    const completedTaskIds = new Set(get().tasks.filter((t) => t.completed || t.status === 'done').map((t) => t.id));
+    const newTasks = get().tasks.filter((t) => !completedTaskIds.has(t.id));
+    saveStoredTasks(newTasks);
+
+    // 同步历史会议解除关联
+    const historyMeetings = get().historyMeetings.map((m) => {
+      if (!m.structuredSummary?.actions) return m;
+      let changed = false;
+      const actions = m.structuredSummary.actions.map((a) => {
+        if (a.taskId && completedTaskIds.has(a.taskId)) {
+          changed = true;
+          return { ...a, isConfirmed: false, taskId: undefined };
+        }
+        return a;
+      });
+      return changed ? { ...m, structuredSummary: { ...m.structuredSummary, actions } } : m;
+    });
+    saveStoredHistoryMeetings(historyMeetings);
+
+    let activeSummaryMeeting = get().activeSummaryMeeting;
+    if (activeSummaryMeeting?.structuredSummary?.actions) {
+      const actions = activeSummaryMeeting.structuredSummary.actions.map((a) => {
+        if (a.taskId && completedTaskIds.has(a.taskId)) {
+          return { ...a, isConfirmed: false, taskId: undefined };
+        }
+        return a;
+      });
+      activeSummaryMeeting = {
+        ...activeSummaryMeeting,
+        structuredSummary: { ...activeSummaryMeeting.structuredSummary, actions },
+      };
+    }
+
+    set({ tasks: newTasks, historyMeetings, activeSummaryMeeting });
+  },
+
+  confirmActionToTask: (meetingId, actionIndex) => {
+    const meeting = get().historyMeetings.find((m) => m.id === meetingId) || get().activeSummaryMeeting;
+    if (!meeting) return null;
+    const actions = meeting.structuredSummary?.actions || [];
+    const action = actions[actionIndex];
+    if (!action) return null;
+
+    // 若已确认过且任务存在，直接返回
+    if (action.isConfirmed && action.taskId) {
+      const existing = get().tasks.find((t) => t.id === action.taskId);
+      if (existing) return existing;
+    }
+
+    const newTask = get().createTask({
+      title: action.title,
+      meetingId: meeting.id,
+      meetingTitle: meeting.title,
+      assignee: action.assignee || '待确认',
+      priority: 'medium',
+      dueDate: action.dueDate,
+      description: action.content || ('evidenceQuote' in action ? (action as any).evidenceQuote : undefined),
+      evidenceSegmentId: action.evidenceSegmentId,
+    });
+
+    // 更新 meeting 中的 action 状态
+    const updatedActions = actions.map((a, idx) =>
+      idx === actionIndex ? { ...a, isConfirmed: true, taskId: newTask.id } : a
+    );
+
+    const updatedHistoryMeetings = get().historyMeetings.map((m) =>
+      m.id === meeting.id
+        ? {
+            ...m,
+            structuredSummary: m.structuredSummary
+              ? { ...m.structuredSummary, actions: updatedActions }
+              : undefined,
+          }
+        : m
+    );
+    saveStoredHistoryMeetings(updatedHistoryMeetings);
+
+    let updatedActiveSummary = get().activeSummaryMeeting;
+    if (updatedActiveSummary && updatedActiveSummary.id === meeting.id) {
+      updatedActiveSummary = {
+        ...updatedActiveSummary,
+        structuredSummary: updatedActiveSummary.structuredSummary
+          ? { ...updatedActiveSummary.structuredSummary, actions: updatedActions }
+          : undefined,
+      };
+    }
+
+    set({
+      historyMeetings: updatedHistoryMeetings,
+      activeSummaryMeeting: updatedActiveSummary,
+    });
+
+    return newTask;
+  },
+
+  batchConfirmActionsToTasks: (meetingId) => {
+    const meeting = get().historyMeetings.find((m) => m.id === meetingId) || get().activeSummaryMeeting;
+    if (!meeting) return [];
+    const actions = meeting.structuredSummary?.actions || [];
+    const createdTasks: TaskItem[] = [];
+
+    const updatedActions = actions.map((a) => {
+      if (a.isConfirmed && a.taskId) {
+        const existing = get().tasks.find((t) => t.id === a.taskId);
+        if (existing) {
+          createdTasks.push(existing);
+          return a;
+        }
+      }
+      const task = get().createTask({
+        title: a.title,
+        meetingId: meeting.id,
+        meetingTitle: meeting.title,
+        assignee: a.assignee || '待确认',
+        priority: 'medium',
+        dueDate: a.dueDate,
+        description: a.content,
+        evidenceSegmentId: a.evidenceSegmentId,
+      });
+      createdTasks.push(task);
+      return { ...a, isConfirmed: true, taskId: task.id };
+    });
+
+    const updatedHistoryMeetings = get().historyMeetings.map((m) =>
+      m.id === meeting.id
+        ? {
+            ...m,
+            structuredSummary: m.structuredSummary
+              ? { ...m.structuredSummary, actions: updatedActions }
+              : undefined,
+          }
+        : m
+    );
+    saveStoredHistoryMeetings(updatedHistoryMeetings);
+
+    let updatedActiveSummary = get().activeSummaryMeeting;
+    if (updatedActiveSummary && updatedActiveSummary.id === meeting.id) {
+      updatedActiveSummary = {
+        ...updatedActiveSummary,
+        structuredSummary: updatedActiveSummary.structuredSummary
+          ? { ...updatedActiveSummary.structuredSummary, actions: updatedActions }
+          : undefined,
+      };
+    }
+
+    set({
+      historyMeetings: updatedHistoryMeetings,
+      activeSummaryMeeting: updatedActiveSummary,
+    });
+
+    return createdTasks;
+  },
+
+  removeActionFromTask: (meetingId, actionIndex) => {
+    const meeting = get().historyMeetings.find((m) => m.id === meetingId) || get().activeSummaryMeeting;
+    if (!meeting) return;
+    const actions = meeting.structuredSummary?.actions || [];
+    const action = actions[actionIndex];
+    if (!action) return;
+
+    if (action.taskId) {
+      get().deleteTask(action.taskId);
+    } else {
+      const updatedActions = actions.map((a, idx) =>
+        idx === actionIndex ? { ...a, isConfirmed: false, taskId: undefined } : a
+      );
+      const updatedHistoryMeetings = get().historyMeetings.map((m) =>
+        m.id === meeting.id
+          ? {
+              ...m,
+              structuredSummary: m.structuredSummary
+                ? { ...m.structuredSummary, actions: updatedActions }
+                : undefined,
+            }
+          : m
+      );
+      saveStoredHistoryMeetings(updatedHistoryMeetings);
+      set({ historyMeetings: updatedHistoryMeetings });
+    }
   },
 
   startMeeting: (title = '新会议讨论') => {
@@ -363,6 +837,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       asrDrainWarning: null,
       meetingId: `mtg_${Date.now()}`,
       title,
+      isTitleManuallyEdited: false,
       elapsedSeconds: 0,
       initialQuotaSeconds: initialSec,
       transcripts: [],
@@ -485,7 +960,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   updateMeetingTitle: (newTitle: string) => {
-    set({ title: newTitle });
+    set({ title: newTitle, isTitleManuallyEdited: true });
   },
 
   endMeeting: async () => {
@@ -501,7 +976,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
     const localAudio = currentMeetingId ? await finishLocalRecording(currentMeetingId) : {};
     // 在排空之后取快照，尾句不会被旧数组漏掉；等待期间计时已经冻结。
-    const { meetingId, title, elapsedSeconds, insights, transcripts, historyMeetings, tasks, gatewayUrl } = get();
+    const { meetingId, title, elapsedSeconds, insights, transcripts, historyMeetings, gatewayUrl } = get();
     if (!meetingId || (elapsedSeconds < 3 && transcripts.length === 0 && !localAudio.recording)) {
       set({ status: 'ENDED', currentRoute: 'home', isGeneratingSummary: false });
       return;
@@ -515,31 +990,65 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     const now = new Date();
     const timeSuffix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
 
-    // 若有逐字稿，调用 AI Gateway 执行全场高精总结与标题提炼
+    // 若有逐字稿，调用本地 BYOK 直连大模型或 AI Gateway 执行全场高精总结与标题提炼
     if (transcripts.length > 0) {
       try {
-        const res = await fetch(`${gatewayUrl}/gateway/v1/meeting-summary`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            meetingId,
-            transcripts: transcripts.map((t) => ({
-              segmentId: t.id,
-              speaker: t.speaker,
-              text: t.text,
-            })),
-          }),
-        });
+        const { byokSettings } = get();
+        const isStandaloneConfigured =
+          byokSettings.mode === 'standalone' &&
+          (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
 
-        if (res.ok) {
-          const json = await res.json();
-          if (json.code === 0 && json.data) {
-            structuredSummary = json.data;
+        if (isStandaloneConfigured) {
+          const directSummary = await getByokLlmClient().generateMeetingSummary(
+            {
+              meetingId,
+              transcripts: transcripts.map((t) => ({
+                segmentId: t.id,
+                speaker: t.speaker,
+                text: t.text,
+              })),
+            },
+            byokSettings
+          );
+          if (directSummary) {
+            structuredSummary = directSummary;
+          }
+        } else {
+          const res = await fetch(`${gatewayUrl}/gateway/v1/meeting-summary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              meetingId,
+              transcripts: transcripts.map((t) => ({
+                segmentId: t.id,
+                speaker: t.speaker,
+                text: t.text,
+              })),
+            }),
+          });
+
+          if (res.ok) {
+            const json = await res.json();
+            if (json.code === 0 && json.data) {
+              structuredSummary = json.data;
+            }
+          }
+        }
 
             // 1. 自动生成标题：结合对话提炼的主题 + 日期时间
             if (structuredSummary?.suggestedTitle) {
               const cleanSuggested = structuredSummary.suggestedTitle.trim();
-              const isDefaultTitle = !title || title.startsWith('会议记录') || title.startsWith('新会议') || title.startsWith('未命名');
+              const isDefaultTitle =
+                !title ||
+                title === '新会议讨论' ||
+                title.startsWith('会议记录') ||
+                title.startsWith('新会议') ||
+                title.startsWith('未命名') ||
+                title.endsWith(' 讨论') ||
+                title.includes('Teams 讨论') ||
+                title.includes('腾讯会议 讨论') ||
+                title.includes('Zoom 讨论') ||
+                title.includes('飞书 讨论');
               if (isDefaultTitle) {
                 finalTitle = `${cleanSuggested} ${timeSuffix}`;
               } else if (!title.includes(timeSuffix)) {
@@ -611,8 +1120,6 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
                 }
               });
             }
-          }
-        }
       } catch (err) {
         console.warn('[EndMeeting] AI summary extraction failed, fallback to local insights:', err);
       }
@@ -647,33 +1154,18 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       transcripts: [...transcripts],
     };
 
-    // 提取本场待办，同步录入系统待办清单
-    const newTasks: TaskItem[] = finalInsights
-      .filter((i) => i.type === 'action')
-      .map((i) => ({
-        id: `task_${Date.now()}_${i.id}`,
-        title: i.content,
-        meetingId: meetingId,
-        meetingTitle: finalTitle,
-        assignee: '待确认',
-        completed: false,
-        createdAt: new Date().toISOString().slice(0, 10),
-        evidenceSegmentId: i.evidenceSegmentId,
-      }));
-
     // 过滤掉同 id 会议，杜绝重复写入
+    // 注意：AI 萃取的待办建议仅保留在本次会议纪要的 actions 中（isConfirmed: false），
+    // 待用户在会议总结中人工复核确认后才正式转入全局 tasks，避免无意义琐事污染任务中心。
     const cleanOldHistory = historyMeetings.filter((m) => m.id !== meetingId);
     const updatedHistory = [newHistory, ...cleanOldHistory];
-    const updatedTasks = [...newTasks, ...tasks];
     saveStoredHistoryMeetings(updatedHistory);
-    saveStoredTasks(updatedTasks);
 
     set({
       status: 'ENDED',
       title: finalTitle,
       insights: finalInsights,
       historyMeetings: updatedHistory,
-      tasks: updatedTasks,
       activeSummaryMeeting: newHistory, // 自动激活总结详情查看
       isGeneratingSummary: false,
       currentRoute: 'summary',
@@ -703,6 +1195,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       }
       get().refreshUserBalance();
     }
+    void get().fetchMeetingAiCost(meetingId);
   },
 
   tickTimer: () => {
@@ -1255,8 +1748,13 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   deleteMeetingAction: (meetingId: string, index: number) => {
+    let targetTaskId: string | undefined;
     const history = get().historyMeetings.map((m) => {
       if (m.id !== meetingId || !m.structuredSummary) return m;
+      const targetAction = m.structuredSummary.actions[index];
+      if (targetAction?.taskId) {
+        targetTaskId = targetAction.taskId;
+      }
       const actions = m.structuredSummary.actions.filter((_, i) => i !== index);
       return {
         ...m,
@@ -1267,7 +1765,14 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     saveStoredHistoryMeetings(history);
     const active = get().activeSummaryMeeting;
     const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
-    set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+    
+    if (targetTaskId) {
+      const newTasks = get().tasks.filter((t) => t.id !== targetTaskId);
+      saveStoredTasks(newTasks);
+      set({ historyMeetings: history, activeSummaryMeeting: nextActive, tasks: newTasks });
+    } else {
+      set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+    }
   },
 
   updateMeetingTranscriptText: (meetingId: string, segmentId: string, newText: string) => {
@@ -1364,5 +1869,126 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     const active = get().activeSummaryMeeting;
     const nextActive = active && active.id === meetingId ? history.find((m) => m.id === meetingId) || null : active;
     set({ historyMeetings: history, activeSummaryMeeting: nextActive });
+  },
+
+  // 会议标题自主编辑与 AI 重新提炼 (023)
+  updateHistoryMeetingTitle: (meetingId: string, newTitle: string) => {
+    const trimmed = newTitle.trim();
+    if (!trimmed) return;
+
+    const history = get().historyMeetings.map((m) => {
+      if (m.id !== meetingId) return m;
+      return {
+        ...m,
+        title: trimmed,
+        structuredSummary: m.structuredSummary
+          ? { ...m.structuredSummary, suggestedTitle: trimmed }
+          : m.structuredSummary,
+      };
+    });
+
+    saveStoredHistoryMeetings(history);
+
+    const active = get().activeSummaryMeeting;
+    const nextActive = active && active.id === meetingId ? { ...active, title: trimmed } : active;
+
+    // 同步更新 tasks 中的 meetingTitle
+    const updatedTasks = get().tasks.map((t) => {
+      if (t.meetingId === meetingId) {
+        return { ...t, meetingTitle: trimmed };
+      }
+      return t;
+    });
+    saveStoredTasks(updatedTasks);
+
+    set({
+      historyMeetings: history,
+      activeSummaryMeeting: nextActive,
+      tasks: updatedTasks,
+    });
+  },
+
+  regenerateMeetingTitle: async (meetingId: string): Promise<string | null> => {
+    const meeting = get().historyMeetings.find((m) => m.id === meetingId) || get().activeSummaryMeeting;
+    if (!meeting) return null;
+
+    const transcripts = meeting.transcripts || [];
+    const gatewayUrl = get().gatewayUrl;
+
+    try {
+      if (transcripts.length > 0) {
+        const { byokSettings } = get();
+        const isStandaloneConfigured =
+          byokSettings.mode === 'standalone' &&
+          (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
+
+        if (isStandaloneConfigured) {
+          const directSummary = await getByokLlmClient().generateMeetingSummary(
+            {
+              meetingId,
+              transcripts: transcripts.slice(0, 100).map((t) => ({
+                segmentId: t.id,
+                speaker: t.speaker,
+                text: t.text,
+              })),
+            },
+            byokSettings
+          );
+          const suggested = directSummary?.suggestedTitle?.trim();
+          if (suggested) {
+            get().updateHistoryMeetingTitle(meetingId, suggested);
+            return suggested;
+          }
+        } else {
+          const res = await fetch(`${gatewayUrl}/gateway/v1/meeting-summary`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              meetingId,
+              transcripts: transcripts.slice(0, 100).map((t) => ({
+                segmentId: t.id,
+                speaker: t.speaker,
+                text: t.text,
+              })),
+            }),
+          });
+
+          if (res.ok) {
+            const json = await res.json();
+            const suggested = json.data?.suggestedTitle?.trim();
+            if (suggested) {
+              get().updateHistoryMeetingTitle(meetingId, suggested);
+              return suggested;
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('[regenerateMeetingTitle] 网关请求超时或不可达，启用本地决策提取降级:', err);
+    }
+
+    // 本地智能提取降级兜底：绝不直接失败放弃
+    const firstDecision = meeting.structuredSummary?.decisions?.[0]?.title;
+    const firstAction = meeting.structuredSummary?.actions?.[0]?.title;
+    const fallbackSeed = firstDecision || firstAction;
+    if (fallbackSeed) {
+      const cleanSeed = fallbackSeed.replace(/^采用|^推进|^跟进|^确认/, '').trim();
+      const localTitle = cleanSeed.length >= 4 ? `${cleanSeed}研讨` : '业务方案研讨与决策对齐';
+      get().updateHistoryMeetingTitle(meetingId, localTitle);
+      return localTitle;
+    }
+
+    // 从实质逐字稿提取（过滤寒暄噪音）
+    const substantiveSegments = transcripts.filter(
+      (t) => t.text && t.text.length > 6 && !t.text.includes('喂') && !t.text.includes('听得') && !t.text.includes('测试') && !t.text.includes('早啊')
+    );
+    if (substantiveSegments.length > 0) {
+      const segText = substantiveSegments[0].text.replace(/^[0-9\.\-\s]+/, '').slice(0, 14);
+      const localTitle = `${segText}讨论`;
+      get().updateHistoryMeetingTitle(meetingId, localTitle);
+      return localTitle;
+    }
+
+    return null;
   },
 }));

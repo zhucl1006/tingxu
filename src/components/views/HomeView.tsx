@@ -12,8 +12,11 @@ export const HomeView: React.FC = () => {
     setActiveSummaryMeeting,
     deleteHistoryMeeting,
     toggleFloatingPill,
+    updateHistoryMeetingTitle,
   } = useMeetingStore();
   const [newTitle, setNewTitle] = useState('');
+  const [editingMeetingId, setEditingMeetingId] = useState<string | null>(null);
+  const [editingTitleDraft, setEditingTitleDraft] = useState('');
 
   const pendingTasks = tasks.filter((t) => !t.completed);
 
@@ -145,9 +148,71 @@ export const HomeView: React.FC = () => {
                   onClick={() => setActiveSummaryMeeting(m)}
                 >
                     <div className="flex items-center justify-between">
-                      <h3 className="text-xs font-bold text-text-primary hover:text-brand-blue transition-colors">
-                        {m.title}
-                      </h3>
+                      {editingMeetingId === m.id ? (
+                        <div
+                          className="flex items-center gap-1.5 flex-1 max-w-sm mr-2"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <input
+                            type="text"
+                            data-testid={`home-page-input-edit-history-${m.id}`}
+                            value={editingTitleDraft}
+                            onChange={(e) => setEditingTitleDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                if (editingTitleDraft.trim()) {
+                                  updateHistoryMeetingTitle(m.id, editingTitleDraft.trim());
+                                }
+                                setEditingMeetingId(null);
+                              } else if (e.key === 'Escape') {
+                                setEditingMeetingId(null);
+                              }
+                            }}
+                            autoFocus
+                            className="px-2 py-0.5 text-xs bg-canvas border border-brand-blue rounded text-text-primary outline-hidden flex-1 shadow-2xs"
+                          />
+                          <button
+                            type="button"
+                            data-testid={`home-page-btn-save-history-${m.id}`}
+                            onClick={() => {
+                              if (editingTitleDraft.trim()) {
+                                updateHistoryMeetingTitle(m.id, editingTitleDraft.trim());
+                              }
+                              setEditingMeetingId(null);
+                            }}
+                            className="px-2 py-0.5 text-[11px] bg-brand-blue text-white rounded font-medium hover:bg-brand-blue-hover transition-colors shrink-0"
+                          >
+                            保存
+                          </button>
+                          <button
+                            type="button"
+                            data-testid={`home-page-btn-cancel-history-${m.id}`}
+                            onClick={() => setEditingMeetingId(null)}
+                            className="px-1.5 py-0.5 text-[11px] bg-panel border border-border-subtle hover:bg-hover text-text-secondary rounded transition-colors shrink-0"
+                          >
+                            取消
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 group/title">
+                          <h3 className="text-xs font-bold text-text-primary hover:text-brand-blue transition-colors">
+                            {m.title}
+                          </h3>
+                          <button
+                            type="button"
+                            data-testid={`home-page-btn-edit-history-${m.id}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingMeetingId(m.id);
+                              setEditingTitleDraft(m.title);
+                            }}
+                            className="opacity-0 group-hover/title:opacity-100 hover:text-brand-blue text-text-tertiary transition-opacity p-0.5 rounded text-[11px]"
+                            title="重命名会议主题"
+                          >
+                            ✏️
+                          </button>
+                        </div>
+                      )}
                       <div className="flex items-center gap-2">
                         <span className="text-[11px] text-text-tertiary font-mono">{m.date}</span>
                         <button
@@ -190,6 +255,15 @@ export const HomeView: React.FC = () => {
                         <span className="font-mono tabular-nums">⏱ {formatSeconds(m.durationSeconds)}</span>
                         <span>✓ {m.decisionsCount} 项结论</span>
                         <span>☑ {m.tasksCount} 项待办</span>
+                        {typeof m.aiCost?.totalCostYuan === 'number' && (
+                          <span
+                            data-testid={`home-page-history-badge-cost-${m.id}`}
+                            className="font-mono tabular-nums text-text-secondary bg-subtle px-1.5 py-0.5 rounded border border-border-subtle font-medium text-[10px]"
+                            title={`单场实际 AI 成本：¥${m.aiCost.totalCostYuan.toFixed(2)}`}
+                          >
+                            ¥{m.aiCost.totalCostYuan.toFixed(2)}
+                          </span>
+                        )}
                       </div>
                       <span className="text-brand-blue font-medium hover:underline">
                         查看纪要与脑图 →

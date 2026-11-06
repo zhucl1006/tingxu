@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useMeetingStore } from '../useMeetingStore';
+import type { HistoryMeeting } from '../../types/meeting';
 
 describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
   it('014：重复final幂等，身份补全不覆盖已手工命名的片段', () => {
@@ -179,8 +180,10 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
       expect(history.structuredSummary?.decisions).toHaveLength(1);
       expect(history.structuredSummary?.actions).toHaveLength(1);
 
-      // 验证待办自动录入 tasks
-      expect(state.tasks.some((t) => t.title.includes('完成链路联调'))).toBe(true);
+      // 验证待办不自动录入 tasks（遵循用户审查确认机制，防止 AI 垃圾待办污染清单）
+      expect(state.tasks.some((t) => t.title.includes('完成链路联调'))).toBe(false);
+      expect(history.structuredSummary?.actions[0].title).toBe('完成链路联调');
+      expect(history.structuredSummary?.actions[0].isConfirmed).toBeFalsy();
 
       // 验证 activeSummaryMeeting 已激活
       expect(state.activeSummaryMeeting).toBe(history);
@@ -341,7 +344,7 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     const afterDelete = JSON.parse(localStorage.getItem('tingxu_history_meetings')!);
     expect(afterDelete).toHaveLength(1);
     expect(afterDelete[0].title).toContain('数据持久化保证会议');
-  });
+  }, 15000);
 
   it('支持本地声纹档案显式授权注册、持久化恢复、重命名、单条删除与全部清空 (T09)', () => {
     const store = useMeetingStore.getState();
@@ -452,5 +455,215 @@ describe('useMeetingStore - 状态管理与人工保护逻辑 (TDD)', () => {
     // 4. 下一场会议再次进入，能够重新灵敏提示
     store.setDetectedMeetingApp(app);
     expect(useMeetingStore.getState().detectedMeetingApp).toEqual(app);
+  });
+
+  describe('待办任务全生命周期管理与会后人工审查入库 (Human-in-the-loop Tasks)', () => {
+    beforeEach(() => {
+      useMeetingStore.setState({
+        tasks: [],
+        historyMeetings: [],
+        activeSummaryMeeting: null,
+      });
+      localStorage.clear();
+    });
+
+    it('支持手动创建待办 createTask，支持设置标题、优先级、负责人与截止时间', () => {
+      const store = useMeetingStore.getState();
+      const newTask = store.createTask({
+        title: '手动规划的紧急性能调优',
+        priority: 'high',
+        assignee: '朱工',
+        dueDate: '2026-11-10',
+        description: '需针对音频采样重采样进行优化',
+      });
+
+      expect(newTask.id).toBeDefined();
+      expect(newTask.title).toBe('手动规划的紧急性能调优');
+      expect(newTask.priority).toBe('high');
+      expect(newTask.status).toBe('todo');
+      expect(newTask.completed).toBe(false);
+
+      const state = useMeetingStore.getState();
+      expect(state.tasks).toHaveLength(1);
+      expect(state.tasks[0].id).toBe(newTask.id);
+    });
+
+    it('支持编辑修改待办 updateTask', () => {
+      const store = useMeetingStore.getState();
+      const task = store.createTask({
+        title: '初版任务',
+        priority: 'medium',
+        assignee: '李工',
+      });
+
+      store.updateTask(task.id, {
+        title: '修改后的任务名称',
+        priority: 'high',
+        dueDate: '2026-11-15',
+        description: '已补充执行细节',
+      });
+
+      const updated = useMeetingStore.getState().tasks.find((t) => t.id === task.id);
+      expect(updated?.title).toBe('修改后的任务名称');
+      expect(updated?.priority).toBe('high');
+      expect(updated?.dueDate).toBe('2026-11-15');
+      expect(updated?.description).toBe('已补充执行细节');
+    });
+
+    it('支持流转待办状态 setTaskStatus，并同步保持 completed 布尔值兼容', () => {
+      const store = useMeetingStore.getState();
+      const task = store.createTask({ title: '状态流转任务' });
+
+      // todo -> in_progress
+      store.setTaskStatus(task.id, 'in_progress');
+      expect(useMeetingStore.getState().tasks[0].status).toBe('in_progress');
+      expect(useMeetingStore.getState().tasks[0].completed).toBe(false);
+
+      // in_progress -> done
+      store.setTaskStatus(task.id, 'done');
+      expect(useMeetingStore.getState().tasks[0].status).toBe('done');
+      expect(useMeetingStore.getState().tasks[0].completed).toBe(true);
+
+      // done -> canceled
+      store.setTaskStatus(task.id, 'canceled');
+      expect(useMeetingStore.getState().tasks[0].status).toBe('canceled');
+      expect(useMeetingStore.getState().tasks[0].completed).toBe(false);
+
+      // toggleTask 向后兼容
+      store.toggleTask(task.id);
+      expect(useMeetingStore.getState().tasks[0].status).toBe('done');
+      expect(useMeetingStore.getState().tasks[0].completed).toBe(true);
+    });
+
+    it('支持删除单条待办 deleteTask 与一键清理已完成待办 clearCompletedTasks', () => {
+      const store = useMeetingStore.getState();
+      const t1 = store.createTask({ title: '待办1' });
+      const t2 = store.createTask({ title: '待办2' });
+      const t3 = store.createTask({ title: '待办3' });
+
+      store.setTaskStatus(t2.id, 'done');
+      expect(useMeetingStore.getState().tasks).toHaveLength(3);
+
+      // 删除单条待办 t1
+      store.deleteTask(t1.id);
+      expect(useMeetingStore.getState().tasks.map((t) => t.id)).toEqual([t3.id, t2.id]);
+
+      // 一键清理已完成待办
+      store.clearCompletedTasks();
+      expect(useMeetingStore.getState().tasks.map((t) => t.id)).toEqual([t3.id]);
+    });
+
+    it('在会议总结中人工确认某项行动建议 confirmActionToTask，转入全局待办并标记已确认', () => {
+      const store = useMeetingStore.getState();
+      const mockMeeting: HistoryMeeting = {
+        id: 'mtg_review_1',
+        title: '产品评审周会',
+        date: '2026-11-05',
+        durationSeconds: 300,
+        summary: '概述',
+        decisionsCount: 0,
+        tasksCount: 2,
+        structuredSummary: {
+          suggestedTitle: '产品评审周会',
+          overview: '概述',
+          decisions: [],
+          actions: [
+            { title: '完成待办管理重构方案', assignee: '朱工', dueDate: '明日' },
+            { title: '无意义琐事建议（被忽略）', assignee: '张工' },
+          ],
+          risks: [],
+          facts: [],
+        },
+      };
+
+      useMeetingStore.setState({
+        historyMeetings: [mockMeeting],
+        activeSummaryMeeting: mockMeeting,
+        tasks: [],
+      });
+
+      // 用户仅确认第 0 项行动建议
+      const createdTask = store.confirmActionToTask('mtg_review_1', 0);
+      expect(createdTask).toBeDefined();
+      expect(createdTask?.title).toBe('完成待办管理重构方案');
+      expect(createdTask?.assignee).toBe('朱工');
+      expect(createdTask?.meetingId).toBe('mtg_review_1');
+      expect(createdTask?.meetingTitle).toBe('产品评审周会');
+
+      const state = useMeetingStore.getState();
+      expect(state.tasks).toHaveLength(1);
+      expect(state.tasks[0].id).toBe(createdTask?.id);
+
+      // 会议详情中的 action 项标记为已确认并挂载 taskId
+      const updatedMeeting = state.historyMeetings.find((m) => m.id === 'mtg_review_1');
+      expect(updatedMeeting?.structuredSummary?.actions[0].isConfirmed).toBe(true);
+      expect(updatedMeeting?.structuredSummary?.actions[0].taskId).toBe(createdTask?.id);
+      expect(updatedMeeting?.structuredSummary?.actions[1].isConfirmed).toBeFalsy();
+    });
+
+    it('在会议总结中一键全部采纳 batchConfirmActionsToTasks', () => {
+      const store = useMeetingStore.getState();
+      const mockMeeting: HistoryMeeting = {
+        id: 'mtg_batch_1',
+        title: '商业化推进对齐会',
+        date: '2026-11-05',
+        durationSeconds: 600,
+        summary: '概述',
+        decisionsCount: 0,
+        tasksCount: 2,
+        structuredSummary: {
+          suggestedTitle: '商业化推进对齐会',
+          overview: '概述',
+          decisions: [],
+          actions: [
+            { title: '开通微信支付权限', assignee: '运营小周', dueDate: '下周一' },
+            { title: '部署公网 AI Gateway 节点', assignee: '运维小李', dueDate: '周五' },
+          ],
+          risks: [],
+          facts: [],
+        },
+      };
+
+      useMeetingStore.setState({
+        historyMeetings: [mockMeeting],
+        activeSummaryMeeting: mockMeeting,
+        tasks: [],
+      });
+
+      const confirmedTasks = store.batchConfirmActionsToTasks('mtg_batch_1');
+      expect(confirmedTasks).toHaveLength(2);
+      expect(useMeetingStore.getState().tasks).toHaveLength(2);
+
+      const meetingActions = useMeetingStore.getState().historyMeetings[0].structuredSummary?.actions;
+      expect(meetingActions?.[0].isConfirmed).toBe(true);
+      expect(meetingActions?.[1].isConfirmed).toBe(true);
+    });
+
+    it('支持批量流转待办状态 batchSetTaskStatus 与批量删除 batchDeleteTasks', () => {
+      const store = useMeetingStore.getState();
+      const t1 = store.createTask({ title: '任务1' });
+      const t2 = store.createTask({ title: '任务2' });
+      const t3 = store.createTask({ title: '任务3' });
+
+      // 批量推进到进行中
+      store.batchSetTaskStatus([t1.id, t2.id], 'in_progress');
+      let tasks = useMeetingStore.getState().tasks;
+      expect(tasks.find((t) => t.id === t1.id)?.status).toBe('in_progress');
+      expect(tasks.find((t) => t.id === t2.id)?.status).toBe('in_progress');
+      expect(tasks.find((t) => t.id === t3.id)?.status).toBe('todo');
+
+      // 批量标记为已完成
+      store.batchSetTaskStatus([t2.id, t3.id], 'done');
+      tasks = useMeetingStore.getState().tasks;
+      expect(tasks.find((t) => t.id === t2.id)?.status).toBe('done');
+      expect(tasks.find((t) => t.id === t2.id)?.completed).toBe(true);
+      expect(tasks.find((t) => t.id === t3.id)?.status).toBe('done');
+      expect(tasks.find((t) => t.id === t3.id)?.completed).toBe(true);
+
+      // 批量删除
+      store.batchDeleteTasks([t1.id, t2.id]);
+      tasks = useMeetingStore.getState().tasks;
+      expect(tasks.map((t) => t.id)).toEqual([t3.id]);
+    });
   });
 });

@@ -77,6 +77,9 @@ export interface UserProfile {
   role?: 'USER' | 'OPERATOR' | 'OWNER';
 }
 
+export type TaskStatus = 'todo' | 'in_progress' | 'done' | 'canceled';
+export type TaskPriority = 'high' | 'medium' | 'low';
+
 export interface TaskItem {
   id: string;
   title: string;
@@ -84,7 +87,12 @@ export interface TaskItem {
   meetingTitle: string;
   assignee: string;
   completed: boolean;
+  status?: TaskStatus;
+  priority?: TaskPriority;
+  dueDate?: string;
+  description?: string;
   createdAt: string;
+  updatedAt?: string;
   evidenceSegmentId?: string;
 }
 
@@ -96,11 +104,15 @@ export interface SummaryDecisionItem {
 }
 
 export interface SummaryActionItem {
+  id?: string;
   title: string;
+  content?: string;
   assignee?: string;
   dueDate?: string;
   evidenceQuote?: string;
   evidenceSegmentId?: string;
+  isConfirmed?: boolean;
+  taskId?: string;
 }
 
 export interface SummaryRiskItem {
@@ -150,6 +162,26 @@ export interface MeetingChatMessage {
   proposals?: SummaryRevisionProposal[];
 }
 
+export interface MeetingAiCostBreakdown {
+  asrCostYuan: number;
+  asrAudioSeconds: number;
+  insightsCostYuan: number;
+  insightsTokens: number;
+  summaryCostYuan: number;
+  summaryTokens: number;
+  chatCostYuan: number;
+  chatTokens: number;
+}
+
+export interface MeetingAiCost {
+  totalCostYuan: number;
+  totalTokens: number;
+  audioSeconds: number;
+  breakdown: MeetingAiCostBreakdown;
+  recordsCount: number;
+  updatedAt: string;
+}
+
 export interface HistoryMeeting {
   recording?: RecordingReference;
   recordingWarning?: string;
@@ -166,6 +198,7 @@ export interface HistoryMeeting {
   insights?: InsightCard[];
   transcripts?: TranscriptSegment[];
   chatHistory?: MeetingChatMessage[];
+  aiCost?: MeetingAiCost;
 }
 
 export interface StorageSettings {
@@ -212,6 +245,47 @@ export const DEFAULT_APPEARANCE_SETTINGS: UiAppearanceSettings = {
   density: 'comfortable',
 };
 
+export type AppRunMode = 'standalone';
+export type LlmProviderType = 'deepseek' | 'qwen' | 'custom' | 'ollama';
+export type AsrProviderType = 'dashscope' | 'custom';
+
+export interface ByokSettings {
+  mode?: AppRunMode;
+  llmProvider: LlmProviderType;
+  llmApiKey: string;
+  llmBaseUrl: string;
+  llmModel: string;
+  asrProvider: AsrProviderType;
+  asrApiKey: string;
+  asrEndpoint: string;
+}
+
+export const DEFAULT_BYOK_SETTINGS: ByokSettings = {
+  mode: 'standalone',
+  llmProvider: 'deepseek',
+  llmApiKey: '',
+  llmBaseUrl: 'https://api.deepseek.com/v1',
+  llmModel: 'deepseek-chat',
+  asrProvider: 'dashscope',
+  asrApiKey: '',
+  asrEndpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+};
+
+// 实时洞察模式与控频配置 (026 算力降费)
+export type LiveInsightMode = 'manual' | 'periodic' | 'disabled';
+
+export interface LiveInsightSettings {
+  mode: LiveInsightMode; // 'manual': 手动按需; 'periodic': 周期自动; 'disabled': 完全关闭
+  intervalSeconds: number; // 周期提炼秒数，默认 120 (可调 60/120/180/300)
+  minCharsThreshold: number; // 触发最小字数门槛，默认 400
+}
+
+export const DEFAULT_LIVE_INSIGHT_SETTINGS: LiveInsightSettings = {
+  mode: 'manual', // 默认推荐手动，最大限度节省费用
+  intervalSeconds: 120,
+  minCharsThreshold: 400,
+};
+
 // 声纹聚类与说话人分离参数配置
 export type VoiceprintPresetMode = 'single' | 'balanced' | 'sensitive' | 'custom';
 
@@ -256,6 +330,7 @@ export interface MeetingState {
   status: MeetingStatus;
   meetingId: string | null;
   title: string;
+  isTitleManuallyEdited?: boolean;
   elapsedSeconds: number;
   transcripts: TranscriptSegment[];
   insights: InsightCard[];
@@ -279,10 +354,31 @@ export interface MeetingState {
   initialQuotaSeconds?: number;
   setQuotaMinutes: (minutes: number) => void;
   refreshUserBalance: () => Promise<void>;
+  aiCost: MeetingAiCost | null;
+  fetchMeetingAiCost: (meetingId: string) => Promise<MeetingAiCost | null>;
 
-  // 待办与历史
+  // 待办与任务生命周期
   tasks: TaskItem[];
   toggleTask: (id: string) => void;
+  createTask: (input: {
+    title: string;
+    meetingId?: string;
+    meetingTitle?: string;
+    assignee?: string;
+    priority?: TaskPriority;
+    dueDate?: string;
+    description?: string;
+    evidenceSegmentId?: string;
+  }) => TaskItem;
+  updateTask: (id: string, patch: Partial<Omit<TaskItem, 'id' | 'createdAt'>>) => void;
+  deleteTask: (id: string) => void;
+  setTaskStatus: (id: string, status: TaskStatus) => void;
+  clearCompletedTasks: () => void;
+  confirmActionToTask: (meetingId: string, actionIndex: number) => TaskItem | null;
+  batchConfirmActionsToTasks: (meetingId: string) => TaskItem[];
+  removeActionFromTask: (meetingId: string, actionIndex: number) => void;
+  batchSetTaskStatus: (ids: string[], status: TaskStatus) => void;
+  batchDeleteTasks: (ids: string[]) => void;
   historyMeetings: HistoryMeeting[];
   activeSummaryMeeting: HistoryMeeting | null;
   activeTargetSegmentId?: string | null;
@@ -305,6 +401,11 @@ export interface MeetingState {
   // 网关地址
   gatewayUrl: string;
   setGatewayUrl: (url: string) => void;
+
+  // 自带密钥与运行模式 (BYOK / Standalone)
+  byokSettings: ByokSettings;
+  updateByokSettings: (settings: Partial<ByokSettings>) => void;
+  resetByokSettings: () => void;
 
   // 界面外观与排版样式
   appearanceSettings: UiAppearanceSettings;
@@ -335,6 +436,12 @@ export interface MeetingState {
   updateVoiceprintSettings: (settings: Partial<VoiceprintConfigSettings>) => void;
   resetVoiceprintSettings: () => void;
   setMeetingSpeakerMode: (mode: 'single' | 'balanced' | 'sensitive') => void;
+
+  // 实时洞察模式与控频 (026 算力降费)
+  liveInsightSettings: LiveInsightSettings;
+  updateLiveInsightSettings: (patch: Partial<LiveInsightSettings>) => void;
+  resetLiveInsightSettings: () => void;
+  triggerManualInsight: () => Promise<boolean>;
 
   // 实时会议管道状态与声学控制 (020)
   insightError: string | null;
@@ -404,4 +511,8 @@ export interface MeetingState {
   updateMeetingTranscriptText: (meetingId: string, segmentId: string, newText: string) => void;
   applySummaryProposal: (meetingId: string, proposal: SummaryRevisionProposal) => void;
   addMeetingChatMessage: (meetingId: string, message: MeetingChatMessage) => void;
+
+  // 会议标题自主编辑与 AI 重新提炼 (023)
+  updateHistoryMeetingTitle: (meetingId: string, newTitle: string) => void;
+  regenerateMeetingTitle: (meetingId: string) => Promise<string | null>;
 }

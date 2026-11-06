@@ -6,6 +6,7 @@ import { parseTimecode, segmentPlaybackSeconds, playingSegment } from '../../uti
 import { MeetingMindmap } from '../MeetingMindmap';
 import { SummaryRevisionProposal, MeetingChatMessage } from '../../types/meeting';
 import { getTingxuClient } from '../../api/tingxuClient';
+import { getByokLlmClient } from '../../api/byokLlmClient';
 
 export const MeetingSummaryView: React.FC = () => {
   const {
@@ -28,8 +29,16 @@ export const MeetingSummaryView: React.FC = () => {
     updateMeetingTranscriptText,
     applySummaryProposal,
     addMeetingChatMessage,
+    confirmActionToTask,
+    batchConfirmActionsToTasks,
+    removeActionFromTask,
+    tasks,
+    updateHistoryMeetingTitle,
+    regenerateMeetingTitle,
+    fetchMeetingAiCost,
   } = useMeetingStore();
 
+  const [isCostModalOpen, setIsCostModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'summary' | 'mindmap' | 'transcripts'>('summary');
   const [summaryMode, setSummaryMode] = useState<'cards' | 'outline'>('cards');
   const [copied, setCopied] = useState(false);
@@ -37,6 +46,30 @@ export const MeetingSummaryView: React.FC = () => {
   const [completedActions, setCompletedActions] = useState<Set<number>>(new Set());
   const [editingSpeaker, setEditingSpeaker] = useState<string | null>(null);
   const [newSpeakerName, setNewSpeakerName] = useState('');
+
+  // 会议标题自主编辑与 AI 重新提炼状态 (023)
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState('');
+  const [isRegeneratingTitle, setIsRegeneratingTitle] = useState(false);
+  const [titleNotice, setTitleNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  // 会后 Copilot 消息与提案一键复制反馈状态 (023)
+  const [copiedCopilotId, setCopiedCopilotId] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, id: string) => {
+    if (!text) return;
+    try {
+      if (navigator?.clipboard?.writeText) {
+        navigator.clipboard.writeText(text).catch((err) => console.error('[Clipboard] 复制失败:', err));
+      }
+    } catch (err) {
+      console.error('[Clipboard] 复制异常:', err);
+    }
+    setCopiedCopilotId(id);
+    setTimeout(() => {
+      setCopiedCopilotId((prev) => (prev === id ? null : prev));
+    }, 1500);
+  };
 
   const toggleActionComplete = (index: number) => {
     setCompletedActions((prev) => {
@@ -81,6 +114,7 @@ export const MeetingSummaryView: React.FC = () => {
   const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(null);
   const [seekRequest, setSeekRequest] = useState<{ seconds: number; revision: number }>();
   const [seekRevision, setSeekRevision] = useState(0);
+  const [navigatedFromCopilot, setNavigatedFromCopilot] = useState(false);
   useEffect(() => {
     setSelectedSegmentId(null);
     setPlayingSegmentId(null);
@@ -88,6 +122,10 @@ export const MeetingSummaryView: React.FC = () => {
     setActiveTab('summary');
     setCompletedActions(new Set());
     setCopiedSection(null);
+    setNavigatedFromCopilot(false);
+    if (activeSummaryMeeting?.id && !activeSummaryMeeting.aiCost) {
+      void fetchMeetingAiCost(activeSummaryMeeting.id);
+    }
   }, [activeSummaryMeeting?.id]);
 
   const transcriptsContainerRef = useRef<HTMLDivElement>(null);
@@ -95,13 +133,16 @@ export const MeetingSummaryView: React.FC = () => {
   // 监听选中段落，联动滚动与高亮
   useEffect(() => {
     const targetId = selectedSegmentId || activeTargetSegmentId;
-    if (targetId) {
-      const el = document.getElementById(`summary-seg-${targetId}`);
-      if (el && typeof el.scrollIntoView === 'function') {
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
+    if (targetId && rightPanelTab === 'transcripts') {
+      const timer = setTimeout(() => {
+        const el = document.getElementById(`summary-seg-${targetId}`);
+        if (el && typeof el.scrollIntoView === 'function') {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      }, 50);
+      return () => clearTimeout(timer);
     }
-  }, [activeTargetSegmentId, selectedSegmentId, activeTab, seekRevision]);
+  }, [activeTargetSegmentId, selectedSegmentId, activeTab, rightPanelTab, seekRevision]);
 
   // Copilot 消息平滑滚动到底部
   useEffect(() => {
@@ -147,14 +188,29 @@ export const MeetingSummaryView: React.FC = () => {
     evidenceSegmentId: d.evidenceSegmentId,
   }));
 
-  const actions = summary?.actions || insights.filter((i) => i.type === 'action').map((a) => ({
+  const rawActions = summary?.actions || insights.filter((i) => i.type === 'action').map((a) => ({
     title: a.title,
     content: a.content,
     assignee: a.assignee || '待确认',
     dueDate: a.dueDate || '尽快推进',
     evidenceQuote: a.timestamp ? `(${a.timestamp})` : undefined,
     evidenceSegmentId: a.evidenceSegmentId,
+    isConfirmed: false,
+    taskId: undefined,
   }));
+
+  const actions = rawActions.map((act) => {
+    const isLinked = Boolean(
+      (act.taskId && tasks.some((t) => t.id === act.taskId)) ||
+      (meeting.id && tasks.some((t) => t.meetingId === meeting.id && t.title === act.title))
+    );
+    const linkedTask = tasks.find((t) => (act.taskId && t.id === act.taskId) || (meeting.id && t.meetingId === meeting.id && t.title === act.title));
+    return {
+      ...act,
+      isConfirmed: Boolean(act.isConfirmed || isLinked),
+      taskId: act.taskId || linkedTask?.id,
+    };
+  });
 
   const risks = summary?.risks || insights.filter((i) => i.type === 'risk').map((r) => ({
     title: r.title,
@@ -290,6 +346,47 @@ export const MeetingSummaryView: React.FC = () => {
     setNewSpeakerName('');
   };
 
+  // 保存就地编辑的会议标题 (023)
+  const handleSaveTitle = () => {
+    const trimmed = titleDraft.trim();
+    if (trimmed && activeSummaryMeeting?.id) {
+      updateHistoryMeetingTitle(activeSummaryMeeting.id, trimmed);
+    }
+    setIsEditingTitle(false);
+  };
+
+  // AI 重新提炼切中要害的会议主题 (023)
+  const handleRegenerateTitle = async () => {
+    if (!activeSummaryMeeting?.id || isRegeneratingTitle) return;
+    setIsRegeneratingTitle(true);
+    setTitleNotice(null);
+    try {
+      const newTitle = await regenerateMeetingTitle(activeSummaryMeeting.id);
+      if (newTitle) {
+        setTitleDraft(newTitle);
+        setTitleNotice({
+          type: 'success',
+          text: `✓ 已重新提炼主题：《${newTitle}》`,
+        });
+        setTimeout(() => setTitleNotice(null), 4000);
+      } else {
+        setTitleNotice({
+          type: 'error',
+          text: '⚠️ 提炼未果：暂无更多实质发言，您可以点击 ✏️ 手动输入真实主题。',
+        });
+        setTimeout(() => setTitleNotice(null), 5000);
+      }
+    } catch (err) {
+      setTitleNotice({
+        type: 'error',
+        text: `⚠️ 提炼异常: ${(err as Error).message}`,
+      });
+      setTimeout(() => setTitleNotice(null), 5000);
+    } finally {
+      setIsRegeneratingTitle(false);
+    }
+  };
+
   // 发送 Copilot 问题或修订指令
   const handleSendCopilotMessage = async (customPrompt?: string) => {
     const text = (customPrompt || copilotInput).trim();
@@ -306,11 +403,13 @@ export const MeetingSummaryView: React.FC = () => {
     setIsCopilotLoading(true);
 
     try {
-      const client = getTingxuClient();
-      if ('setGatewayUrl' in client) {
-        (client as any).setGatewayUrl(gatewayUrl);
-      }
-      const chatData = await client.copilot.chat({
+      const { byokSettings } = useMeetingStore.getState();
+      const isStandaloneConfigured =
+        byokSettings.mode === 'standalone' &&
+        (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
+
+      let chatData: any;
+      const chatReq = {
         meetingId: meeting.id,
         question: text,
         asOfTextVersion: transcripts.length,
@@ -318,7 +417,17 @@ export const MeetingSummaryView: React.FC = () => {
           ? transcripts.map((t) => ({ id: t.id, speaker: t.speaker, text: t.text }))
           : [{ id: 'seg_init', speaker: '系统', text: '本场会议已完成，正在查阅本地纪要与录音。' }],
         currentSummary: meeting.structuredSummary,
-      });
+      };
+
+      if (isStandaloneConfigured) {
+        chatData = await getByokLlmClient().chatCopilot(chatReq, byokSettings);
+      } else {
+        const client = getTingxuClient();
+        if ('setGatewayUrl' in client) {
+          (client as any).setGatewayUrl(gatewayUrl);
+        }
+        chatData = await client.copilot.chat(chatReq);
+      }
 
       const proposals: SummaryRevisionProposal[] = (chatData.proposals || []).map((p: any, idx: number) => ({
         id: `prop_${Date.now()}_${idx}`,
@@ -453,14 +562,19 @@ export const MeetingSummaryView: React.FC = () => {
   };
 
   // 引用只按证据 ID 定位，普通正文绝不提取数字猜时间。
-  const handleSeekSegment = (segmentId?: string, timeStr?: string) => {
+  const handleSeekSegment = (segmentId?: string, timeStr?: string, fromCopilot = false) => {
     const explicitTime = segmentId ? null : parseTimecode(timeStr);
     const segment = segmentId ? transcripts.find(t => t.id === segmentId)
       : explicitTime !== null ? [...transcripts].reverse().find(t => {
         const start = segmentPlaybackSeconds(t); return start !== null && start <= explicitTime;
       }) : undefined;
     if (segment) setSelectedSegmentId(segment.id);
-    setActiveTab('summary'); setSeekRevision(r => r + 1);
+    setActiveTab('summary');
+    setRightPanelTab('transcripts');
+    if (fromCopilot) {
+      setNavigatedFromCopilot(true);
+    }
+    setSeekRevision(r => r + 1);
     const seconds = segmentId ? segmentPlaybackSeconds(segment) : explicitTime;
     if (seconds !== null) {
       setSeekRequest({ seconds, revision: seekRevision + 1 });
@@ -475,103 +589,233 @@ export const MeetingSummaryView: React.FC = () => {
       data-testid="summary-page-container"
       className="flex-1 h-screen overflow-hidden flex flex-col bg-canvas text-text-primary select-none animate-fadeIn"
     >
-      {/* 沉浸式顶部标题与导航栏 */}
+      {/* 沉浸式顶部标题与导航栏 (两段式架构重构 - Plan 026) */}
       <header
         data-testid="summary-page-header"
-        className="px-6 py-3.5 border-b border-border-subtle bg-subtle flex items-center justify-between shrink-0"
+        className="border-b border-border-subtle bg-subtle shrink-0"
       >
-        <div className="flex items-center gap-4 min-w-0">
-          <button
-            type="button"
-            data-testid="summary-page-btn-back"
-            onClick={() => {
-              setActiveSummaryMeeting(null);
-              setCurrentRoute('home');
-            }}
-            className="px-3 py-1.5 text-xs rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-secondary flex items-center gap-1.5 font-medium transition-colors shrink-0"
-          >
-            <span>←</span>
-            <span>返回工作台</span>
-          </button>
+        {/* 第一段：全局导航与主操作工具栏 (固定高度 48px，坚决不发生折行) */}
+        <div className="h-12 px-6 flex items-center justify-between border-b border-border-subtle/60">
+          {/* 左侧：返回导航与面包屑 */}
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              type="button"
+              data-testid="summary-page-btn-back"
+              onClick={() => {
+                setActiveSummaryMeeting(null);
+                setCurrentRoute('home');
+              }}
+              className="px-2.5 py-1 text-xs rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-secondary hover:text-text-primary flex items-center gap-1.5 font-medium transition-colors shrink-0 shadow-2xs"
+            >
+              <span>←</span>
+              <span>返回工作台</span>
+            </button>
 
-          <div className="space-y-1 min-w-0">
-            <div className="flex items-center gap-2">
+            <span className="text-border-subtle">|</span>
+
+            <div className="flex items-center gap-2 text-xs text-text-tertiary">
+              <span className="font-medium text-text-secondary">会议工作台</span>
+              <span>/</span>
               <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-brand-blue-subtle text-brand-blue shrink-0">
                 会议总结报告
               </span>
-              <h1
-                data-testid="summary-page-text-title"
-                className="text-base font-bold text-text-primary truncate max-w-xl"
-              >
-                {meeting.title}
-              </h1>
+              <span className="text-[10px] px-1.5 py-0.2 rounded bg-status-success/10 text-status-success border border-status-success/20 font-mono hidden sm:inline-block">
+                本地免登录归档
+              </span>
             </div>
+          </div>
 
-            <div className="flex items-center gap-3 text-xs text-text-tertiary font-mono flex-wrap">
-              <span>📅 {meeting.date}</span>
-              <span>·</span>
-              <span className="tabular-nums">⏱ 时长: {formatSeconds(meeting.durationSeconds)}</span>
-              <span>·</span>
-              <span>已收录 {transcripts.length} 段发言</span>
-              {speakers.length > 0 && (
-                <>
-                  <span>·</span>
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-text-secondary">👥 参会人:</span>
-                    {speakers.map((sp, idx) => (
-                      <span
-                        key={idx}
-                        onClick={() => {
-                          setEditingSpeaker(sp);
-                          setNewSpeakerName(sp);
-                        }}
-                        className="px-1.5 py-0.2 rounded bg-canvas border border-border-subtle hover:border-brand-blue cursor-pointer transition-colors text-text-primary text-[11px]"
-                        title="点击重命名参会人"
-                      >
-                        {sp}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+          {/* 右侧：全局操作工具组 */}
+          <div className="flex items-center gap-2 shrink-0">
+            {/* AI 算力成本徽章 */}
+            <button
+              type="button"
+              data-testid="summary-page-header-badge-ai-cost"
+              onClick={() => setIsCostModalOpen(true)}
+              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+              title="点击查看本场会议 AI 实际调用费用明细"
+            >
+              <span>💰</span>
+              <span className="tabular-nums font-mono">
+                AI 成本 ￥{(meeting.aiCost?.totalCostYuan ?? 0).toFixed(2)}
+              </span>
+            </button>
+
+            <span className="text-border-subtle/80">|</span>
+
+            <button
+              type="button"
+              data-testid="summary-page-btn-call-copilot"
+              onClick={() => {
+                setActiveTab('summary');
+                setRightPanelTab((prev) => (prev === 'copilot' ? 'transcripts' : 'copilot'));
+              }}
+              className={`px-3 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                rightPanelTab === 'copilot'
+                  ? 'bg-brand-blue text-white border-brand-blue shadow-xs'
+                  : 'bg-panel border-border-subtle hover:bg-hover text-brand-blue'
+              }`}
+            >
+              <span>🤖</span>
+              <span>{rightPanelTab === 'copilot' ? 'Copilot 对话中' : '会后 Copilot 助手'}</span>
+            </button>
+
+            <button
+              type="button"
+              data-testid="summary-page-btn-copy"
+              onClick={handleCopySummary}
+              className="px-3 py-1 rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors shadow-2xs"
+            >
+              {copied ? '✓ 已复制纪要' : '📋 复制全文'}
+            </button>
+
+            <button
+              type="button"
+              data-testid="summary-page-btn-export-markdown"
+              onClick={handleExportMarkdown}
+              className="px-3 py-1 rounded-lg bg-brand-blue text-white hover:bg-brand-blue-hover text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+            >
+              <span>⬇ 导出 Markdown</span>
+            </button>
           </div>
         </div>
 
-        {/* 顶部操作区 */}
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            type="button"
-            data-testid="summary-page-btn-call-copilot"
-            onClick={() => {
-              setActiveTab('summary');
-              setRightPanelTab((prev) => (prev === 'copilot' ? 'transcripts' : 'copilot'));
-            }}
-            className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-              rightPanelTab === 'copilot'
-                ? 'bg-brand-blue text-white border-brand-blue shadow-xs'
-                : 'bg-panel border-border-subtle hover:bg-hover text-brand-blue'
-            }`}
-          >
-            <span>🤖</span>
-            <span>{rightPanelTab === 'copilot' ? 'Copilot 对话中' : '会后 Copilot 助手'}</span>
-          </button>
-          <button
-            type="button"
-            data-testid="summary-page-btn-copy"
-            onClick={handleCopySummary}
-            className="px-3 py-1.5 rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors"
-          >
-            {copied ? '✓ 已复制纪要' : '📋 复制全文'}
-          </button>
-          <button
-            type="button"
-            data-testid="summary-page-btn-export-markdown"
-            onClick={handleExportMarkdown}
-            className="px-3 py-1.5 rounded-lg bg-brand-blue text-white hover:bg-brand-blue-hover text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
-          >
-            <span>⬇ 导出 Markdown</span>
-          </button>
+        {/* 第二段：会议主题与结构化元数据看板 */}
+        <div className="px-6 py-3 bg-panel/60 space-y-2">
+          {/* 第 1 行：主题与智能重提炼 */}
+          <div className="flex items-center justify-between gap-4">
+            {isEditingTitle ? (
+              <div className="flex items-center gap-2 flex-1 max-w-2xl animate-fadeIn">
+                <input
+                  type="text"
+                  data-testid="summary-page-input-edit-title"
+                  value={titleDraft}
+                  onChange={(e) => setTitleDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      handleSaveTitle();
+                    } else if (e.key === 'Escape') {
+                      setIsEditingTitle(false);
+                    }
+                  }}
+                  autoFocus
+                  className="flex-1 px-3 py-1 text-base font-bold bg-canvas border border-brand-blue rounded-lg text-text-primary outline-hidden shadow-xs"
+                  placeholder="输入切题的会议主题..."
+                />
+                <button
+                  type="button"
+                  data-testid="summary-page-btn-save-title"
+                  onClick={handleSaveTitle}
+                  className="px-3 py-1 text-xs rounded-lg bg-brand-blue text-white font-semibold hover:bg-brand-blue-hover transition-colors shrink-0 shadow-2xs"
+                >
+                  保存
+                </button>
+                <button
+                  type="button"
+                  data-testid="summary-page-btn-cancel-title"
+                  onClick={() => setIsEditingTitle(false)}
+                  className="px-2.5 py-1 text-xs rounded-lg bg-subtle border border-border-subtle hover:bg-hover text-text-secondary transition-colors shrink-0"
+                >
+                  取消
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-3 min-w-0 group flex-1">
+                <h1
+                  data-testid="summary-page-text-title"
+                  onClick={() => {
+                    setTitleDraft(meeting.title);
+                    setIsEditingTitle(true);
+                  }}
+                  className="text-lg font-bold text-text-primary truncate cursor-pointer hover:text-brand-blue transition-colors hover:underline decoration-dotted"
+                  title="点击就地修改会议主题"
+                >
+                  {meeting.title}
+                </h1>
+                <button
+                  type="button"
+                  data-testid="summary-page-btn-edit-title"
+                  onClick={() => {
+                    setTitleDraft(meeting.title);
+                    setIsEditingTitle(true);
+                  }}
+                  className="opacity-60 group-hover:opacity-100 hover:text-brand-blue text-text-secondary transition-opacity p-1 rounded hover:bg-hover text-xs cursor-pointer"
+                  title="重命名会议主题"
+                >
+                  ✏️
+                </button>
+                <button
+                  type="button"
+                  data-testid="summary-page-btn-regenerate-title"
+                  disabled={isRegeneratingTitle}
+                  onClick={handleRegenerateTitle}
+                  className="px-2.5 py-1 rounded-md text-[11px] font-medium bg-subtle border border-border-subtle hover:border-brand-blue hover:text-brand-blue text-text-secondary transition-all flex items-center gap-1 shadow-2xs shrink-0 cursor-pointer disabled:opacity-50"
+                  title="根据全场逐字稿与核心议题，AI 重新提炼切题主题（自动过滤开场白与测试闲聊）"
+                >
+                  <span>{isRegeneratingTitle ? '⏳' : '🤖'}</span>
+                  <span>{isRegeneratingTitle ? '正在提炼...' : '重新提炼主题'}</span>
+                </button>
+              </div>
+            )}
+
+            {/* 提炼反馈通知 (固定在右侧，平滑渐隐，绝不推挤标题) */}
+            {titleNotice && (
+              <div
+                data-testid="summary-page-banner-title-feedback"
+                className={`text-xs font-medium px-3 py-1 rounded-lg flex items-center gap-1.5 animate-fadeIn shrink-0 shadow-2xs ${
+                  titleNotice.type === 'success'
+                    ? 'bg-status-success-bg text-status-success border border-status-success/30'
+                    : 'bg-status-danger-bg text-status-danger border border-status-danger/30'
+                }`}
+              >
+                <span>{titleNotice.text}</span>
+              </div>
+            )}
+          </div>
+
+          {/* 第 2 行：结构化元数据流 (日期、时长、发言段数、参会人列表) */}
+          <div className="flex items-center gap-3 text-xs text-text-tertiary flex-wrap">
+            <span className="font-mono flex items-center gap-1">
+              <span>📅</span>
+              <span>{meeting.date}</span>
+            </span>
+            <span>·</span>
+            <span className="font-mono tabular-nums flex items-center gap-1">
+              <span>⏱</span>
+              <span>时长: {formatSeconds(meeting.durationSeconds)}</span>
+            </span>
+            <span>·</span>
+            <span className="font-mono flex items-center gap-1">
+              <span>💬</span>
+              <span>已收录 {transcripts.length} 段发言</span>
+            </span>
+
+            {speakers.length > 0 && (
+              <>
+                <span>·</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-text-secondary flex items-center gap-1">
+                    <span>👥</span>
+                    <span>参会人:</span>
+                  </span>
+                  {speakers.map((sp, idx) => (
+                    <button
+                      key={idx}
+                      type="button"
+                      onClick={() => {
+                        setEditingSpeaker(sp);
+                        setNewSpeakerName(sp);
+                      }}
+                      className="px-2 py-0.5 rounded-md bg-canvas hover:bg-hover border border-border-subtle hover:border-brand-blue cursor-pointer transition-colors text-text-primary text-[11px] font-medium"
+                      title="点击重命名该参会人"
+                    >
+                      {sp}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1113,8 +1357,24 @@ export const MeetingSummaryView: React.FC = () => {
                       <div className="flex items-center gap-2">
                         <span>✦</span>
                         <span>落地计划与分步执行流 ({actions.length})</span>
+                        {actions.length > 0 && (
+                          <span className="text-[10px] font-normal px-2 py-0.5 rounded-full bg-blue-100/70 dark:bg-blue-900/40 text-brand-blue font-mono">
+                            {actions.filter((a) => a.isConfirmed).length}/{actions.length} 已转入待办
+                          </span>
+                        )}
                       </div>
                       <div className="flex items-center gap-1.5">
+                        {actions.some((a) => !a.isConfirmed) && (
+                          <button
+                            type="button"
+                            data-testid="summary-page-btn-batch-confirm-actions"
+                            onClick={() => batchConfirmActionsToTasks(meeting.id)}
+                            className="text-[11px] font-medium px-2.5 py-0.5 rounded bg-brand-blue text-white hover:bg-brand-blue/90 border border-brand-blue shadow-2xs transition-colors flex items-center gap-1"
+                            title="一键将所有未入库的行动建议确认为正式待办"
+                          >
+                            ⚡ 一键转入待办
+                          </button>
+                        )}
                         <button
                           type="button"
                           data-testid="summary-page-btn-copy-section-actions"
@@ -1308,6 +1568,46 @@ export const MeetingSummaryView: React.FC = () => {
                                         📅 {a.dueDate}
                                       </span>
                                     )}
+
+                                    {a.isConfirmed ? (
+                                      <div className="flex items-center gap-1">
+                                        <span
+                                          data-testid={`summary-page-badge-action-confirmed-${i}`}
+                                          className="px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 text-[10px] font-medium flex items-center gap-0.5"
+                                        >
+                                          <span>✓ 已在待办</span>
+                                        </span>
+                                        <button
+                                          type="button"
+                                          data-testid={`summary-page-btn-remove-action-task-${i}`}
+                                          onClick={() => removeActionFromTask(meeting.id, i)}
+                                          className="px-1.5 py-0.5 rounded text-text-tertiary hover:text-status-danger text-[10px] transition-colors"
+                                          title="从我的待办任务中移出"
+                                        >
+                                          移出
+                                        </button>
+                                        <button
+                                          type="button"
+                                          data-testid={`summary-page-btn-view-task-${i}`}
+                                          onClick={() => setCurrentRoute('tasks')}
+                                          className="px-1.5 py-0.5 rounded text-brand-blue hover:underline text-[10px] transition-colors"
+                                          title="前往待办中心查看"
+                                        >
+                                          查看
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        data-testid={`summary-page-btn-confirm-action-to-task-${i}`}
+                                        onClick={() => confirmActionToTask(meeting.id, i)}
+                                        className="px-2 py-0.5 rounded bg-brand-blue-subtle text-brand-blue hover:bg-brand-blue hover:text-white border border-brand-blue/30 text-[10px] font-medium transition-colors flex items-center gap-0.5 shadow-2xs"
+                                        title="将该项建议确认为正式待办，进入任务管理"
+                                      >
+                                        <span>✓ 转为待办</span>
+                                      </button>
+                                    )}
+
                                     <button
                                       type="button"
                                       data-testid={`summary-page-btn-edit-action-${i}`}
@@ -1632,6 +1932,31 @@ export const MeetingSummaryView: React.FC = () => {
               {rightPanelTab === 'transcripts' ? (
                 /* 逐字稿滚动列表 + 原声播放器 */
                 <div className="flex-1 overflow-hidden flex flex-col">
+                  {/* 从 Copilot 证据切片跳转时的返回横幅 */}
+                  {navigatedFromCopilot && (
+                    <div
+                      data-testid="summary-page-banner-citation-active"
+                      className="px-4 py-2 bg-brand-blue/10 border-b border-brand-blue/20 flex items-center justify-between text-xs text-brand-blue shrink-0 animate-fadeIn"
+                    >
+                      <div className="flex items-center gap-1.5 font-medium">
+                        <span>📍</span>
+                        <span>正在查看依据发言切片</span>
+                      </div>
+                      <button
+                        type="button"
+                        data-testid="summary-page-btn-return-to-copilot"
+                        onClick={() => {
+                          setRightPanelTab('copilot');
+                          setNavigatedFromCopilot(false);
+                        }}
+                        className="px-2.5 py-1 rounded bg-brand-blue text-white text-[11px] font-medium hover:bg-brand-blue-hover transition-colors flex items-center gap-1 shadow-2xs"
+                      >
+                        <span>↩</span>
+                        <span>返回 Copilot 对话</span>
+                      </button>
+                    </div>
+                  )}
+
                   <div
                     ref={transcriptsContainerRef}
                     data-testid="summary-page-list-transcripts"
@@ -1807,6 +2132,17 @@ export const MeetingSummaryView: React.FC = () => {
                           <div className="flex items-center gap-1.5 text-[10px] text-text-tertiary font-mono">
                             <span>{isUser ? '我' : '听序 Copilot'}</span>
                             <span>{msg.timestamp}</span>
+                            {isUser && (
+                              <button
+                                type="button"
+                                data-testid={`summary-page-copilot-btn-copy-user-msg-${idx}`}
+                                onClick={() => handleCopyText(msg.content, `user-${idx}`)}
+                                className="text-text-tertiary hover:text-text-primary px-1 rounded transition-colors text-[10px] cursor-pointer"
+                                title="复制提问"
+                              >
+                                {copiedCopilotId === `user-${idx}` ? '已复制' : '复制'}
+                              </button>
+                            )}
                           </div>
 
                           <div
@@ -1816,26 +2152,51 @@ export const MeetingSummaryView: React.FC = () => {
                                 : 'bg-subtle text-text-primary border border-border-subtle rounded-tl-none space-y-2'
                             }`}
                           >
+                            {!isUser && (
+                              <div className="flex items-center justify-end pb-1 border-b border-border-subtle/40">
+                                <button
+                                  type="button"
+                                  data-testid={`summary-page-copilot-btn-copy-msg-${idx}`}
+                                  onClick={() => handleCopyText(msg.content, `ai-${idx}`)}
+                                  className="px-1.5 py-0.5 rounded text-[10px] text-text-secondary hover:text-brand-blue bg-canvas/60 border border-border-subtle/50 hover:border-brand-blue transition-colors flex items-center gap-1 cursor-pointer"
+                                  title="复制回答内容"
+                                >
+                                  <span>{copiedCopilotId === `ai-${idx}` ? '✓' : '📋'}</span>
+                                  <span>{copiedCopilotId === `ai-${idx}` ? '已复制' : '复制'}</span>
+                                </button>
+                              </div>
+                            )}
+
                             <p className="whitespace-pre-wrap">{msg.content}</p>
 
                             {/* 证据切片引证胶囊 (Citations) */}
                             {!isUser && msg.citations && msg.citations.length > 0 && (
-                              <div className="pt-1 border-t border-border-subtle/50 space-y-1">
-                                <span className="text-[10px] text-text-tertiary font-medium">依据发言切片：</span>
-                                <div className="flex flex-wrap gap-1">
-                                  {msg.citations.map((c, cIdx) => (
-                                    <button
-                                      key={cIdx}
-                                      type="button"
-                                      data-testid={`summary-page-copilot-citation-${idx}-${cIdx}`}
-                                      onClick={() => handleSeekSegment(c.segmentId, c.timestamp)}
-                                      className="px-1.5 py-0.5 rounded bg-canvas border border-border-subtle text-[10px] text-brand-blue hover:underline font-mono flex items-center gap-0.5"
-                                      title={c.quote || '点击在左侧定位'}
-                                    >
-                                      <span>⏱ {c.timestamp || c.segmentId}</span>
-                                      <span>⤤</span>
-                                    </button>
-                                  ))}
+                              <div className="pt-1.5 border-t border-border-subtle/50 space-y-1.5">
+                                <div className="flex items-center gap-1 text-[10px] text-text-tertiary font-medium">
+                                  <span>🔗</span>
+                                  <span>依据发言切片：</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {msg.citations.map((c, cIdx) => {
+                                    const matchedSeg = transcripts.find((t) => t.id === c.segmentId);
+                                    const speaker = c.speaker || matchedSeg?.speaker;
+                                    const timeDisplay = c.timestamp || matchedSeg?.timestamp || c.segmentId;
+                                    const quoteText = c.quote || matchedSeg?.text || '';
+                                    return (
+                                      <button
+                                        key={cIdx}
+                                        type="button"
+                                        data-testid={`summary-page-copilot-citation-${idx}-${cIdx}`}
+                                        onClick={() => handleSeekSegment(c.segmentId, c.timestamp, true)}
+                                        className="px-2 py-0.5 rounded-md bg-canvas border border-border-subtle hover:border-brand-blue hover:bg-brand-blue/10 text-[10px] text-brand-blue font-mono flex items-center gap-1 transition-all shadow-2xs hover:shadow-xs cursor-pointer group"
+                                        title={`点击定位逐字稿并播放现场录音${quoteText ? `\n「${quoteText}」` : ''}`}
+                                      >
+                                        <span>⏱ {timeDisplay}</span>
+                                        {speaker && <span className="text-text-secondary font-sans text-[10px]">· {speaker}</span>}
+                                        <span className="text-[10px] opacity-70 group-hover:opacity-100 transition-opacity">↗</span>
+                                      </button>
+                                    );
+                                  })}
                                 </div>
                               </div>
                             )}
@@ -1870,23 +2231,35 @@ export const MeetingSummaryView: React.FC = () => {
                                           : '移除'}
                                         】
                                       </span>
-                                      {prop.applied ? (
-                                        <span
-                                          data-testid={`summary-page-copilot-badge-applied-${prop.id}`}
-                                          className="text-[10px] font-semibold text-status-success bg-status-success-bg px-1.5 py-0.5 rounded"
-                                        >
-                                          ✓ 已采纳并同步
-                                        </span>
-                                      ) : (
+                                      <div className="flex items-center gap-1.5">
                                         <button
                                           type="button"
-                                          data-testid={`summary-page-copilot-btn-apply-proposal-${prop.id}`}
-                                          onClick={() => handleApplyProposal(prop)}
-                                          className="px-2 py-0.5 rounded bg-brand-blue text-white text-[10px] font-semibold hover:bg-brand-blue-hover transition-colors shadow-xs"
+                                          data-testid={`summary-page-copilot-btn-copy-proposal-${prop.id}`}
+                                          onClick={() => handleCopyText(prop.proposedText, `prop-${prop.id}`)}
+                                          className="px-1.5 py-0.5 rounded text-[10px] text-text-secondary hover:text-brand-blue bg-subtle border border-border-subtle hover:border-brand-blue transition-colors flex items-center gap-1 cursor-pointer"
+                                          title="复制此项修订提案"
                                         >
-                                          ✓ 采纳并更新报告
+                                          <span>{copiedCopilotId === `prop-${prop.id}` ? '✓' : '📋'}</span>
+                                          <span>{copiedCopilotId === `prop-${prop.id}` ? '已复制' : '复制提案'}</span>
                                         </button>
-                                      )}
+                                        {prop.applied ? (
+                                          <span
+                                            data-testid={`summary-page-copilot-badge-applied-${prop.id}`}
+                                            className="text-[10px] font-semibold text-status-success bg-status-success-bg px-1.5 py-0.5 rounded"
+                                          >
+                                            ✓ 已采纳并同步
+                                          </span>
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            data-testid={`summary-page-copilot-btn-apply-proposal-${prop.id}`}
+                                            onClick={() => handleApplyProposal(prop)}
+                                            className="px-2 py-0.5 rounded bg-brand-blue text-white text-[10px] font-semibold hover:bg-brand-blue-hover transition-colors shadow-xs"
+                                          >
+                                            ✓ 采纳并更新报告
+                                          </button>
+                                        )}
+                                      </div>
                                     </div>
 
                                     {prop.originalText && (
@@ -1959,6 +2332,120 @@ export const MeetingSummaryView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* 单场会议 AI 费用与用量明细弹窗 (T04) */}
+      {isCostModalOpen && (
+        <div
+          data-testid="summary-page-modal-cost-breakdown"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4 animate-fadeIn"
+          onClick={() => setIsCostModalOpen(false)}
+        >
+          <div
+            className="w-full max-w-md bg-panel border border-border-subtle rounded-xl shadow-2xl p-5 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-border-subtle">
+              <div className="flex items-center gap-2">
+                <span className="text-lg">📊</span>
+                <h3 className="text-base font-bold text-text-primary">本场会议 AI 费用与用量明细</h3>
+              </div>
+              <button
+                type="button"
+                data-testid="summary-page-btn-close-cost-modal"
+                onClick={() => setIsCostModalOpen(false)}
+                className="text-text-tertiary hover:text-text-primary p-1 rounded-md hover:bg-subtle transition-colors cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="bg-canvas border border-border-subtle rounded-lg p-3 flex items-center justify-between">
+              <div>
+                <div className="text-xs text-text-secondary">本场实际总花费</div>
+                <div className="text-xl font-bold text-emerald-500 tabular-nums font-mono mt-0.5">
+                  ￥{(meeting.aiCost?.totalCostYuan ?? 0).toFixed(4)}
+                </div>
+              </div>
+              <div className="text-right text-xs text-text-tertiary font-mono">
+                <div>共消耗 {(meeting.aiCost?.totalTokens ?? 0).toLocaleString()} Tokens</div>
+                <div>录音时长 {Math.round((meeting.aiCost?.audioSeconds ?? 0) / 60)} 分钟</div>
+              </div>
+            </div>
+
+            <div className="space-y-2 text-xs">
+              <div className="font-semibold text-text-secondary">四维能力费用拆解</div>
+              
+              {/* 1. 语音识别 */}
+              <div className="p-2.5 bg-subtle rounded-lg border border-border-subtle flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">🎙️</span>
+                  <div>
+                    <div className="font-medium text-text-primary">语音识别 (ASR)</div>
+                    <div className="text-[11px] text-text-tertiary font-mono">
+                      阿里 DashScope · {meeting.aiCost?.breakdown.asrAudioSeconds ?? 0} 秒 ({Math.round((meeting.aiCost?.breakdown.asrAudioSeconds ?? 0) / 60)} 分钟)
+                    </div>
+                  </div>
+                </div>
+                <div className="font-mono font-semibold text-text-primary tabular-nums">
+                  ￥{(meeting.aiCost?.breakdown.asrCostYuan ?? 0).toFixed(4)}
+                </div>
+              </div>
+
+              {/* 2. 实时洞察 */}
+              <div className="p-2.5 bg-subtle rounded-lg border border-border-subtle flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💡</span>
+                  <div>
+                    <div className="font-medium text-text-primary">实时洞察 (Live Insights)</div>
+                    <div className="text-[11px] text-text-tertiary font-mono">
+                      DeepSeek-V3 · {(meeting.aiCost?.breakdown.insightsTokens ?? 0).toLocaleString()} Tokens
+                    </div>
+                  </div>
+                </div>
+                <div className="font-mono font-semibold text-text-primary tabular-nums">
+                  ￥{(meeting.aiCost?.breakdown.insightsCostYuan ?? 0).toFixed(4)}
+                </div>
+              </div>
+
+              {/* 3. 会中问答 */}
+              <div className="p-2.5 bg-subtle rounded-lg border border-border-subtle flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">💬</span>
+                  <div>
+                    <div className="font-medium text-text-primary">会中问答 (Meeting Chat)</div>
+                    <div className="text-[11px] text-text-tertiary font-mono">
+                      DeepSeek-V3 · {(meeting.aiCost?.breakdown.chatTokens ?? 0).toLocaleString()} Tokens
+                    </div>
+                  </div>
+                </div>
+                <div className="font-mono font-semibold text-text-primary tabular-nums">
+                  ￥{(meeting.aiCost?.breakdown.chatCostYuan ?? 0).toFixed(4)}
+                </div>
+              </div>
+
+              {/* 4. 纪要总结 */}
+              <div className="p-2.5 bg-subtle rounded-lg border border-border-subtle flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="text-base">📝</span>
+                  <div>
+                    <div className="font-medium text-text-primary">纪要总结 (Summary)</div>
+                    <div className="text-[11px] text-text-tertiary font-mono">
+                      DeepSeek-V3 · {(meeting.aiCost?.breakdown.summaryTokens ?? 0).toLocaleString()} Tokens
+                    </div>
+                  </div>
+                </div>
+                <div className="font-mono font-semibold text-text-primary tabular-nums">
+                  ￥{(meeting.aiCost?.breakdown.summaryCostYuan ?? 0).toFixed(4)}
+                </div>
+              </div>
+            </div>
+
+            <div className="text-[11px] text-text-tertiary bg-canvas p-2.5 rounded-lg border border-border-subtle leading-relaxed">
+              🛡️ <span className="font-semibold text-text-secondary">Local-First 隐私模式</span>：用量数据仅记录脱敏的 Token 与音频时长元数据，绝无会议正文上传。
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

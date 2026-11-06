@@ -37,6 +37,7 @@ export interface AsrTranscriptEvent {
 
 export interface RealStreamingAsrClientOptions {
   wsUrl?: string;
+  meetingId?: string;
   onInterimText?: (text: string) => void;
   onFinalSentence?: (sentence: FinalSentence) => void;
   onTranscriptEvent?: (event: AsrTranscriptEvent) => void;
@@ -75,7 +76,14 @@ export class RealStreamingAsrClient {
     return new Promise((resolve, reject) => {
       this.rejectConnect = reject;
       try {
-        const socket = new WebSocket(this.options.wsUrl || 'ws://localhost:3201/gateway/v1/asr/stream');
+        const baseUrl = this.options.wsUrl || 'ws://localhost:3201/gateway/v1/asr/stream';
+        let targetUrl = baseUrl;
+        if (this.options.meetingId) {
+          const parsed = new URL(baseUrl);
+          parsed.searchParams.set('meetingId', this.options.meetingId);
+          targetUrl = parsed.toString();
+        }
+        const socket = new WebSocket(targetUrl);
         this.ws = socket;
         socket.binaryType = 'arraybuffer';
         socket.onopen = () => {

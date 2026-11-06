@@ -3,8 +3,8 @@
 **项目名称：** 听序（Tingxu）— AI 实时会议记录与智能纪要桌面助手  
 **代码仓库名：** `tingxu`  
 **项目代号：** `tingxu-desktop`  
-**文档版本：** v0.2（对应 Notion 最新规划与设计建议）  
-**最后更新：** 2026-10-30  
+**文档版本：** v0.3（开源单机 BYOK 与双模架构升级）  
+**最后更新：** 2026-11-06  
 **架构负责人：** 听序核心研发架构团队  
 
 ---
@@ -12,19 +12,19 @@
 ## 1. 架构概述与设计原则
 
 ### 1.1 系统概述
-听序（Tingxu）是一款基于 **Local-First（本地优先）** 原则构建的桌面端跨平台 AI 会议生产力软件。其架构分为两大系统部分：
-1. **桌面客户端（Desktop Client）**：运行在用户本地的 Windows 与 macOS 系统中，承担原生免驱免虚拟声卡的双轨音频采集、环形缓冲重采样、直连或受控中继流式 ASR、本地 SQLite 结构化存储与全文检索、以及 React 呈现的双栏实时洞察看板；
-2. **商业化与控制面（Control Plane & AI Gateway）**：由服务端 NestJS 模块化单体提供账户鉴权、微信支付、会议时长权益记账、运营审批；由自建 AI Gateway 网关负责商业 Prompts 隐藏注入、多模型（DeepSeek-V3 / Qwen-2.5-72B）智能熔断路由与脱敏审计。
+听序（Tingxu）是一款基于 **Local-First（本地优先）** 原则构建的开源桌面端跨平台 AI 会议生产力软件。系统确立了“单机 BYOK（Bring Your Own Key）为主，云端增援托管为辅”的双模架构体系：
+1. **单机本地模式（Standalone BYOK Mode，默认一等公民）**：用户直接运行桌面客户端（Tauri 2.0 / Rust + React），在本地配置自备的 API Key（阿里云百炼 ASR、DeepSeek、通义千问或本地离线 Ollama）。音频采集、流式转写、会中洞察与会后纪要全链路在本地闭环驱动，**完全不依赖任何外部后端服务与数据库**。
+2. **云端增援托管模式（Hosted Cloud Mode，可选企业/集中模式）**：针对无自备 Key 的个人用户或团队集中采购场景，提供可选的 NestJS 商业控制面（账户、时长流水记账）与自建 AI Gateway 网关（Prompt 注入、多模型熔断路由与脱敏审计）。
 
 ### 1.2 核心架构原则
 - **原则一：双轨无感采集与物理分流（Dual-Track Physical Isolation）**  
   将麦克风（本地发言人）与系统扬声器（远端所有发言人）在硬件级进行独立录制与通道打标，从根本上杜绝传统单声道混音导致的角色混淆。
 - **原则二：大流量数据面直连，零音频中转损耗（Direct Data Plane）**  
-  高吞吐的实时音频流直接通过客户端 WebSocket 推送至流式 ASR 供应商，自建云端不中转大流量实时音频，享受抗并发与极低网络成本优势（在满足 ADR-001 封顶前置条件下）。
-- **原则三：高价值资产收归自建网关（Protected AI Gateway）**  
-  核心商业 Prompt、大模型 API Key 严禁留在客户端；所有大模型调度必须经过自建 AI Gateway 统一注入上下文与系统指令，并实现超时降级容灾。
+  高吞吐的实时音频流直接通过客户端 WebSocket 推送至流式 ASR 供应商（或端侧本地 ASR 引擎），自建云端不中转大流量实时音频。
+- **原则三：凭据安全与用户私钥本地沙箱隔离（BYOK Sandbox Security）**  
+  用户在单机模式下配置的私有 API Key 遵循本地沙箱隔离原则，仅保存在用户本机的受保护存储中，仅用于直连用户指定的服务商端点，代码与构建产物中严禁硬编码开发者私钥，严禁非法回传。
 - **原则四：Local-First 本地优先与数据主权（Privacy-Preserving Storage）**  
-  会议标题、音视频文件、逐字稿正文、洞察卡片与手动手记**只存放在本机 SQLite** 中。云端仅持久化无敏感信息的账单流水、任务 ID、耗时计量与错误码。
+  会议标题、音视频文件、逐字稿正文、洞察卡片与手动手记**100% 只存放在本机 SQLite** 中。无论是单机模式还是云端增援模式，云端绝对不持久化用户会议正文内容。
 
 ---
 
@@ -69,6 +69,7 @@
 flowchart TD
     subgraph Client["听序桌面客户端 (Tauri 2.0 / Rust)"]
         UI["React 前端 UI<br/>(会中双栏工作台/微型悬浮条)"]
+        BYOKConfig["BYOK 设置与本地凭据<br/>(阿里云百炼 / DeepSeek / Ollama)"]
         TauriCore["Tauri Rust 核心调度"]
         AudioWin["WASAPI Loopback (Windows)"]
         AudioMac["ScreenCaptureKit (macOS)"]
@@ -77,20 +78,14 @@ flowchart TD
         DiskAudio[("本地音频分片<br/>(原子化 Flush 落盘)")]
     end
 
-    subgraph CloudControl["自建控制面云服务 (Node.js NestJS)"]
-        APIServer["业务 API 服务<br/>(账户/订单/套餐时长账)"]
-        CloudDB[("PostgreSQL 业务数据库<br/>(无正文敏感信息)")]
+    subgraph StandaloneBYOK["【默认】单机 BYOK 链路 (直连供应商/本地大模型)"]
+        DirectASR["阿里云百炼实时 ASR<br/>(WebSocket 直推)"]
+        DirectLLM["DeepSeek / 通义千问 / 本地 Ollama<br/>(OpenAI 兼容协议直连)"]
     end
 
-    subgraph AIGateway["自建 AI Gateway 网关"]
-        GW["网关转发与安全检查<br/>(Prompt 注入/熔断/脱敏)"]
-    end
-
-    subgraph ThirdParty["第三方服务"]
-        ASR["阿里云百炼 / 讯飞 ASR<br/>(流式 WebSocket)"]
-        LLM["DeepSeek-V3 / Qwen-2.5<br/>(大模型提供商)"]
-        WeChat["微信支付商户平台"]
-        AliSMS["阿里云短信服务"]
+    subgraph OptionalCloud["【可选】云端增援托管服务 (企业/无 Key 模式)"]
+        APIServer["NestJS 控制面服务<br/>(账户/时长账本)"]
+        GW["AI Gateway 代理网关<br/>(统一采购 Key / 集中熔断)"]
     end
 
     %% 媒体采集链路
@@ -99,20 +94,21 @@ flowchart TD
     RingBuf --> DiskAudio
     RingBuf --> TauriCore
 
-    %% ASR 与转写链路
-    TauriCore -- 1. 申请临时凭据 --> APIServer
-    APIServer -- 签发临时 STS --> TauriCore
-    TauriCore -- 2. 直推双轨 PCM 流 (WSS) --> ASR
-    ASR -- 3. 回传流式增量文本 --> TauriCore
+    %% 单机 BYOK 模式流转
+    BYOKConfig --> UI
+    TauriCore -- 单机 WebSocket 直连 --> DirectASR
+    DirectASR -- 回传流式增量文本 --> TauriCore
     TauriCore --> LocalDB
     TauriCore --> UI
-
-    %% AI 增量整理链路
-    UI -- 4. 提交稳定增量切片 --> GW
-    GW -- 注入 Prompt 并调用 --> LLM
-    LLM -- 流式结构化补丁 --> GW
-    GW --> UI
+    UI -- 单机直连调用 (SSE 流式) --> DirectLLM
+    DirectLLM -- 实时洞察与纪要响应 --> UI
     UI --> LocalDB
+
+    %% 可选云端增援流转
+    UI -. 切换为云端模式 .-> GW
+    GW -. 转发 .-> DirectLLM
+    TauriCore -. 申请临时凭据 .-> APIServer
+```
 
     %% 交易与鉴权
     UI -- 登录/查权/下单 --> APIServer

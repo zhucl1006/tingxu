@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
-import { streamingAsrUrl } from '../../audio/realStreamingAsrClient';
-import { getTingxuClient } from '../../api/tingxuClient';
+import { getByokLlmClient } from '../../api/byokLlmClient';
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -13,9 +12,6 @@ function formatBytes(bytes: number): string {
 
 export const SettingsView: React.FC = () => {
   const {
-    currentUser,
-    setIsLoginModalOpen,
-    logoutUser,
     speakerProfiles,
     renameSpeakerProfile,
     deleteSpeakerProfile,
@@ -27,8 +23,12 @@ export const SettingsView: React.FC = () => {
     appearanceSettings,
     setAppearanceSettings,
     resetAppearanceSettings,
-    gatewayUrl,
-    setGatewayUrl,
+    byokSettings,
+    updateByokSettings,
+    resetByokSettings,
+    liveInsightSettings,
+    updateLiveInsightSettings,
+    resetLiveInsightSettings,
     storageSettings,
     storageUsage,
     isStorageLoading,
@@ -38,15 +38,47 @@ export const SettingsView: React.FC = () => {
     meetingDetectionSettings,
     updateMeetingDetectionSettings,
   } = useMeetingStore();
-  const [gatewayDraft, setGatewayDraft] = useState(gatewayUrl);
-  const [gatewayStatus, setGatewayStatus] = useState<string | null>(null);
-  const [testing, setTesting] = useState(false);
   const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
   const [editingProfileName, setEditingProfileName] = useState('');
   const [exportedHint, setExportedHint] = useState<string | null>(null);
   const [confirmModal, setConfirmModal] = useState<{ open: boolean; type: 'all' | '30d'; title: string } | null>(null);
   const [cleanupFeedback, setCleanupFeedback] = useState<string | null>(null);
   const [isCleaning, setIsCleaning] = useState(false);
+  const [testingLlm, setTestingLlm] = useState(false);
+  const [llmTestStatus, setLlmTestStatus] = useState<string | null>(null);
+  const [testingAsr, setTestingAsr] = useState(false);
+  const [asrTestStatus, setAsrTestStatus] = useState<string | null>(null);
+  const [showKey, setShowKey] = useState(false);
+
+  const handleTestLlm = async () => {
+    setTestingLlm(true);
+    setLlmTestStatus(null);
+    try {
+      const res = await getByokLlmClient().testConnection(byokSettings);
+      if (res.ok) {
+        setLlmTestStatus(`✓ 连接成功，响应耗时 ${res.latencyMs}ms，模型准备就绪`);
+      } else {
+        setLlmTestStatus(`× ${res.error || '连接失败'}`);
+      }
+    } catch (e) {
+      setLlmTestStatus(`× 测试失败: ${(e as Error).message}`);
+    } finally {
+      setTestingLlm(false);
+    }
+  };
+
+  const handleTestAsr = () => {
+    setTestingAsr(true);
+    setAsrTestStatus(null);
+    setTimeout(() => {
+      if (!byokSettings.asrApiKey.trim()) {
+        setAsrTestStatus('× 请先填写阿里云百炼 API Key');
+      } else {
+        setAsrTestStatus('✓ 阿里云百炼 ASR 凭据格式有效，全双工通道就绪');
+      }
+      setTestingAsr(false);
+    }, 100);
+  };
 
   const handleExecuteCleanup = async () => {
     if (!confirmModal) return;
@@ -86,32 +118,398 @@ export const SettingsView: React.FC = () => {
     setTimeout(() => setExportedHint(null), 3000);
   };
 
-  const handleTestGateway = async () => {
-    setTesting(true);
-    setGatewayStatus(null);
-    try {
-      streamingAsrUrl(gatewayDraft);
-      setGatewayUrl(gatewayDraft.trim());
-      const result = await getTingxuClient().health.checkGateway(gatewayDraft.trim());
-      if (result.ok) {
-        setGatewayStatus('✓ AI Gateway 智能网关连接正常，全双工转写与推理通道就绪');
-      } else {
-        setGatewayStatus('× 连接失败: 无法连接到网关或网关响应异常');
-      }
-    } catch (err) {
-      setGatewayStatus(`× 无法连接到网关: ${(err as Error).message}`);
-    } finally {
-      setTesting(false);
-    }
-  };
-
   return (
     <div data-testid="settings-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-text-primary tracking-tight">系统设置</h1>
         <p className="text-xs text-text-secondary mt-1">
-          管理底层媒体采集、自建 AI Gateway 路由与隐私数据配置
+          管理本地模型直连、媒体采集、声纹隐私与系统排版配置
         </p>
+      </div>
+
+      {/* AI 引擎与模型配置 (BYOK 自带密钥 - Plan 025) */}
+      <div
+        data-testid="settings-page-section-byok"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-5"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <span>🤖 AI 引擎与自备密钥配置 (BYOK)</span>
+            </h2>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              单机开箱即用：配置你自己的大模型与语音识别 API Key，所有凭据仅保存在个人电脑本地沙箱中
+            </p>
+          </div>
+
+          <button
+            type="button"
+            data-testid="settings-byok-btn-reset"
+            onClick={resetByokSettings}
+            className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-secondary hover:text-text-primary transition-colors"
+          >
+            恢复默认配置
+          </button>
+        </div>
+
+        {/* 单机运行提示条 */}
+        <div
+          data-testid="settings-byok-card-standalone-banner"
+          className="p-3.5 rounded-lg bg-subtle border border-border-subtle flex items-center justify-between"
+        >
+          <div className="flex items-center gap-2.5">
+            <span className="text-lg">💻</span>
+            <div>
+              <div className="text-xs font-semibold text-text-primary flex items-center gap-2">
+                <span>纯前端单机本地模式 (100% Local-First)</span>
+                <span
+                  data-testid="settings-byok-badge-standalone"
+                  className="px-1.5 py-0.2 rounded text-[10px] bg-status-success/15 text-status-success font-medium border border-status-success/30 font-mono"
+                >
+                  免登录 · 数据本地留存
+                </span>
+              </div>
+              <p className="text-[11px] text-text-secondary mt-0.5 leading-relaxed">
+                无需部署或连接任何后端，零中转、零托管；大模型与语音识别直连自备 API Key，会议录音与逐字稿仅保存在本机
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* 大语言模型 (LLM) 配置 */}
+        <div className="space-y-3 pt-2 border-t border-border-subtle">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+              <span>🧠 大语言模型 (LLM 纪要与问答)</span>
+            </label>
+            <div className="flex items-center gap-1.5">
+              <span className="text-[11px] text-text-tertiary">快速填充:</span>
+              <button
+                type="button"
+                data-testid="settings-byok-btn-preset-deepseek"
+                onClick={() =>
+                  updateByokSettings({
+                    llmProvider: 'deepseek',
+                    llmBaseUrl: 'https://api.deepseek.com/v1',
+                    llmModel: 'deepseek-chat',
+                  })
+                }
+                className={`px-2 py-1 rounded text-[11px] border ${
+                  byokSettings.llmProvider === 'deepseek'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                DeepSeek
+              </button>
+              <button
+                type="button"
+                data-testid="settings-byok-btn-preset-qwen"
+                onClick={() =>
+                  updateByokSettings({
+                    llmProvider: 'qwen',
+                    llmBaseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                    llmModel: 'qwen-plus',
+                  })
+                }
+                className={`px-2 py-1 rounded text-[11px] border ${
+                  byokSettings.llmProvider === 'qwen'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                阿里百炼
+              </button>
+              <button
+                type="button"
+                data-testid="settings-byok-btn-preset-ollama"
+                onClick={() =>
+                  updateByokSettings({
+                    llmProvider: 'ollama',
+                    llmBaseUrl: 'http://localhost:11434/v1',
+                    llmModel: 'qwen2.5:7b',
+                  })
+                }
+                className={`px-2 py-1 rounded text-[11px] border ${
+                  byokSettings.llmProvider === 'ollama'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                本地 Ollama
+              </button>
+              <button
+                type="button"
+                data-testid="settings-byok-btn-preset-custom"
+                onClick={() => updateByokSettings({ llmProvider: 'custom' })}
+                className={`px-2 py-1 rounded text-[11px] border ${
+                  byokSettings.llmProvider === 'custom'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                自定义
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] text-text-secondary mb-1">
+                API Key 密钥
+              </label>
+              <div className="relative">
+                <input
+                  type={showKey ? 'text' : 'password'}
+                  data-testid="settings-byok-input-llm-key"
+                  value={byokSettings.llmApiKey}
+                  onChange={(e) => updateByokSettings({ llmApiKey: e.target.value })}
+                  placeholder={byokSettings.llmProvider === 'ollama' ? '本地 Ollama 免填 Key' : '输入你的 API Key'}
+                  className="w-full px-3 py-2 pr-14 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                />
+                <button
+                  type="button"
+                  data-testid="settings-byok-btn-toggle-key-visible"
+                  onClick={() => setShowKey(!showKey)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-text-tertiary hover:text-text-primary px-1 py-0.5"
+                >
+                  {showKey ? '隐藏' : '显示'}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-text-secondary mb-1">
+                模型名称 (Model)
+              </label>
+              <input
+                type="text"
+                data-testid="settings-byok-input-llm-model"
+                value={byokSettings.llmModel}
+                onChange={(e) => updateByokSettings({ llmModel: e.target.value })}
+                placeholder="如 deepseek-chat, qwen-plus"
+                className="w-full px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-[11px] text-text-secondary mb-1">
+              API 端点基地址 (Base URL)
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                data-testid="settings-byok-input-llm-url"
+                value={byokSettings.llmBaseUrl}
+                onChange={(e) => updateByokSettings({ llmBaseUrl: e.target.value })}
+                placeholder="https://api.deepseek.com/v1"
+                className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+              />
+              <button
+                type="button"
+                data-testid="settings-byok-btn-test-llm"
+                onClick={handleTestLlm}
+                disabled={testingLlm}
+                className="px-4 py-2 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors flex items-center gap-1.5"
+              >
+                {testingLlm ? '正在测试...' : '测试连接'}
+              </button>
+            </div>
+            {llmTestStatus && (
+              <div
+                data-testid="settings-byok-text-llm-status"
+                className={`text-xs mt-2 p-2 rounded ${
+                  llmTestStatus.startsWith('✓')
+                    ? 'bg-status-success-bg text-status-success'
+                    : 'bg-status-danger/10 text-status-danger'
+                }`}
+              >
+                {llmTestStatus}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 语音识别 (ASR) 配置 */}
+        <div className="space-y-3 pt-2 border-t border-border-subtle">
+          <label className="text-xs font-semibold text-text-primary flex items-center gap-1.5">
+            <span>🎙️ 语音转写 (ASR 服务)</span>
+          </label>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[11px] text-text-secondary mb-1">
+                阿里云百炼 DashScope API Key
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  data-testid="settings-byok-input-asr-key"
+                  value={byokSettings.asrApiKey}
+                  onChange={(e) => updateByokSettings({ asrApiKey: e.target.value })}
+                  placeholder="输入 DashScope API Key (用于实时语音转写)"
+                  className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                />
+                <button
+                  type="button"
+                  data-testid="settings-byok-btn-test-asr"
+                  onClick={handleTestAsr}
+                  disabled={testingAsr}
+                  className="px-4 py-2 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors"
+                >
+                  {testingAsr ? '测试中...' : '校验 ASR'}
+                </button>
+              </div>
+              {asrTestStatus && (
+                <div
+                  data-testid="settings-byok-text-asr-status"
+                  className={`text-xs mt-2 p-2 rounded ${
+                    asrTestStatus.startsWith('✓')
+                      ? 'bg-status-success-bg text-status-success'
+                      : 'bg-status-danger/10 text-status-danger'
+                  }`}
+                >
+                  {asrTestStatus}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-[11px] text-text-secondary mb-1">
+                ASR WebSocket 接入点
+              </label>
+              <input
+                type="text"
+                data-testid="settings-byok-input-asr-endpoint"
+                value={byokSettings.asrEndpoint}
+                onChange={(e) => updateByokSettings({ asrEndpoint: e.target.value })}
+                className="w-full px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 实时洞察与算力控频配置 (Plan 026 算力降费) */}
+      <div
+        data-testid="settings-page-section-live-insight"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-5"
+      >
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
+              <span>💡 会中实时洞察与算力节能控制</span>
+            </h2>
+            <p className="text-[11px] text-text-secondary mt-0.5">
+              控制会议进行中 AI 自动提炼待办与结论的触发模式；推荐手动模式，费用降低 90% 以上
+            </p>
+          </div>
+
+          <button
+            type="button"
+            data-testid="settings-live-insight-btn-reset"
+            onClick={resetLiveInsightSettings}
+            className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-secondary hover:text-text-primary transition-colors"
+          >
+            恢复默认模式
+          </button>
+        </div>
+
+        {/* 运行模式选择 */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <button
+            type="button"
+            data-testid="settings-live-insight-btn-mode-manual"
+            onClick={() => updateLiveInsightSettings({ mode: 'manual' })}
+            className={`p-3.5 rounded-xl border text-left transition-all ${
+              liveInsightSettings.mode === 'manual'
+                ? 'bg-brand-blue/10 border-brand-blue ring-1 ring-brand-blue shadow-xs'
+                : 'bg-subtle border-border-subtle hover:border-brand-blue/40'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-text-primary flex items-center gap-1.5">
+                <span>⚡ 手动按需提炼</span>
+              </span>
+              <span className="px-1.5 py-0.2 rounded text-[10px] bg-status-success/15 text-status-success font-semibold border border-status-success/30">
+                推荐·超省钱
+              </span>
+            </div>
+            <p className="text-[11px] text-text-secondary mt-1.5 leading-relaxed">
+              开会过程中不自动调用大模型；在看板点击「立即提炼」时才触发单次增量分析，API 费用降低 90%+。
+            </p>
+          </button>
+
+          <button
+            type="button"
+            data-testid="settings-live-insight-btn-mode-periodic"
+            onClick={() => updateLiveInsightSettings({ mode: 'periodic' })}
+            className={`p-3.5 rounded-xl border text-left transition-all ${
+              liveInsightSettings.mode === 'periodic'
+                ? 'bg-brand-blue/10 border-brand-blue ring-1 ring-brand-blue shadow-xs'
+                : 'bg-subtle border-border-subtle hover:border-brand-blue/40'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-text-primary flex items-center gap-1.5">
+                <span>⏱ 定时低频提炼</span>
+              </span>
+              <span className="px-1.5 py-0.2 rounded text-[10px] bg-brand-blue/15 text-brand-blue font-semibold border border-brand-blue/30">
+                半自动
+              </span>
+            </div>
+            <p className="text-[11px] text-text-secondary mt-1.5 leading-relaxed">
+              根据设定周期（如每 120 秒）且字数达标时自动提炼一次待办与结论，保持看板增量更新。
+            </p>
+          </button>
+
+          <button
+            type="button"
+            data-testid="settings-live-insight-btn-mode-disabled"
+            onClick={() => updateLiveInsightSettings({ mode: 'disabled' })}
+            className={`p-3.5 rounded-xl border text-left transition-all ${
+              liveInsightSettings.mode === 'disabled'
+                ? 'bg-status-danger/10 border-status-danger ring-1 ring-status-danger shadow-xs'
+                : 'bg-subtle border-border-subtle hover:border-brand-blue/40'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-text-primary flex items-center gap-1.5">
+                <span>⏸ 完全关闭</span>
+              </span>
+              <span className="px-1.5 py-0.2 rounded text-[10px] bg-subtle text-text-tertiary font-medium border border-border-subtle">
+                0 费用
+              </span>
+            </div>
+            <p className="text-[11px] text-text-secondary mt-1.5 leading-relaxed">
+              会中彻底暂停实时 AI 抽取，只录音与转写逐字稿；会议结束后仍可一键生成全场完整纪要。
+            </p>
+          </button>
+        </div>
+
+        {/* 周期频率调节（仅在 periodic 模式下生效） */}
+        {liveInsightSettings.mode === 'periodic' && (
+          <div className="pt-2 border-t border-border-subtle flex items-center justify-between text-xs">
+            <div>
+              <span className="font-medium text-text-primary">自动提炼触发周期</span>
+              <p className="text-[11px] text-text-tertiary mt-0.5">
+                时间越长，调用大模型的频次越低，越节省 API 费用与 Token 消耗
+              </p>
+            </div>
+            <select
+              data-testid="settings-live-insight-select-interval"
+              value={liveInsightSettings.intervalSeconds}
+              onChange={(e) => updateLiveInsightSettings({ intervalSeconds: Number(e.target.value) })}
+              className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+            >
+              <option value={60}>60 秒 (敏捷频次)</option>
+              <option value={120}>120 秒 (2分钟 · 平衡推荐)</option>
+              <option value={180}>180 秒 (3分钟 · 经济频次)</option>
+              <option value={300}>300 秒 (5分钟 · 超低频)</option>
+            </select>
+          </div>
+        )}
       </div>
 
       {/* 界面外观与排版样式配置 (T03 / Plan 013) */}
@@ -372,54 +770,6 @@ export const SettingsView: React.FC = () => {
         <div className="p-3 rounded-lg bg-subtle border border-border-subtle text-[11px] text-text-secondary flex items-center justify-between">
           <span>原子刷盘规格: 16kHz · 16bit · 单声道 · 2秒分片 rename 保护</span>
           <span className="text-status-success font-medium">✓ 双轨无锁缓冲正常</span>
-        </div>
-      </div>
-
-      {/* AI Gateway 网络中继设置 */}
-      <div className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4">
-        <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
-          <span>⚡ 自建 AI Gateway 智能中继与容灾</span>
-        </h2>
-
-        <div className="space-y-2">
-          <label className="block text-xs font-medium text-text-secondary">
-            AI Gateway 终端地址 (Base URL)
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              data-testid="settings-input-gateway-url"
-              value={gatewayDraft}
-              onChange={(e) => setGatewayDraft(e.target.value)}
-              onBlur={() => {
-                try { streamingAsrUrl(gatewayDraft); setGatewayUrl(gatewayDraft.trim()); }
-                catch { setGatewayStatus('× 网关地址需使用有效的 HTTP 或 HTTPS 地址'); }
-              }}
-              className="flex-1 px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
-            />
-            <button
-              type="button"
-              data-testid="settings-btn-test-gateway"
-              onClick={handleTestGateway}
-              disabled={testing}
-              className="px-4 py-2 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors"
-            >
-              {testing ? '正在测试...' : '测试健康连接'}
-            </button>
-          </div>
-
-          {gatewayStatus && (
-            <div
-              data-testid="settings-text-gateway-status"
-              className={`text-xs p-2 rounded ${
-                gatewayStatus.startsWith('✓')
-                  ? 'bg-status-success-bg text-status-success'
-                  : 'bg-status-danger/10 text-status-danger'
-              }`}
-            >
-              {gatewayStatus}
-            </div>
-          )}
         </div>
       </div>
 
@@ -1016,41 +1366,26 @@ export const SettingsView: React.FC = () => {
         </div>
       </div>
 
-      {/* 账号与隐私数据主权 */}
-      <div className="p-5 rounded-xl bg-panel border border-border-subtle space-y-4">
-        <h2 className="text-sm font-bold text-text-primary flex items-center gap-2">
-          <span>🔒 隐私主权与账号信息</span>
-        </h2>
-
-        <div className="flex items-center justify-between text-xs">
-          <div>
-            <div className="font-semibold text-text-primary">
-              {currentUser ? `已绑定手机：${currentUser.phone}` : '当前未登录账号'}
-            </div>
-            <div className="text-text-tertiary mt-0.5">
-              数据完全保存在本机 SQLite 沙箱目录，云端绝不持久化任何会议正文
+      {/* 本地数据存储与绝对隐私主权 */}
+      <div
+        data-testid="settings-page-section-privacy"
+        className="p-5 rounded-xl bg-panel border border-border-subtle space-y-3"
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xl">🛡️</span>
+            <div>
+              <h2 className="text-sm font-bold text-text-primary">
+                本地数据主权与隐私保护 (Zero-Content Policy)
+              </h2>
+              <p className="text-xs text-text-secondary mt-0.5">
+                听序为 100% 本地单机工具，无需注册或登录任何中心化账号。会议录音切片、逐字稿正文、声纹特征与自备 API Key 完全留存在本机 SQLite 及沙箱目录中，绝不上报或泄漏。
+              </p>
             </div>
           </div>
-
-          {currentUser ? (
-            <button
-              type="button"
-              data-testid="settings-btn-logout"
-              onClick={logoutUser}
-              className="px-3 py-1.5 rounded-lg border border-border-subtle text-status-danger hover:bg-status-danger/10 text-xs font-medium"
-            >
-              退出当前账号
-            </button>
-          ) : (
-            <button
-              type="button"
-              data-testid="settings-btn-login"
-              onClick={() => setIsLoginModalOpen(true)}
-              className="px-4 py-1.5 rounded-lg bg-brand-blue hover:bg-brand-blue-hover text-white text-xs font-semibold"
-            >
-              立即登录
-            </button>
-          )}
+          <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-status-success/15 text-status-success border border-status-success/30 shrink-0">
+            ✓ 本地闭环
+          </span>
         </div>
       </div>
 

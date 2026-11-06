@@ -68,4 +68,27 @@ describe('MeetingRepository 本地存储仓储接缝测试 (TDD Red -> Green)', 
 
     expect(getMeetingRepository()).toBe(customRepo);
   });
+
+  it('WebStorageAdapter 应支持 ByokSettings 存取与恢复 (Plan 025)', () => {
+    const repo = new MeetingRepository(new WebStorageAdapter());
+    expect(repo.getByokSettings()).toBeNull();
+
+    repo.saveByokSettings({
+      mode: 'standalone',
+      llmProvider: 'deepseek',
+      llmApiKey: 'mock-byok-test-key-123',
+      llmBaseUrl: 'https://api.deepseek.com/v1',
+      llmModel: 'deepseek-chat',
+      asrProvider: 'dashscope',
+      asrApiKey: 'mock-asr-key',
+      asrEndpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+    });
+
+    const loaded = repo.getByokSettings();
+    expect(loaded).not.toBeNull();
+    expect(loaded?.mode).toBe('standalone');
+    expect(loaded?.llmProvider).toBe('deepseek');
+    expect(loaded?.llmApiKey).toBe('mock-byok-test-key-123');
+    expect(loaded?.asrProvider).toBe('dashscope');
+  });
 });

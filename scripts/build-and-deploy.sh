@@ -105,39 +105,19 @@ EOF
 }
 
 deploy_docker() {
-    echo -e "\n${YELLOW}🐳 [2/2] 正在一键构建并部署 Docker 容器云服务...${NC}"
-    if check_docker; then
-        echo -e "${CYAN}正在调用 Docker Compose 进行构建编排...${NC}"
-        docker compose up -d --build
-        echo -e "${GREEN}✓ Docker 容器启动成功！${NC}"
-        SERVER_PORT="${SERVER_PORT:-3200}"
-        GATEWAY_PORT="${GATEWAY_PORT:-3201}"
-        POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-        echo -e "  - PostgreSQL 数据库:  localhost:${POSTGRES_PORT}"
-        echo -e "  - 控制面 Server:       http://localhost:${SERVER_PORT}"
-        echo -e "  - 自建 AI Gateway:     http://localhost:${GATEWAY_PORT}"
-    else
-        echo -e "${YELLOW}⚠️ 跳过真实容器启动（Docker 未处于运行状态）。配置文件与编排语法已校验就绪。${NC}"
-    fi
+    echo -e "\n${YELLOW}ℹ️ 提示：听序已演进为 100% 纯本地优先单机桌面架构（BYOK 模式），无需任何 Docker 云端后端服务。${NC}"
+    echo -e "${CYAN}若需要历史云端控制面与自建 Gateway，请切换至归档分支：${NC}"
+    echo -e "  git checkout archive/cloud-server-v1"
 }
 
 show_status() {
     print_banner
-    echo -e "${CYAN}Docker 容器运行状态：${NC}"
-    if check_docker; then
-        docker compose ps
-    else
-        echo -e "${YELLOW}Docker 守护进程未启动。${NC}"
-    fi
+    echo -e "${GREEN}✓ 听序单机版纯本地运行，数据保存在本地 SQLite 中，无需常驻 Docker 守护服务。${NC}"
 }
 
 stop_docker() {
     print_banner
-    echo -e "${YELLOW}正在停止并清理听序 Docker 容器服务...${NC}"
-    if check_docker; then
-        docker compose down
-        echo -e "${GREEN}✓ 容器服务已成功停止并清理。${NC}"
-    fi
+    echo -e "${GREEN}✓ 听序单机版纯本地运行，无后台 Docker 进程需要停止。${NC}"
 }
 
 # ------------------------------------------------------------------------------

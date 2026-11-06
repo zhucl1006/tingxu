@@ -48,6 +48,20 @@ describe('RealStreamingAsrClient 流式 ASR 客户端测试 (T11)', () => {
     expect(mockWs.close).toHaveBeenCalled();
   });
 
+  it('传入 meetingId 时，WebSocket 建连 URL 应正确携带 meetingId 查询参数 (T02)', async () => {
+    const client = new RealStreamingAsrClient({
+      wsUrl: 'ws://localhost:3201/gateway/v1/asr/stream',
+      meetingId: 'mtg_asr_test_101',
+    });
+
+    const connectPromise = client.connect();
+    mockWs.onopen();
+    await connectPromise;
+
+    expect((global as any).WebSocket).toHaveBeenCalledWith('ws://localhost:3201/gateway/v1/asr/stream?meetingId=mtg_asr_test_101');
+    client.disconnect();
+  });
+
   it('收到 ASR 转写消息时应触发临时与终态句子回调', async () => {
     let interimText = '';
     let receivedSentence: any = null;

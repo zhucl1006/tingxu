@@ -4,7 +4,7 @@ import { getTingxuClient } from '../api/tingxuClient';
 import { TingxuLogo } from './TingxuLogo';
 
 export const LoginModal: React.FC = () => {
-  const { isLoginModalOpen, setIsLoginModalOpen, loginUser, currentUser } = useMeetingStore();
+  const { isLoginModalOpen, setIsLoginModalOpen, loginUser, updateByokSettings } = useMeetingStore();
   const [phone, setPhone] = useState('');
   const [code, setCode] = useState('');
   const [countdown, setCountdown] = useState(0);
@@ -79,17 +79,15 @@ export const LoginModal: React.FC = () => {
         data-testid="login-modal-container"
         className="w-full max-w-sm rounded-xl bg-canvas border border-border-subtle shadow-2xl p-6 relative animate-in fade-in zoom-in-95 duration-150"
       >
-        {/* 仅在已登录状态（切换账号或重新鉴权时）允许关闭；首次未登录强制要求完成认证 */}
-        {currentUser && (
-          <button
-            type="button"
-            data-testid="login-modal-btn-close"
-            onClick={() => setIsLoginModalOpen(false)}
-            className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary text-xl leading-none"
-          >
-            ×
-          </button>
-        )}
+        {/* 允许随时关闭弹窗 */}
+        <button
+          type="button"
+          data-testid="login-modal-btn-close"
+          onClick={() => setIsLoginModalOpen(false)}
+          className="absolute right-4 top-4 text-text-tertiary hover:text-text-primary text-xl leading-none"
+        >
+          ×
+        </button>
 
         <div className="flex items-center gap-3 mb-5">
           <div className="shrink-0 flex items-center justify-center">
@@ -180,6 +178,20 @@ export const LoginModal: React.FC = () => {
             {loading ? '正在验证...' : '登 录 / 注 册'}
           </button>
         </form>
+
+        <div className="pt-3 border-t border-border-subtle mt-4 text-center">
+          <button
+            type="button"
+            data-testid="login-modal-btn-skip-standalone"
+            onClick={() => {
+              updateByokSettings({ mode: 'standalone' });
+              setIsLoginModalOpen(false);
+            }}
+            className="text-xs text-brand-blue hover:underline"
+          >
+            跳过登录，以单机免登录模式使用 (BYOK) →
+          </button>
+        </div>
       </div>
     </div>
   );

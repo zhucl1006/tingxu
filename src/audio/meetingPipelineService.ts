@@ -103,6 +103,7 @@ export class MeetingPipelineService {
 
     const asrClient = new RealStreamingAsrClient({
       wsUrl: streamingAsrUrl(store.gatewayUrl),
+      meetingId,
       onTranscriptEvent: (rawEvent) => {
         if (!isCurrent()) return;
         const event = eventState.accept(rawEvent);
@@ -163,12 +164,13 @@ export class MeetingPipelineService {
         // 正文立即落稿到全局 Store
         useMeetingStore.getState().addTranscriptSegment(newSeg);
 
-        // 推入滑动窗口并按需提炼洞察
+        // 推入滑动窗口并按需提炼洞察（遵循 Plan 026 控频策略，仅在 periodic 模式下自动触发大模型调用）
+        const { liveInsightSettings } = useMeetingStore.getState();
         const windowPayload = this.slidingWindow.appendSegment(
           newSeg,
           useMeetingStore.getState().elapsedSeconds
         );
-        if (windowPayload) {
+        if (windowPayload && liveInsightSettings.mode === 'periodic') {
           void this.triggerLiveInsight(windowPayload, meetingId);
         }
 
@@ -423,16 +425,21 @@ export class MeetingPipelineService {
         }
       });
 
-    // 5. 周期性窗口自动提炼增量洞察（每 25 秒检查一次）
+    // 5. 周期性窗口自动提炼增量洞察（仅在 periodic 模式下按配置周期检查，默认 120 秒，杜绝高频请求）
     if (this.windowIntervalTimer) clearInterval(this.windowIntervalTimer);
+    const intervalSec = useMeetingStore.getState().liveInsightSettings?.intervalSeconds || 120;
     this.windowIntervalTimer = setInterval(() => {
-      if (useMeetingStore.getState().isExtractingInsights) return;
-      const currentSeconds = useMeetingStore.getState().elapsedSeconds;
-      const windowPayload = this.slidingWindow.flush(currentSeconds, 35);
+      const state = useMeetingStore.getState();
+      if (state.isExtractingInsights) return;
+      if (state.liveInsightSettings?.mode !== 'periodic') return;
+
+      const currentSeconds = state.elapsedSeconds;
+      const minChars = state.liveInsightSettings.minCharsThreshold || 400;
+      const windowPayload = this.slidingWindow.flush(currentSeconds, minChars);
       if (windowPayload) {
         void this.triggerLiveInsight(windowPayload, meetingId);
       }
-    }, 25000);
+    }, Math.max(10, intervalSec) * 1000);
   }
 
   private async triggerLiveInsight(payload: WindowPayload, meetingId: string): Promise<void> {

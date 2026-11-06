@@ -9,11 +9,7 @@ export const Sidebar: React.FC = () => {
     currentRoute,
     setCurrentRoute,
     status,
-    currentUser,
-    setIsLoginModalOpen,
-    logoutUser,
-    quotaMinutes,
-    totalQuotaMinutes,
+    historyMeetings,
     toggleFloatingPill,
   } = useMeetingStore();
 
@@ -26,7 +22,14 @@ export const Sidebar: React.FC = () => {
     { id: 'settings', label: '系统设置', icon: '⚙' },
   ];
 
-  const quotaPercent = Math.min(100, Math.round((quotaMinutes / totalQuotaMinutes) * 100));
+  // 统计本地历史会议时长与场次
+  const allMeetings = historyMeetings || [];
+  const totalRecordedSeconds = allMeetings.reduce(
+    (acc, m) => acc + (m.durationSeconds || 0),
+    0
+  );
+  const totalHours = Math.floor(totalRecordedSeconds / 3600);
+  const totalMins = Math.floor((totalRecordedSeconds % 3600) / 60);
 
   return (
     <aside
@@ -109,84 +112,67 @@ export const Sidebar: React.FC = () => {
 
       {/* 底部用量与用户中心 */}
       <div className="space-y-3 pt-3 border-t border-border-subtle">
-        {/* 会议时长账户用量卡片 */}
+        {/* 本地会议时长与用量卡片 */}
         <div
           data-testid="app-sidebar-card-quota"
           className="p-3 rounded-lg bg-panel border border-border-subtle space-y-2"
         >
           <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold text-text-primary">会议时长额度</span>
+            <span className="font-semibold text-text-primary">开会时长与用量</span>
             <span className="text-[10px] text-text-tertiary">
-              按时长计费
+              本地统计
             </span>
           </div>
 
-          <div className="w-full h-1.5 rounded-full bg-subtle overflow-hidden">
-            <div
-              className="h-full bg-brand-blue transition-all duration-300"
-              style={{ width: `${quotaPercent}%` }}
-            />
+          <div className="text-xs text-text-secondary">
+            <span>
+              已记录{' '}
+              <strong className="text-text-primary font-mono tabular-nums">
+                {totalHours > 0 ? `${totalHours}小时` : ''}{totalMins}分钟
+              </strong>
+            </span>
+            <span className="text-text-tertiary ml-1.5">
+              ({allMeetings.length} 场会议)
+            </span>
           </div>
 
-          <div className="flex items-center justify-between text-[11px] text-text-secondary">
-            <span>剩余 {quotaMinutes} 分钟</span>
+          <div className="flex items-center justify-between text-[11px] text-text-secondary pt-0.5">
+            <span className="text-[10px] text-text-tertiary">Token 自备密钥</span>
             <button
               type="button"
               data-testid="app-sidebar-btn-view-billing"
               onClick={() => setCurrentRoute('billing')}
               className="text-brand-blue hover:underline"
             >
-              充值时长 →
+              用量透视 →
             </button>
           </div>
         </div>
 
-        {/* 用户 Profile */}
+        {/* 用户 Profile - 单机免登录 */}
         <div
           data-testid="app-sidebar-div-user"
-          className="flex items-center justify-between px-2 py-1.5 rounded-lg hover:bg-panel transition-colors"
+          className="flex items-center justify-between px-2.5 py-2 rounded-lg bg-panel border border-border-subtle"
         >
-          {currentUser ? (
-            <div className="flex items-center gap-2.5 min-w-0">
-              <div
-                data-testid="app-sidebar-avatar-user"
-                className="w-7 h-7 rounded-full bg-brand-blue/20 text-brand-blue font-bold flex items-center justify-center text-xs shrink-0"
-              >
-                {currentUser.phone.slice(-2)}
+          <div className="flex items-center gap-2 min-w-0">
+            <div
+              data-testid="app-sidebar-avatar-user"
+              className="w-7 h-7 rounded-full bg-status-success/15 text-status-success flex items-center justify-center text-xs shrink-0 font-mono"
+            >
+              🛡️
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-text-primary truncate flex items-center gap-1">
+                <span>单机免登录</span>
+                <span className="text-[9px] px-1 py-0.2 rounded font-mono bg-status-success/10 text-status-success border border-status-success/20">
+                  Local
+                </span>
               </div>
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-text-primary truncate">
-                  {currentUser.phone.replace(/(\d{3})\d{4}(\d{4})/, '$1****$2')}
-                </div>
-                <div className="text-[10px] text-text-tertiary">已登录</div>
+              <div className="text-[10px] text-text-tertiary truncate">
+                100% 数据本地留存
               </div>
             </div>
-          ) : (
-            <button
-              type="button"
-              data-testid="app-sidebar-btn-trigger-login"
-              onClick={() => setIsLoginModalOpen(true)}
-              className="flex items-center gap-2 text-xs font-semibold text-brand-blue hover:underline"
-            >
-              <span>👤</span>
-              <span>立即登录账号</span>
-            </button>
-          )}
-
-          {currentUser && (
-            <button
-              type="button"
-              data-testid="app-sidebar-btn-logout"
-              onClick={() => {
-                logoutUser();
-                setIsLoginModalOpen(true);
-              }}
-              title="退出登录"
-              className="text-[11px] text-text-tertiary hover:text-status-danger px-1.5 py-0.5 rounded"
-            >
-              登出
-            </button>
-          )}
+          </div>
         </div>
       </div>
     </aside>

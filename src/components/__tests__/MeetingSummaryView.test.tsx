@@ -252,4 +252,61 @@ describe('MeetingSummaryView - 全屏沉浸式会议总结与思维导图视图 
     expect(screen.getByTestId('summary-page-row-transcript-seg_2')).toHaveClass('bg-brand-blue/10'); expect(scroll).not.toHaveBeenCalled();
   });
 
+  it('应该支持会后人工复核待办：单条转为待办与移出待办 (Human-in-the-loop)', () => {
+    useMeetingStore.setState({
+      activeSummaryMeeting: mockMeeting,
+      historyMeetings: [mockMeeting],
+      tasks: [],
+    });
+    render(<MeetingSummaryView />);
+
+    // 1. 初始渲染时，该行动项尚未入库，应显示“转为待办”按钮与“待复核”标识
+    const confirmBtn = screen.getByTestId('summary-page-btn-confirm-action-to-task-0');
+    expect(confirmBtn).toBeInTheDocument();
+    expect(confirmBtn.textContent).toContain('转为待办');
+
+    // 2. 点击“转为待办”
+    fireEvent.click(confirmBtn);
+
+    // 3. 验证 store 中产生了正式待办
+    const tasks = useMeetingStore.getState().tasks;
+    expect(tasks).toHaveLength(1);
+    expect(tasks[0].title).toBe('跟进全链路门禁联调');
+    expect(tasks[0].meetingId).toBe('mtg_summary_01');
+
+    // 4. 验证界面变为“已在待办”徽章与“移出待办”按钮
+    expect(screen.getByTestId('summary-page-badge-action-confirmed-0')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-btn-remove-action-task-0')).toBeInTheDocument();
+
+    // 5. 点击“移出待办”
+    fireEvent.click(screen.getByTestId('summary-page-btn-remove-action-task-0'));
+    expect(useMeetingStore.getState().tasks).toHaveLength(0);
+  });
+
+  it('应该支持在行动项板块一键全部转入待办', () => {
+    const multiActionMeeting: HistoryMeeting = {
+      ...mockMeeting,
+      structuredSummary: {
+        ...mockMeeting.structuredSummary!,
+        actions: [
+          { title: '行动项1', assignee: '张三' },
+          { title: '行动项2', assignee: '李四' },
+        ],
+      },
+    };
+    useMeetingStore.setState({
+      activeSummaryMeeting: multiActionMeeting,
+      historyMeetings: [multiActionMeeting],
+      tasks: [],
+    });
+    render(<MeetingSummaryView />);
+
+    const batchBtn = screen.getByTestId('summary-page-btn-batch-confirm-actions');
+    expect(batchBtn).toBeInTheDocument();
+    fireEvent.click(batchBtn);
+
+    expect(useMeetingStore.getState().tasks).toHaveLength(2);
+    expect(screen.getByTestId('summary-page-badge-action-confirmed-0')).toBeInTheDocument();
+    expect(screen.getByTestId('summary-page-badge-action-confirmed-1')).toBeInTheDocument();
+  });
 });

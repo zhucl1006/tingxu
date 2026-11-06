@@ -60,6 +60,23 @@ describe('MeetingSummaryView - 会后 Copilot 助手与原地人工修订功能 
       },
     ],
     chatHistory: [],
+    aiCost: {
+      totalCostYuan: 0.15,
+      totalTokens: 12000,
+      audioSeconds: 300,
+      breakdown: {
+        asrCostYuan: 0.05,
+        asrAudioSeconds: 300,
+        insightsCostYuan: 0.03,
+        insightsTokens: 6000,
+        summaryCostYuan: 0.02,
+        summaryTokens: 4000,
+        chatCostYuan: 0.05,
+        chatTokens: 2000,
+      },
+      recordsCount: 5,
+      updatedAt: '2026-11-03T10:05:00.000Z',
+    },
   };
 
   beforeEach(() => {
