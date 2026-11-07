@@ -93,38 +93,22 @@ export const SettingsView: React.FC = () => {
           setAsrTestStatus(`× ${res.message}`);
         }
       } else {
-        // 内嵌轻量模型自适应检测：优先探测已在运行的本地 Docker Whisper，其次检测本地 SenseVoice 模型
+        // 内嵌轻量模型真实检测：仅检测本地模型沙箱 (~/.tingxu/models/) 离线权重，杜绝外部服务混淆
         let isModelReady = false;
-        let dockerReadyPort = '';
         const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
 
         if (isTauri) {
           try {
             const { invoke } = await import('@tauri-apps/api/core');
-            for (const port of ['8009', '8000']) {
-              try {
-                const probeRes: any = await invoke('probe_local_asr_endpoint', {
-                  endpoint: `http://127.0.0.1:${port}/v1/audio/transcriptions`,
-                  model: byokSettings.localAsrModel || 'small',
-                });
-                if (probeRes?.success) {
-                  dockerReadyPort = port;
-                  break;
-                }
-              } catch {}
-            }
-
             const status: any = await invoke('check_local_asr_model', { modelId: 'sensevoice-small-int8' });
             isModelReady = Boolean(status?.exists && status?.isReady);
           } catch {}
         }
 
-        if (dockerReadyPort) {
-          setAsrTestStatus(`✓ 本地 Docker Faster-Whisper (端口 ${dockerReadyPort}) 运行就绪！内嵌模式将自动绑定，开会即刻开始转写。`);
-        } else if (isModelReady) {
-          setAsrTestStatus('✓ 内嵌轻量模型（SenseVoice-Small）已就绪，纯本地断网可用');
+        if (isModelReady) {
+          setAsrTestStatus('✓ 内嵌轻量离线模型（SenseVoice-Small）已就绪，免外部服务，纯本地闭环可用');
         } else {
-          setAsrTestStatus('ℹ️ 本机未检测到运行中的本地 ASR 引擎。建议点击下方「一键就绪离线模型」，或在终端使用 Docker 一键启动 Faster-Whisper。');
+          setAsrTestStatus('ℹ️ 本机尚未就绪 SenseVoice 离线权重。点击左侧「一键就绪离线模型」即可在本地沙箱配置就绪！');
         }
       }
     } catch (err) {
