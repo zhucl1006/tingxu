@@ -362,14 +362,29 @@ export class LocalAsrClient {
         }
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), 4000);
+        const timeoutMs = 10000;
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-        const res = await fetch(normalizedEndpoint, {
-          method: 'POST',
-          headers,
-          body: formData,
-          signal: controller.signal,
-        });
+        let res: Response;
+        try {
+          res = await fetch(normalizedEndpoint, {
+            method: 'POST',
+            headers,
+            body: formData,
+            signal: controller.signal,
+          });
+        } catch (fetchErr: any) {
+          clearTimeout(timer);
+          if (fetchErr?.name === 'AbortError' || String(fetchErr?.message).toLowerCase().includes('abort')) {
+            const latencyMs = Math.round(performance.now() - startTime);
+            return {
+              success: false,
+              latencyMs,
+              message: `端点连接超时 (${timeoutMs / 1000}s)：Faster-Whisper 正在首次下载或加载 Whisper 模型权重（首次约需 1~3 分钟）；请查看终端或 Docker 容器日志，待下载加载完成后再次点击测试。`,
+            };
+          }
+          throw fetchErr;
+        }
         clearTimeout(timer);
 
         const latencyMs = Math.round(performance.now() - startTime);
@@ -377,7 +392,18 @@ export class LocalAsrClient {
         if (res.ok) {
           return { success: true, latencyMs, message: `连接成功 (延迟: ${latencyMs}ms)` };
         }
-        return { success: false, latencyMs, message: `端点返回异常状态: HTTP ${res.status}` };
+
+        let errorDetail = '';
+        try {
+          const text = await res.text();
+          if (text) {
+            const json = JSON.parse(text);
+            errorDetail = json?.detail || json?.message || text.slice(0, 100);
+          }
+        } catch {}
+
+        const detailMsg = errorDetail ? ` (${errorDetail})` : '';
+        return { success: false, latencyMs, message: `端点返回异常状态: HTTP ${res.status}${detailMsg}` };
       } else {
         // WebSocket 探测
         return new Promise((resolve) => {

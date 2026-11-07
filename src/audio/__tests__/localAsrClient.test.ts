@@ -150,6 +150,21 @@ describe('LocalAsrClient 本地离线 ASR 客户端 (Plan 027 T02 TDD)', () => {
     expect(res.message).toContain('连接失败');
   });
 
+  it('testConnection 静态探测：当端点响应超时触发 abort 时应返回针对模型加载中的友好指导提示', async () => {
+    const abortErr = new Error('fetch is aborted');
+    abortErr.name = 'AbortError';
+    global.fetch = vi.fn().mockRejectedValue(abortErr);
+
+    const res = await LocalAsrClient.testConnection({
+      protocol: 'openai_http',
+      endpoint: 'http://127.0.0.1:8009/v1/audio/transcriptions',
+    });
+
+    expect(res.success).toBe(false);
+    expect(res.message).toContain('端点连接超时');
+    expect(res.message).toContain('Whisper 模型权重');
+  });
+
   it('normalizeOpenAiAsrEndpoint 应正确自动规整缺失的 /v1/audio/transcriptions 路径，杜绝 404', () => {
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');

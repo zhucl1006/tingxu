@@ -1,19 +1,19 @@
 {
-  "version": "0.3.2",
-  "notes": "听序 v0.3.2：修复内嵌轻量 ASR 引擎（方案 2），支持免外部服务、免 Docker/Pip 的 100% 纯本地离线语音转写与一键模型就绪，彻底解决 404 与未就绪阻断。",
-  "pub_date": "2026-11-07T02:50:00Z",
+  "version": "0.3.3",
+  "notes": "听序 v0.3.3：优化本地 ASR 连通性探测超时机制，支持冷启动模型下载诊断与友好指引，增强模型名称参数防呆。",
+  "pub_date": "2026-11-07T03:00:00Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "mock_signature_for_aarch64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.2/tingxu_0.3.2_aarch64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.3.3/tingxu_0.3.3_aarch64.dmg"
     },
     "darwin-x86_64": {
       "signature": "mock_signature_for_x86_64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.2/tingxu_0.3.2_x64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.3.3/tingxu_0.3.3_x64.dmg"
     },
     "windows-x86_64": {
       "signature": "mock_signature_for_win64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.2/tingxu_0.3.2_x64_en-US.msi"
+      "url": "https://release.tingxu.cn/desktop/v0.3.3/tingxu_0.3.3_x64_en-US.msi"
     }
   }
 }
