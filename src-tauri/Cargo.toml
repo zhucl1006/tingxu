@@ -1,6 +1,6 @@
 [package]
 name = "tingxu-desktop"
-version = "0.3.3"
+version = "0.3.4"
 description = "听序 — AI 实时会议记录与智能纪要桌面助手"
 authors = ["Tingxu Team"]
 edition = "2021"
@@ -19,7 +19,7 @@ tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 base64 = "0.21"
 uuid = { version = "1", features = ["v4"] }
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+reqwest = { version = "0.13", default-features = false, features = ["json", "multipart"] }
 sysinfo = "0.30"
 
 [target.'cfg(target_os = "macos")'.dependencies]

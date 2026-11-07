@@ -1,19 +1,19 @@
 {
-  "version": "0.3.3",
-  "notes": "听序 v0.3.3：优化本地 ASR 连通性探测超时机制，支持冷启动模型下载诊断与友好指引，增强模型名称参数防呆。",
-  "pub_date": "2026-11-07T03:00:00Z",
+  "version": "0.3.4",
+  "notes": "听序 v0.3.4：实现 Rust 原生网络探针与音频转发，彻底突破 WebKit 浏览器对本地端点 (127.0.0.1) 的 CORS 拦截与 Load failed 报错，支持直连所有未配置跨域头的开源 ASR 服务。",
+  "pub_date": "2026-11-07T03:30:00Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "mock_signature_for_aarch64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.3/tingxu_0.3.3_aarch64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.3.4/tingxu_0.3.4_aarch64.dmg"
     },
     "darwin-x86_64": {
       "signature": "mock_signature_for_x86_64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.3/tingxu_0.3.3_x64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.3.4/tingxu_0.3.4_x64.dmg"
     },
     "windows-x86_64": {
       "signature": "mock_signature_for_win64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.3/tingxu_0.3.3_x64_en-US.msi"
+      "url": "https://release.tingxu.cn/desktop/v0.3.4/tingxu_0.3.4_x64_en-US.msi"
     }
   }
 }

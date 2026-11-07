@@ -239,18 +239,48 @@ export class LocalAsrClient {
     const durationMs = Math.round((currentBytes / 32000) * 1000);
 
     try {
-      const res = await fetch(this.options.endpoint, {
-        method: 'POST',
-        headers,
-        body: formData,
-      });
-
-      if (!res.ok) {
-        throw new Error(`本地 ASR 端点响应异常: HTTP ${res.status}`);
+      let text = '';
+      const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+      if (isTauri) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          let binary = '';
+          const len = wavBytes.byteLength;
+          for (let i = 0; i < len; i++) {
+            binary += String.fromCharCode(wavBytes[i]);
+          }
+          const base64Wav = window.btoa(binary);
+          const rawRes = await invoke<string>('proxy_post_local_asr', {
+            endpoint: this.options.endpoint,
+            wavBase64: base64Wav,
+            model: this.options.model || 'small',
+            apiKey: this.options.apiKey,
+          });
+          try {
+            const data = JSON.parse(rawRes);
+            text = (data.text || '').trim();
+          } catch {
+            text = (rawRes || '').trim();
+          }
+        } catch {
+          // 原生通道异常时回退到 fetch
+        }
       }
 
-      const data = await res.json();
-      const text = (data.text || '').trim();
+      if (!text) {
+        const res = await fetch(this.options.endpoint, {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        if (!res.ok) {
+          throw new Error(`本地 ASR 端点响应异常: HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+        text = (data.text || '').trim();
+      }
 
       if (text) {
         const beginTimeMs = this.lastProcessedTimeMs;
@@ -347,6 +377,23 @@ export class LocalAsrClient {
     try {
       if (options.protocol === 'openai_http') {
         const normalizedEndpoint = normalizeOpenAiAsrEndpoint(options.endpoint);
+
+        // 在 Tauri 桌面环境下，优先调用原生 Socket/HTTP 探针，100% 杜绝 WebKit 浏览器的 CORS 限制与 Load failed 拦截
+        const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+        if (isTauri) {
+          try {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const probeRes = await invoke<{ success: boolean; latencyMs: number; message: string }>('probe_local_asr_endpoint', {
+              endpoint: normalizedEndpoint,
+              model: options.model || 'small',
+              apiKey: options.apiKey,
+            });
+            return probeRes;
+          } catch (tauriErr) {
+            console.warn('[LocalAsrClient] 原生探针调用异常，回退至 fetch:', tauriErr);
+          }
+        }
+
         // 构造极小的 0.1s 静音音频进行真实接口握手测试
         const silentPcm = new Uint8Array(3200); // 0.1s at 16kHz 16-bit
         const wavBytes = createWavFromPcm16(silentPcm, 16000, 1);

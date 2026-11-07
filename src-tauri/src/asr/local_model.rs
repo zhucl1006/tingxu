@@ -118,6 +118,148 @@ pub fn prepare_local_asr_model(model_id: &str) -> Result<LocalModelStatus, Strin
     Ok(inspect_local_asr_model(target_id))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalAsrProbeResult {
+    pub success: bool,
+    pub latency_ms: u64,
+    pub message: String,
+    pub response_text: Option<String>,
+}
+
+/// 在 Rust 原生层发起本地 ASR 端点测试，100% 免疫浏览器的 CORS 限制与 WebKit 的 Load failed 拦截
+pub async fn probe_local_asr_http_endpoint(
+    endpoint: &str,
+    model: Option<&str>,
+    api_key: Option<&str>,
+) -> LocalAsrProbeResult {
+    let start = std::time::Instant::now();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(12))
+        .build()
+        .unwrap_or_default();
+
+    // 0.1s 16kHz 16-bit 单声道 PCM 静音数据构造有效 WAV
+    let silent_pcm = vec![0u8; 3200];
+    let mut wav_bytes = Vec::with_capacity(44 + 3200);
+    wav_bytes.extend_from_slice(b"RIFF");
+    wav_bytes.extend_from_slice(&(36u32 + 3200u32).to_le_bytes());
+    wav_bytes.extend_from_slice(b"WAVEfmt ");
+    wav_bytes.extend_from_slice(&16u32.to_le_bytes());
+    wav_bytes.extend_from_slice(&1u16.to_le_bytes());
+    wav_bytes.extend_from_slice(&1u16.to_le_bytes());
+    wav_bytes.extend_from_slice(&16000u32.to_le_bytes());
+    wav_bytes.extend_from_slice(&32000u32.to_le_bytes());
+    wav_bytes.extend_from_slice(&2u16.to_le_bytes());
+    wav_bytes.extend_from_slice(&16u16.to_le_bytes());
+    wav_bytes.extend_from_slice(b"data");
+    wav_bytes.extend_from_slice(&3200u32.to_le_bytes());
+    wav_bytes.extend_from_slice(&silent_pcm);
+
+    let model_name = model.unwrap_or("small");
+    let target_model = if model_name.trim().is_empty() { "small" } else { model_name.trim() };
+
+    let part = match reqwest::multipart::Part::bytes(wav_bytes).file_name("probe.wav").mime_str("audio/wav") {
+        Ok(p) => p,
+        Err(e) => {
+            return LocalAsrProbeResult {
+                success: false,
+                latency_ms: 0,
+                message: format!("构造音频探针失败: {}", e),
+                response_text: None,
+            };
+        }
+    };
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("model", target_model.to_string());
+
+    let mut req = client.post(endpoint).multipart(form);
+    if let Some(key) = api_key {
+        if !key.trim().is_empty() {
+            req = req.bearer_auth(key.trim());
+        }
+    }
+
+    match req.send().await {
+        Ok(res) => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let status = res.status();
+            if status.is_success() {
+                let text = res.text().await.unwrap_or_default();
+                LocalAsrProbeResult {
+                    success: true,
+                    latency_ms,
+                    message: format!("连接成功 (延迟: {}ms)", latency_ms),
+                    response_text: Some(text),
+                }
+            } else {
+                let err_text = res.text().await.unwrap_or_default();
+                LocalAsrProbeResult {
+                    success: false,
+                    latency_ms,
+                    message: format!("端点返回状态: HTTP {}{}", status, if err_text.is_empty() { "".into() } else { format!(" ({})", err_text) }),
+                    response_text: Some(err_text),
+                }
+            }
+        }
+        Err(e) => {
+            let latency_ms = start.elapsed().as_millis() as u64;
+            LocalAsrProbeResult {
+                success: false,
+                latency_ms,
+                message: if e.is_timeout() {
+                    "端点连接超时 (12s)：Faster-Whisper 可能正在加载模型权重，请稍后重试".into()
+                } else {
+                    format!("连接失败: {}", e)
+                },
+                response_text: None,
+            }
+        }
+    }
+}
+
+/// 原生转发音频并转写，杜绝浏览器 CORS 拦截
+pub async fn proxy_post_asr_audio(
+    endpoint: &str,
+    wav_bytes: Vec<u8>,
+    model: Option<&str>,
+    api_key: Option<&str>,
+) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let model_name = model.unwrap_or("small");
+    let target_model = if model_name.trim().is_empty() { "small" } else { model_name.trim() };
+
+    let part = reqwest::multipart::Part::bytes(wav_bytes)
+        .file_name("audio.wav")
+        .mime_str("audio/wav")
+        .map_err(|e| e.to_string())?;
+
+    let form = reqwest::multipart::Form::new()
+        .part("file", part)
+        .text("model", target_model.to_string());
+
+    let mut req = client.post(endpoint).multipart(form);
+    if let Some(key) = api_key {
+        if !key.trim().is_empty() {
+            req = req.bearer_auth(key.trim());
+        }
+    }
+
+    let res = req.send().await.map_err(|e| format!("请求本地 ASR 失败: {}", e))?;
+    if !res.status().is_success() {
+        let err_text = res.text().await.unwrap_or_default();
+        return Err(format!("ASR 服务返回异常: {}", err_text));
+    }
+
+    res.text().await.map_err(|e| format!("读取识别结果失败: {}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

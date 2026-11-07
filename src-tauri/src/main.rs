@@ -108,6 +108,45 @@ fn download_local_asr_model(model_id: Option<String>) -> Result<tingxu_desktop::
     })
 }
 
+#[tauri::command]
+async fn probe_local_asr_endpoint(
+    endpoint: String,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Result<tingxu_desktop::asr::local_model::LocalAsrProbeResult, AppError> {
+    Ok(tingxu_desktop::asr::local_model::probe_local_asr_http_endpoint(
+        &endpoint,
+        model.as_deref(),
+        api_key.as_deref(),
+    ).await)
+}
+
+#[tauri::command]
+async fn proxy_post_local_asr(
+    endpoint: String,
+    wav_base64: String,
+    model: Option<String>,
+    api_key: Option<String>,
+) -> Result<String, AppError> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&wav_base64)
+        .map_err(|e| AppError {
+            code: "BASE64_DECODE_ERROR".into(),
+            message: e.to_string(),
+        })?;
+
+    tingxu_desktop::asr::local_model::proxy_post_asr_audio(
+        &endpoint,
+        bytes,
+        model.as_deref(),
+        api_key.as_deref(),
+    ).await.map_err(|e| AppError {
+        code: "LOCAL_ASR_REQUEST_ERROR".into(),
+        message: e,
+    })
+}
+
 // 本地 192 维声纹嵌入提取命令（音频流不出本机，严格遵守 Local-First 隐私铁律）
 #[tauri::command]
 fn speaker_embed(samples: Vec<f32>, sample_rate: u32) -> Result<Vec<f32>, AppError> {
@@ -249,6 +288,8 @@ fn main() {
             check_running_meeting_apps,
             check_local_asr_model,
             download_local_asr_model,
+            probe_local_asr_endpoint,
+            proxy_post_local_asr,
             speaker_embed,
             start_system_audio_capture,
             stop_system_audio_capture,
