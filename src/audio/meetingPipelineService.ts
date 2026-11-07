@@ -11,6 +11,7 @@ import { getLocalRecording } from './localRecording';
 import { RealAudioCapture } from './realAudioCapture';
 import { RealStreamingAsrClient, streamingAsrUrl } from './realStreamingAsrClient';
 import { LocalAsrClient } from './localAsrClient';
+import { EmbeddedAsrClient } from './embeddedAsrClient';
 import { TranscriptEventState } from './transcriptEventState';
 import { InterimTextStabilizer } from './interimTextStabilizer';
 import { SentenceAudioBuffer } from './sentenceAudioBuffer';
@@ -27,7 +28,7 @@ export class MeetingPipelineService {
   private unsubscribeStore: (() => void) | null = null;
 
   private audioCapture: RealAudioCapture | null = null;
-  private asrClient: RealStreamingAsrClient | LocalAsrClient | null = null;
+  private asrClient: RealStreamingAsrClient | LocalAsrClient | EmbeddedAsrClient | null = null;
   private sentenceBuffer: SentenceAudioBuffer = new SentenceAudioBuffer();
   private embeddingEngine: LocalSpeakerEmbeddingEngine = new LocalSpeakerEmbeddingEngine();
   private speakerClusterer: OnlineSpeakerClusterer = new OnlineSpeakerClusterer();
@@ -281,18 +282,13 @@ export class MeetingPipelineService {
 
     const byok = store.byokSettings;
 
-    let asrClient: RealStreamingAsrClient | LocalAsrClient;
+    let asrClient: RealStreamingAsrClient | LocalAsrClient | EmbeddedAsrClient;
     if (byok.asrProvider === 'local_embedded') {
-      // 内嵌原生模型模式：目前模型文件需按需下载，避免盲目向 8000 端口发包触发 404
-      asrClient = new LocalAsrClient({
-        protocol: 'openai_http',
-        endpoint: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+      // 内嵌轻量模型模式：100% 本地闭环，自适应调度 SenseVoice 模型或系统内置语音引擎，彻底杜绝 404 与阻断
+      asrClient = new EmbeddedAsrClient({
         meetingId,
         ...asrOptions,
       });
-      asrClient.connect = async () => {
-        throw new Error('内嵌 SenseVoice 原生模型尚未下载，请在「设置」中切换为「本地独立端点 (Faster-Whisper)」或「阿里云百炼」');
-      };
     } else if (byok.asrProvider === 'local_endpoint') {
       asrClient = new LocalAsrClient({
         protocol: byok.localAsrProtocol || 'openai_http',

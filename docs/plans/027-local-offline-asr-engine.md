@@ -20,8 +20,9 @@
   - [x] Phase 3: 会中音频流水线（meetingPipelineService）多源 ASR 无缝切换
   - [x] Phase 4: Rust 底层 SenseVoice-Small 模型下载与离线管理
   - [x] Phase 5: 异常边界容错、E2E 测试与 5 大工程质量门禁全绿
+  - [x] Phase 6: 内嵌轻量模型免服务纯本地推理与一键就绪修复 (TDD)
 
-**完成度：** 7/7（100%）
+**完成度：** 10/10（100%）
 
 ### 0.2 任务状态总览
 
@@ -34,6 +35,9 @@
 | T05 | Rust 底层提供 SenseVoice-Small 模型本地状态检测、下载器与校验命令 (Tauri Command) | 串行 | - | T01 | 已完成 | Rust底层 | 2026-11-06 23:28 | 2026-11-06 23:30 | 无 | src-tauri/src/asr/local_model.rs, cargo test 通过 |
 | T06 | 会中工作台 ASR 离线感知与未就绪引导（零阻断降级与友善提示卡片） | 串行 | - | T04, T05 | 已完成 | 前端UI | 2026-11-06 23:30 | 2026-11-06 23:34 | 无 | InMeetingWorkbench.tsx, 24/24 测试通过 |
 | T07 | 全量自动化测试回归、门禁验证与文档更新（Gate 1~5 全绿） | 串行 | - | T06 | 已完成 | QA合规 | 2026-11-06 23:34 | 2026-11-06 23:36 | 无 | scripts/verify-gates.sh 全部通过 (ALL GATES PASSED) |
+| T08 | 实现 EmbeddedAsrClient：系统内置语音识别引擎与离线模型适配器，彻底解决 404 与阻断 (TDD) | 串行 | - | T07 | 已完成 | 音频引擎 | 2026-11-07 10:40 | 2026-11-07 10:43 | 无 | src/audio/embeddedAsrClient.ts, 5/5 通过 |
+| T09 | Rust 底层实现 download_local_asr_model 命令与状态回传，SettingsView 提供一键下载与就绪卡片 | 串行 | - | T08 | 已完成 | 全栈 | 2026-11-07 10:43 | 2026-11-07 10:46 | 无 | Cargo test & SettingsViewByok.test.tsx 通过 |
+| T10 | 会中工作台与流水线集成验证、E2E 回归与质量门禁 Gate 1~5 全绿 | 串行 | - | T09 | 已完成 | QA合规 | 2026-11-07 10:46 | 2026-11-07 10:49 | 无 | verify-gates.sh 全部通过 (ALL GATES PASSED) |
 
 ---
 

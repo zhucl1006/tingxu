@@ -4,6 +4,7 @@ import { MeetingPipelineService } from '../meetingPipelineService';
 import { RealAudioCapture } from '../realAudioCapture';
 import { RealStreamingAsrClient } from '../realStreamingAsrClient';
 import { LocalAsrClient } from '../localAsrClient';
+import { EmbeddedAsrClient } from '../embeddedAsrClient';
 
 // Mock 底层类与原生通道
 vi.mock('../realAudioCapture', () => {
@@ -63,6 +64,22 @@ vi.mock('../localAsrClient', () => {
   };
 });
 
+vi.mock('../embeddedAsrClient', () => {
+  const mockEmbeddedAsrInstance = {
+    connect: vi.fn().mockResolvedValue(undefined),
+    disconnect: vi.fn(),
+    isConnected: vi.fn().mockReturnValue(true),
+    sendPcmChunk: vi.fn(),
+    finish: vi.fn().mockResolvedValue('complete'),
+  };
+  return {
+    EmbeddedAsrClient: vi.fn().mockImplementation((options: any) => {
+      (mockEmbeddedAsrInstance as any)._options = options;
+      return mockEmbeddedAsrInstance;
+    }),
+  };
+});
+
 describe('MeetingPipelineService - 全局常驻会议流与洞察管道服务 (TDD)', () => {
   let service: MeetingPipelineService;
 
@@ -105,6 +122,22 @@ describe('MeetingPipelineService - 全局常驻会议流与洞察管道服务 (T
     await vi.waitFor(() => {
       expect(LocalAsrClient).toHaveBeenCalled();
       expect(RealStreamingAsrClient).not.toHaveBeenCalled();
+      expect(useMeetingStore.getState().asrStatus).toBe('connected');
+    });
+  });
+
+  it('当 byokSettings.asrProvider 为 local_embedded 时，应动态挂载 EmbeddedAsrClient 且平滑连通不报错 (T08)', async () => {
+    useMeetingStore.getState().updateByokSettings({
+      asrProvider: 'local_embedded',
+    });
+
+    service.attach();
+    useMeetingStore.getState().startMeeting('内嵌轻量模型 ASR 会议');
+
+    await vi.waitFor(() => {
+      expect(EmbeddedAsrClient).toHaveBeenCalled();
+      expect(RealStreamingAsrClient).not.toHaveBeenCalled();
+      expect(LocalAsrClient).not.toHaveBeenCalled();
       expect(useMeetingStore.getState().asrStatus).toBe('connected');
     });
   });

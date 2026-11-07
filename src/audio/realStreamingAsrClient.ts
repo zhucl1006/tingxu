@@ -144,7 +144,7 @@ export class RealStreamingAsrClient {
     });
   }
 
-  public sendPcmChunk(pcmData: ArrayBuffer): void {
+  public sendPcmChunk(pcmData: ArrayBuffer | Uint8Array): void {
     if (this.connected && this.ws?.readyState === 1 && !this.finishPromise) this.ws.send(pcmData);
   }
 

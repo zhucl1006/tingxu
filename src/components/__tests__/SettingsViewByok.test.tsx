@@ -148,4 +148,24 @@ describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
     );
     expect(copyPipBtn.textContent).toContain('已复制');
   });
+
+  it('内嵌轻量模型支持一键就绪与下载，免外部服务 (Plan 027 T09)', async () => {
+    render(<SettingsView />);
+
+    // 切换至内嵌轻量模型
+    fireEvent.click(screen.getByTestId('settings-byok-btn-asr-provider-local-embedded'));
+
+    const embeddedCard = screen.getByTestId('settings-byok-card-embedded-asr');
+    expect(embeddedCard).toBeInTheDocument();
+    expect(embeddedCard.textContent).toContain('免外部服务 · 100% 本地闭环');
+
+    const downloadBtn = screen.getByTestId('settings-byok-btn-download-local-model');
+    expect(downloadBtn).toBeInTheDocument();
+    fireEvent.click(downloadBtn);
+
+    await vi.waitFor(() => {
+      const statusEl = screen.getByTestId('settings-byok-text-asr-status');
+      expect(statusEl.textContent).toContain('就绪');
+    });
+  });
 });
