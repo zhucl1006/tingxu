@@ -39,14 +39,15 @@
   - **Windows**：基于原生 `WASAPI Loopback`，底层直接捕获系统渲染流；
   - **物理双轨打标**：麦克风（“我”）与扬声器（“对方”）在硬件层物理区隔，从源头杜绝角色混淆。
 - ⚡ **单机免部署开箱即用（BYOK - Bring Your Own Key）**
-  - 支持直接配置阿里云百炼（DashScope ASR & 通义千问）和 DeepSeek 等常用主流 Provider；
-  - 兼容标准 OpenAI 协议（支持接入 Ollama 本地离线大模型、月之暗面 Kimi、智谱 GLM、硅基流动等）；
-  - 零外部数据库或后端服务依赖，个人下载即用。
+  - **语音识别双轨演进**：既支持配置阿里云百炼（DashScope ASR），也支持直连本地运行的 Faster-Whisper / Sherpa-ONNX / OpenAI 格式本地端点，或内嵌轻量 SenseVoice 离线模型，实现 100% 断网可用；
+  - **大模型多端适配**：支持 DeepSeek、通义千问，以及标准 OpenAI 兼容协议（支持接入 Ollama 本地离线大模型、Kimi、智谱 GLM、硅基流动等）；
+  - 零外部数据库或后端服务依赖，无需注册登录，个人下载即用。
 - 🛡️ **Zero-Content 本地隐私保障**
   - 会议标题、音视频切片、逐字稿与纪要全部存放在本地嵌入式 SQLite（支持全文检索 FTS5）；
   - 你的私有 API Key 安全保存在本地沙箱，绝不上报或外泄。
 - 📊 **会中双栏工作台（In-Meeting Workbench）**
   - **左侧看板（54%）**：AI 实时增量提取“待办行动项（Action Items）”、“达成的关键结论（Decisions）”与“待澄清议题”；
+  - **实时洞察降费控频**：支持「⚡ 手动按需提炼」、「⏱ 定时自动」与「⏸ 完全关闭」三种模式，避免长时间开会持续消耗 Token 算力；
   - **右侧逐字稿（46%）**：双轨实时滚动字幕，一键点击依据瞬间居中高亮溯源，绝无大模型幻觉；
   - **人工保护机制（Human Protection）**：已确认或手动修改的结论受强保护，后续讨论即便产生事实冲突，也只生成“待复核修订”卡片，绝不暴力算法覆盖。
 - 💊 **42px 极简微型悬浮胶囊（Floating Pill）**
@@ -58,22 +59,24 @@
 
 ---
 
-## 🏛️ 双模架构设计 (Dual-Mode Architecture)
+## 🏛️ 极简单机闭环架构 (Local-First Architecture)
 
-听序采用模块化接缝（Seam）设计，支持**单机本地模式**与**云端增援模式**灵活共存：
+听序专注于为个人办公提供极简、纯净、无任何外部服务端依赖的单机工具体验：
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
 │                        听序桌面客户端 (Tauri 2.0 / Rust)                │
 │                                                                        │
 │   ┌─────────────────────┐                 ┌────────────────────────┐   │
-│   │   React 18 前端     │                 │   Rust 原生媒体层      │   │
+│   │   React 18 前端     │                 │   Rust 原生媒体与模型  │   │
 │   │ ┌─────────────────┐ │                 │ ┌────────────────────┐ │   │
 │   │ │ 会中双栏工作台  │ │                 │ │ ScreenCaptureKit   │ │   │
 │   │ ├─────────────────┤ │                 │ │ WASAPI Loopback    │ │   │
+│   │ │ 洞察降费控频条  │ │                 │ ├────────────────────┤ │   │
+│   │ ├─────────────────┤ │                 │ │ 双轨环形缓冲 16kHz │ │   │
 │   │ │ 微型悬浮胶囊条  │ │                 │ ├────────────────────┤ │   │
-│   │ ├─────────────────┤ │                 │ │ 双轨环形缓冲       │ │   │
-│   │ │ 本地设置 (BYOK) │ │                 │ │ (RingBuffer 16kHz) │ │   │
+│   │ ├─────────────────┤ │                 │ │ SenseVoice 本地模型│ │   │
+│   │ │ 本地设置 (BYOK) │ │                 │ │ (~/.tingxu/models) │ │   │
 │   │ └─────────────────┘ │                 │ └────────────────────┘ │   │
 │   └──────────┬──────────┘                 └──────────┬─────────────┘   │
 │              │                                       │                 │
@@ -82,55 +85,61 @@
 │      │ 本地 SQLite   │                       │ 本地音频切片  │         │
 │      │ (FTS5 全文检) │                       │ (原子化落盘)  │         │
 │      └───────────────┘                       └───────────────┘         │
-└──────────────┬─────────────────────────────────────────────────────────┘
-               │
-      ┌────────┴──────────────────────────┐
-      ▼                                   ▼
-【模式 A：单机 BYOK 模式（默认）】   【模式 B：云端托管增援模式（可选）】
-  直连第三方服务商 / 本地模型           企业自建 / 托管部署
-  • DashScope 实时 ASR                 • tingxu-gateway (AI 网关)
-  • DeepSeek / Qwen / Ollama           • tingxu-server (控制面与统付)
-  • 零服务端依赖，极简免费             • 统一采购分发、集中额度管理
+└──────────────┬───────────────────────────────────────┬─────────────────┘
+               │                                       │
+      ┌────────┴──────────────┐               ┌────────┴────────────────┐
+      ▼                       ▼               ▼                         ▼
+【本地离线 ASR（0 费用）】 【云端 ASR（BYOK）】 【本地离线 LLM（0 费用）】 【云端 LLM（BYOK）】
+• Faster-Whisper (HTTP)  • 阿里云百炼 DashScope • 本地 Ollama (qwen2.5)   • DeepSeek-V3
+• Sherpa-ONNX (WS)       • 实时语音转写 WebSocket                           • 通义千问 Qwen
+• 100% 离网断网可用      • 用户自备私钥直连      • 100% 离网数据不出机     • 用户自备私钥直连
 ```
 
 ---
 
 ## 🚀 快速上手（BYOK 单机模式）
 
-### 1. 下载或打包应用
-前往 [Releases 页面](https://github.com/) 下载适用于你系统的安装包（`.dmg` / `.exe`），或参考下文自行编译。
+### 1. 下载安装应用
+前往 [Releases 页面](https://github.com/zhucl1006/tingxu/releases) 下载适用于你系统的安装包（macOS `.dmg` / Windows `.exe` / `.msi`），安装后即可直接运行。
 
-### 2. 配置你的 API Key
+### 2. 配置语音识别与大模型
 首次启动后，点击左侧导航栏的 **「设置（Settings）」**：
 
-1. **语音识别（ASR）配置**：
-   - 服务商选择：`阿里云百炼 (DashScope)`
-   - 填入你的 `DashScope API Key`（开通阿里云 DashScope 实时语音识别服务即可获取，新用户通常赠送免费额度）
+1. **语音识别（ASR）配置（双轨任选）**：
+   - **方式 A（本地离线，0 费用）**：
+     - 选择「本地独立端点 (Faster-Whisper / Sherpa)」；
+     - 协议支持 `OpenAI 兼容 HTTP`（如 Faster-Whisper Server）或 `Sherpa-ONNX WebSocket`；
+     - 可直接点击「预设: Faster-Whisper」或「预设: Sherpa-ONNX」，并点击「测试端点连通性」；
+   - **方式 B（云端商用，开箱即用）**：
+     - 服务商选择：`阿里云百炼 (DashScope)`；
+     - 填入你的 `DashScope API Key`（开通阿里云百炼实时语音识别服务即可，新用户通常赠送免费额度）。
 2. **大语言模型（LLM）配置**：
-   - 服务商选择：`DeepSeek` 或 `通义千问 (Qwen)` 或 `自定义 OpenAI 兼容接口`
-   - 填入对应平台的 `API Key`，例如：
-     - DeepSeek: `https://api.deepseek.com/v1`，模型 `deepseek-chat`
+   - 服务商选择：`DeepSeek` 或 `通义千问 (Qwen)` 或 `自定义 OpenAI 兼容接口`；
+   - 填入对应平台的 `API Key` 或本地端点，例如：
+     - DeepSeek: `https://api.deepseek.com/v1`，模型 `deepseek-chat`（推荐，性价比高）
      - 阿里云百炼: `https://dashscope.aliyuncs.com/compatible-mode/v1`，模型 `qwen-plus`
-     - 本地 Ollama: `http://localhost:11434/v1`，模型 `qwen2.5:7b`
+     - 本地 Ollama: `http://localhost:11434/v1`，模型 `qwen2.5:7b`（100% 离线，0 费用）
 3. 点击 **「测试连接」**，指示灯变绿即配置完成！
 
 ### 3. 开始你的第一场会议
 1. 点击左上角 **「开始新会议」**；
 2. 授予麦克风与系统音频捕获权限；
 3. 会议中你可以看到左右双栏实时滚动的逐字稿与智能提取的决策待办；
-4. 点击右上角悬浮窗按钮，可将听序缩小为微型胶囊浮条贴在屏幕边角。
+4. 会中洞察栏支持随时切换模式（⚡ 手动按需提炼 / ⏱ 定时自动 / ⏸ 关闭）以控制 API 费用；
+5. 点击右上角悬浮窗按钮，可将听序缩小为 42px 迷你胶囊贴在屏幕边角。
 
 ---
 
 ## 🔑 模型与 ASR 配置指南
 
-| 服务提供商 | 适用环节 | 官网与申请地址 | 推荐模型 / 接口端点 |
-| :--- | :--- | :--- | :--- |
-| **阿里云百炼** | 实时 ASR 识别 | [aliyun.com/product/bailian](https://www.aliyun.com/product/bailian) | 实时语音转写 WebSocket |
-| **DeepSeek** | 会中洞察 / 纪要 / 问答 | [platform.deepseek.com](https://platform.deepseek.com) | `deepseek-chat` (性价比极高，推荐) |
-| **阿里云千问** | 会中洞察 / 纪要 / 问答 | [dashscope.aliyun.com](https://dashscope.aliyun.com) | `qwen-plus` / `qwen-2.5-72b` |
-| **Ollama** | 100% 离线单机大模型 | [ollama.ai](https://ollama.ai) | `qwen2.5:7b` (`http://localhost:11434/v1`) |
-| **SiliconFlow** | 聚合大模型 API | [siliconflow.cn](https://siliconflow.cn) | `deepseek-ai/DeepSeek-V3` |
+| 服务类型 | 服务提供商 / 引擎 | 部署方式 | 官网 / 开源项目 | 推荐端点与模型 | 费用与网络 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **本地 ASR** | **Faster-Whisper** | 本地 Python / Docker | [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) | `http://127.0.0.1:8000/v1/audio/transcriptions` | **免费 / 100% 离线** |
+| **本地 ASR** | **Sherpa-ONNX** | 本地可执行文件 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | `ws://127.0.0.1:6006` | **免费 / 100% 离线** |
+| **云端 ASR** | **阿里云百炼** | 云端 SaaS | [aliyun.com/product/bailian](https://www.aliyun.com/product/bailian) | 实时语音转写 (DashScope) | 赠送额度 / 按量计费 |
+| **本地 LLM** | **Ollama** | 本地运行 | [ollama.ai](https://ollama.ai) | `qwen2.5:7b` (`http://localhost:11434/v1`) | **免费 / 100% 离线** |
+| **云端 LLM** | **DeepSeek** | 云端 SaaS | [platform.deepseek.com](https://platform.deepseek.com) | `deepseek-chat` (性价比极高，推荐) | 用户自备 Key 直连 |
+| **云端 LLM** | **通义千问 Qwen** | 云端 SaaS | [dashscope.aliyun.com](https://dashscope.aliyun.com) | `qwen-plus` / `qwen-2.5-72b` | 用户自备 Key 直连 |
 
 ---
 
@@ -180,15 +189,21 @@ npm run tauri build
 
 - [x] **v0.2.0**
   - [x] macOS `ScreenCaptureKit` 免驱内录与 WASAPI Loopback 音频捕获
-  - [x] 流式 ASR 直连与双轨打标
+  - [x] 流式 ASR 直连与双轨硬件级物理打标
   - [x] 双栏工作台、微型悬浮胶囊窗、人工保护机制
   - [x] Local-First SQLite 存储与 FTS5 全文检索
-  - [x] 单机化 BYOK (Bring Your Own Key) 支持
-- [ ] **v0.3.0（计划中）**
-  - [ ] 内置端侧本地离线 ASR（基于 Whisper.cpp / SenseVoice / sherpa-onnx），实现完全离网无网络会议助理
-  - [ ] 导出更多格式（PDF、Notion 格式一键同步、飞书文档导入）
+  - [x] 单机化 BYOK (Bring Your Own Key) 支持与 GitHub 全球开源
+- [x] **v0.3.0**
+  - [x] 本地离线 ASR 双轨演进（直连 Faster-Whisper HTTP / Sherpa-ONNX WS）
+  - [x] SenseVoice-Small 本地轻量模型沙箱目录与状态探测
+  - [x] 彻底单机免登录体验，移除云端控制面强依赖
+  - [x] 实时洞察算力降费控频机制（手动按需 / 定时自动 / 完全关闭）
+  - [x] 会中工作台 ASR 离线感知与端点异常一键引导配置
+- [ ] **v0.4.0（计划中）**
+  - [ ] 导出更多格式（PDF、Markdown 批量导出、Notion / 飞书文档一键同步）
   - [ ] 跨平台音频降噪（基于 RNNoise 端侧降噪插件）
-  - [ ] 说话人声纹注册与高精聚类声纹库（Speaker Identification）
+  - [ ] 说话人声纹注册与高精聚类声纹库（Speaker Identification）进阶
+  - [ ] 本地 SenseVoice-Small 原生推理引擎打包集成
 
 ---
 
