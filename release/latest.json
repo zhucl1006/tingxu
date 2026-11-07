@@ -1,19 +1,19 @@
 {
-  "version": "0.3.4",
-  "notes": "听序 v0.3.4：实现 Rust 原生网络探针与音频转发，彻底突破 WebKit 浏览器对本地端点 (127.0.0.1) 的 CORS 拦截与 Load failed 报错，支持直连所有未配置跨域头的开源 ASR 服务。",
-  "pub_date": "2026-11-07T03:30:00Z",
+  "version": "0.3.5",
+  "notes": "听序 v0.3.5：彻底完善内嵌轻量 ASR 引擎自适应切片转写流水线，自动探针直连本地 Docker Whisper 并修复会议中未开始识别异常。",
+  "pub_date": "2026-11-07T03:55:00Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "mock_signature_for_aarch64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.4/tingxu_0.3.4_aarch64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.3.5/tingxu_0.3.5_aarch64.dmg"
     },
     "darwin-x86_64": {
       "signature": "mock_signature_for_x86_64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.4/tingxu_0.3.4_x64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.3.5/tingxu_0.3.5_x64.dmg"
     },
     "windows-x86_64": {
       "signature": "mock_signature_for_win64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.4/tingxu_0.3.4_x64_en-US.msi"
+      "url": "https://release.tingxu.cn/desktop/v0.3.5/tingxu_0.3.5_x64_en-US.msi"
     }
   }
 }

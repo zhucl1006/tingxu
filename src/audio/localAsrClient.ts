@@ -9,6 +9,21 @@ import type { AsrTranscriptEvent, AsrFinishOutcome, FinalSentence } from './real
 /**
  * 将 16-bit 线性 PCM 单声道音频数据添加标准 44 字节 WAV 头部
  */
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const len = bytes.byteLength;
+  const chunkSize = 8192;
+  for (let i = 0; i < len; i += chunkSize) {
+    const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
+  }
+  return typeof window !== 'undefined' && window.btoa
+    ? window.btoa(binary)
+    : typeof Buffer !== 'undefined'
+      ? Buffer.from(bytes).toString('base64')
+      : '';
+}
+
 export function createWavFromPcm16(pcmData: Uint8Array, sampleRate = 16000, numChannels = 1): Uint8Array {
   const byteRate = sampleRate * numChannels * 2;
   const blockAlign = numChannels * 2;
@@ -240,16 +255,11 @@ export class LocalAsrClient {
 
     try {
       let text = '';
-      const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
       if (isTauri) {
         try {
           const { invoke } = await import('@tauri-apps/api/core');
-          let binary = '';
-          const len = wavBytes.byteLength;
-          for (let i = 0; i < len; i++) {
-            binary += String.fromCharCode(wavBytes[i]);
-          }
-          const base64Wav = window.btoa(binary);
+          const base64Wav = uint8ArrayToBase64(wavBytes);
           const rawRes = await invoke<string>('proxy_post_local_asr', {
             endpoint: this.options.endpoint,
             wavBase64: base64Wav,
@@ -379,7 +389,7 @@ export class LocalAsrClient {
         const normalizedEndpoint = normalizeOpenAiAsrEndpoint(options.endpoint);
 
         // 在 Tauri 桌面环境下，优先调用原生 Socket/HTTP 探针，100% 杜绝 WebKit 浏览器的 CORS 限制与 Load failed 拦截
-        const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+        const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
         if (isTauri) {
           try {
             const { invoke } = await import('@tauri-apps/api/core');

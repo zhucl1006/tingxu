@@ -264,6 +264,13 @@ pub async fn proxy_post_asr_audio(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn test_probe_real_docker_whisper() {
+        let res = probe_local_asr_http_endpoint("http://127.0.0.1:8009/v1/audio/transcriptions", Some("small"), None).await;
+        println!("Rust 端点实测探测结果: success={}, message={}, latency={}", res.success, res.message, res.latency_ms);
+        assert!(res.success, "应能成功连接本地 Docker whisper 端点: {}", res.message);
+    }
+
     #[test]
     fn test_inspect_nonexistent_model() {
         let status = inspect_local_asr_model("nonexistent-test-model-xyz");

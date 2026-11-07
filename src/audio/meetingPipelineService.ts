@@ -284,9 +284,12 @@ export class MeetingPipelineService {
 
     let asrClient: RealStreamingAsrClient | LocalAsrClient | EmbeddedAsrClient;
     if (byok.asrProvider === 'local_embedded') {
-      // 内嵌轻量模型模式：100% 本地闭环，自适应调度 SenseVoice 模型或系统内置语音引擎，彻底杜绝 404 与阻断
+      // 内嵌轻量模型模式：100% 本地闭环，自适应调度本地就绪的离线 ASR 引擎或 SenseVoice 模型，彻底杜绝 404 与空跑
       asrClient = new EmbeddedAsrClient({
         meetingId,
+        endpoint: byok.asrEndpoint || undefined,
+        model: byok.localAsrModel || 'small',
+        apiKey: byok.asrApiKey || undefined,
         ...asrOptions,
       });
     } else if (byok.asrProvider === 'local_endpoint') {

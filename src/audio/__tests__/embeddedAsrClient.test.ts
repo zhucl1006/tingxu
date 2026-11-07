@@ -77,6 +77,71 @@ describe('EmbeddedAsrClient - 内嵌轻量 ASR 引擎客户端 (TDD)', () => {
     expect(res).toBeDefined();
   });
 
+  it('sendPcmChunk 能够累积音频数据并在 flush 时触发转写生成逐字稿 (TDD)', async () => {
+    const finalSentences: any[] = [];
+    const transcriptEvents: any[] = [];
+
+    // Mock fetch 返回 OpenAI 兼容格式
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      text: async () => JSON.stringify({ text: '今天我们开会讨论听序架构' }),
+    } as any);
+
+    try {
+      const client = new EmbeddedAsrClient({
+        endpoint: 'http://127.0.0.1:8009/v1/audio/transcriptions',
+        onFinalSentence: (s) => finalSentences.push(s),
+        onTranscriptEvent: (ev) => transcriptEvents.push(ev),
+      });
+
+      await client.connect();
+
+      // 发送 0.5 秒 16kHz 16-bit 单声道音频 (16000 字节)
+      const mockPcm = new Uint8Array(16000);
+      client.sendPcmChunk(mockPcm);
+
+      expect(client.getBufferedBytes()).toBe(16000);
+
+      // 手动执行 flush 排空转写
+      await client.flush();
+
+      expect(client.getBufferedBytes()).toBe(0);
+      expect(finalSentences.length).toBe(1);
+      expect(finalSentences[0].text).toBe('今天我们开会讨论听序架构');
+      expect(transcriptEvents.length).toBeGreaterThanOrEqual(1);
+      expect(transcriptEvents[0].type).toBe('FINAL');
+      expect(transcriptEvents[0].text).toBe('今天我们开会讨论听序架构');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
+  it('自动端点探测：自动发现 8009/8000 候选端点并绑定就绪引擎 (TDD)', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('8009')) {
+        return Promise.resolve({
+          ok: true,
+          text: async () => JSON.stringify({ text: 'you' }),
+        } as any);
+      }
+      return Promise.reject(new Error('Connection refused'));
+    });
+
+    try {
+      const client = new EmbeddedAsrClient({
+        endpoint: '', // 未显式配置，依赖自动发现
+      });
+
+      await client.connect();
+      expect(client.isConnected()).toBe(true);
+      expect(client.getActiveEndpoint()).toBe('http://127.0.0.1:8009/v1/audio/transcriptions');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('调用 disconnect() 能够优雅退出，状态流转为 DISCONNECTED', async () => {
     const client = new EmbeddedAsrClient();
     await client.connect();
