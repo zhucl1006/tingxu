@@ -1,6 +1,6 @@
 [package]
 name = "tingxu-desktop"
-version = "0.3.6"
+version = "0.3.7"
 description = "听序 — AI 实时会议记录与智能纪要桌面助手"
 authors = ["Tingxu Team"]
 edition = "2021"

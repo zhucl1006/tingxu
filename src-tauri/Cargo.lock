@@ -3502,7 +3502,7 @@ dependencies = [
 
 [[package]]
 name = "tingxu-desktop"
-version = "0.3.6"
+version = "0.3.7"
 dependencies = [
  "async-trait",
  "base64 0.21.7",
