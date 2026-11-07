@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LocalAsrClient, createWavFromPcm16 } from '../localAsrClient';
+import { LocalAsrClient, createWavFromPcm16, normalizeOpenAiAsrEndpoint } from '../localAsrClient';
 import type { AsrTranscriptEvent } from '../realStreamingAsrClient';
 
 describe('LocalAsrClient 本地离线 ASR 客户端 (Plan 027 T02 TDD)', () => {
@@ -148,5 +148,12 @@ describe('LocalAsrClient 本地离线 ASR 客户端 (Plan 027 T02 TDD)', () => {
 
     expect(res.success).toBe(false);
     expect(res.message).toContain('连接失败');
+  });
+
+  it('normalizeOpenAiAsrEndpoint 应正确自动规整缺失的 /v1/audio/transcriptions 路径，杜绝 404', () => {
+    expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
+    expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
+    expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/v1')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
+    expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/v1/audio/transcriptions')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
   });
 });

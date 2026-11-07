@@ -113,4 +113,39 @@ describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
       expect(statusText.textContent).toContain('38ms');
     });
   });
+
+  it('本地独立端点应渲染 Faster-Whisper 快速启动指引卡片，并支持一键复制 Docker 与 Pip 命令', async () => {
+    const writeTextMock = vi.fn().mockResolvedValue(undefined);
+    Object.assign(navigator, {
+      clipboard: {
+        writeText: writeTextMock,
+      },
+    });
+
+    render(<SettingsView />);
+
+    // 切换至本地独立端点
+    fireEvent.click(screen.getByTestId('settings-byok-btn-asr-provider-local-endpoint'));
+
+    const guideCard = screen.getByTestId('settings-byok-card-asr-guide');
+    expect(guideCard).toBeInTheDocument();
+    expect(guideCard.textContent).toContain('docker run -d');
+    expect(guideCard.textContent).toContain('pip install faster-whisper-server');
+
+    // 复制 Docker 命令
+    const copyDockerBtn = screen.getByTestId('settings-byok-btn-copy-docker-cmd');
+    fireEvent.click(copyDockerBtn);
+    expect(writeTextMock).toHaveBeenCalledWith(
+      expect.stringContaining('docker run -d --name whisper-asr')
+    );
+    expect(copyDockerBtn.textContent).toContain('已复制');
+
+    // 复制 Pip 命令
+    const copyPipBtn = screen.getByTestId('settings-byok-btn-copy-pip-cmd');
+    fireEvent.click(copyPipBtn);
+    expect(writeTextMock).toHaveBeenCalledWith(
+      expect.stringContaining('pip install faster-whisper-server')
+    );
+    expect(copyPipBtn.textContent).toContain('已复制');
+  });
 });

@@ -47,6 +47,18 @@ function writeString(view: DataView, offset: number, string: string): void {
   }
 }
 
+/**
+ * 规范化 OpenAI 兼容语音识别端点
+ * 允许用户直接输入 http://127.0.0.1:8000，自动补齐标准 /v1/audio/transcriptions 路径，杜绝 404
+ */
+export function normalizeOpenAiAsrEndpoint(rawEndpoint: string): string {
+  const trimmed = (rawEndpoint || '').trim().replace(/\/+$/, '');
+  if (!trimmed) return 'http://127.0.0.1:8000/v1/audio/transcriptions';
+  if (trimmed.endsWith('/audio/transcriptions')) return trimmed;
+  if (trimmed.endsWith('/v1')) return `${trimmed}/audio/transcriptions`;
+  return `${trimmed}/v1/audio/transcriptions`;
+}
+
 export interface LocalAsrClientOptions {
   protocol: LocalAsrProtocol;
   endpoint: string;
@@ -71,7 +83,11 @@ export class LocalAsrClient {
   private autoFlushTimer: ReturnType<typeof setInterval> | null = null;
   private lastProcessedTimeMs = 0;
 
-  constructor(private options: LocalAsrClientOptions) {}
+  constructor(private options: LocalAsrClientOptions) {
+    if (this.options.protocol === 'openai_http') {
+      this.options.endpoint = normalizeOpenAiAsrEndpoint(this.options.endpoint);
+    }
+  }
 
   public async start(): Promise<void> {
     this.isRunning = true;
@@ -330,6 +346,7 @@ export class LocalAsrClient {
     const startTime = performance.now();
     try {
       if (options.protocol === 'openai_http') {
+        const normalizedEndpoint = normalizeOpenAiAsrEndpoint(options.endpoint);
         // 构造极小的 0.1s 静音音频进行真实接口握手测试
         const silentPcm = new Uint8Array(3200); // 0.1s at 16kHz 16-bit
         const wavBytes = createWavFromPcm16(silentPcm, 16000, 1);
@@ -347,7 +364,7 @@ export class LocalAsrClient {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), 4000);
 
-        const res = await fetch(options.endpoint, {
+        const res = await fetch(normalizedEndpoint, {
           method: 'POST',
           headers,
           body: formData,

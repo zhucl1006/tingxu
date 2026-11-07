@@ -280,22 +280,35 @@ export class MeetingPipelineService {
     };
 
     const byok = store.byokSettings;
-    const isLocalAsr = byok.asrProvider === 'local_endpoint' || byok.asrProvider === 'local_embedded';
 
-    const asrClient: RealStreamingAsrClient | LocalAsrClient = isLocalAsr
-      ? new LocalAsrClient({
-          protocol: byok.localAsrProtocol || 'openai_http',
-          endpoint: byok.asrEndpoint || 'http://127.0.0.1:8000/v1/audio/transcriptions',
-          model: byok.localAsrModel || 'whisper-1',
-          apiKey: byok.asrApiKey || undefined,
-          meetingId,
-          ...asrOptions,
-        })
-      : new RealStreamingAsrClient({
-          wsUrl: streamingAsrUrl(store.gatewayUrl),
-          meetingId,
-          ...asrOptions,
-        });
+    let asrClient: RealStreamingAsrClient | LocalAsrClient;
+    if (byok.asrProvider === 'local_embedded') {
+      // 内嵌原生模型模式：目前模型文件需按需下载，避免盲目向 8000 端口发包触发 404
+      asrClient = new LocalAsrClient({
+        protocol: 'openai_http',
+        endpoint: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+        meetingId,
+        ...asrOptions,
+      });
+      asrClient.connect = async () => {
+        throw new Error('内嵌 SenseVoice 原生模型尚未下载，请在「设置」中切换为「本地独立端点 (Faster-Whisper)」或「阿里云百炼」');
+      };
+    } else if (byok.asrProvider === 'local_endpoint') {
+      asrClient = new LocalAsrClient({
+        protocol: byok.localAsrProtocol || 'openai_http',
+        endpoint: byok.asrEndpoint || 'http://127.0.0.1:8000/v1/audio/transcriptions',
+        model: byok.localAsrModel || 'whisper-1',
+        apiKey: byok.asrApiKey || undefined,
+        meetingId,
+        ...asrOptions,
+      });
+    } else {
+      asrClient = new RealStreamingAsrClient({
+        wsUrl: streamingAsrUrl(store.gatewayUrl),
+        meetingId,
+        ...asrOptions,
+      });
+    }
 
     this.asrClient = asrClient;
 

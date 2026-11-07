@@ -49,6 +49,7 @@ export const SettingsView: React.FC = () => {
   const [llmTestStatus, setLlmTestStatus] = useState<string | null>(null);
   const [testingAsr, setTestingAsr] = useState(false);
   const [asrTestStatus, setAsrTestStatus] = useState<string | null>(null);
+  const [copiedAsrCmd, setCopiedAsrCmd] = useState<'docker' | 'pip' | null>(null);
   const [showKey, setShowKey] = useState(false);
 
   const handleTestLlm = async () => {
@@ -91,7 +92,22 @@ export const SettingsView: React.FC = () => {
           setAsrTestStatus(`× ${res.message}`);
         }
       } else {
-        setAsrTestStatus('✓ 内嵌轻量模型（SenseVoice-Small）已就绪，纯本地断网可用');
+        // 内嵌轻量模型真实检测
+        let isReady = false;
+        try {
+          const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+          if (isTauri) {
+            const { invoke } = await import('@tauri-apps/api/core');
+            const status: any = await invoke('check_local_asr_model', { modelId: 'sensevoice-small-int8' });
+            isReady = Boolean(status?.exists && status?.isReady);
+          }
+        } catch {}
+
+        if (isReady) {
+          setAsrTestStatus('✓ 内嵌轻量模型（SenseVoice-Small）已下载就绪，纯本地断网可用');
+        } else {
+          setAsrTestStatus('ℹ️ 本机未检测到 SenseVoice 模型权重（~/.tingxu/models/）。当前推荐优先使用【本地独立端点】运行 Faster-Whisper，离线开会体验极佳！');
+        }
       }
     } catch (err) {
       setAsrTestStatus(`× 探测失败: ${(err as Error).message}`);
@@ -530,6 +546,78 @@ export const SettingsView: React.FC = () => {
                   {asrTestStatus}
                 </div>
               )}
+
+              {/* 本地 ASR 快速启动指引卡片 */}
+              <div
+                data-testid="settings-byok-card-asr-guide"
+                className="mt-3 p-3.5 rounded-lg bg-panel/70 border border-border-subtle text-xs space-y-2.5"
+              >
+                <div className="flex items-center justify-between text-text-primary font-semibold">
+                  <div className="flex items-center gap-1.5">
+                    <span>💡</span>
+                    <span>本机尚未安装 Faster-Whisper？在终端一键启动服务：</span>
+                  </div>
+                  <span className="text-[10px] text-text-tertiary">100% 本地运行 · 0 算力费用</span>
+                </div>
+
+                <div className="space-y-2 text-[11px]">
+                  {/* 方式 A: Docker 启动 */}
+                  <div className="p-2 rounded bg-subtle border border-border-subtle/80 flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-text-primary font-medium mb-1">
+                        <span className="px-1.5 py-0.2 rounded bg-brand-blue/15 text-brand-blue text-[10px] font-bold">方式 A · 推荐</span>
+                        <span>Docker 一行命令启动（自动下载模型并映射 8000 端口）</span>
+                      </div>
+                      <code className="block p-1.5 rounded bg-canvas text-brand-blue font-mono text-[10px] select-all truncate">
+                        docker run -d --name whisper-asr -p 8000:8000 fedirz/faster-whisper-server:latest-cpu
+                      </code>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="settings-byok-btn-copy-docker-cmd"
+                      onClick={() => {
+                        const cmd = 'docker run -d --name whisper-asr -p 8000:8000 fedirz/faster-whisper-server:latest-cpu';
+                        if (navigator?.clipboard?.writeText) navigator.clipboard.writeText(cmd).catch(() => {});
+                        setCopiedAsrCmd('docker');
+                        setTimeout(() => setCopiedAsrCmd(null), 2000);
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-panel border border-border-subtle hover:bg-hover text-text-primary text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 shadow-2xs"
+                    >
+                      {copiedAsrCmd === 'docker' ? '✓ 已复制' : '📋 复制 Docker 命令'}
+                    </button>
+                  </div>
+
+                  {/* 方式 B: Python pip 启动 */}
+                  <div className="p-2 rounded bg-subtle border border-border-subtle/80 flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 text-text-primary font-medium mb-1">
+                        <span className="px-1.5 py-0.2 rounded bg-panel text-text-secondary text-[10px] font-bold border border-border-subtle">方式 B</span>
+                        <span>Python pip 直接安装与启动</span>
+                      </div>
+                      <code className="block p-1.5 rounded bg-canvas text-brand-blue font-mono text-[10px] select-all truncate">
+                        pip install faster-whisper-server && faster-whisper-server --host 127.0.0.1 --port 8000
+                      </code>
+                    </div>
+                    <button
+                      type="button"
+                      data-testid="settings-byok-btn-copy-pip-cmd"
+                      onClick={() => {
+                        const cmd = 'pip install faster-whisper-server && faster-whisper-server --host 127.0.0.1 --port 8000';
+                        if (navigator?.clipboard?.writeText) navigator.clipboard.writeText(cmd).catch(() => {});
+                        setCopiedAsrCmd('pip');
+                        setTimeout(() => setCopiedAsrCmd(null), 2000);
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-panel border border-border-subtle hover:bg-hover text-text-primary text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 shadow-2xs"
+                    >
+                      {copiedAsrCmd === 'pip' ? '✓ 已复制' : '📋 复制 Pip 命令'}
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] text-text-tertiary">
+                    📌 提示：启动后，点击上方「Faster-Whisper (HTTP)」预设按钮，再点击「⚡ 测试本地 ASR 连通性」即可开始离线开会。
+                  </p>
+                </div>
+              </div>
             </div>
           )}
 
@@ -542,12 +630,12 @@ export const SettingsView: React.FC = () => {
                   <div>
                     <div className="text-xs font-semibold text-text-primary flex items-center gap-2">
                       <span>阿里开源 SenseVoice-Small 极速语音大模型</span>
-                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-status-success/15 text-status-success font-medium border border-status-success/30">
-                        纯本地运行 · 零依赖
+                      <span className="px-1.5 py-0.2 rounded text-[10px] bg-status-warning-bg text-status-warning font-medium border border-status-warning-border">
+                        原生推理开发筹备中
                       </span>
                     </div>
                     <p className="text-[11px] text-text-secondary mt-0.5">
-                      采用 Rust 嵌入式 ONNX 运行时，支持中文普通话、粤语、英语高精度秒级识别，完全离线断网可用
+                      计划采用 Rust 嵌入式 ONNX 运行时 (~/.tingxu/models/)。目前强烈推荐优先使用上方【本地独立端点 (Faster-Whisper)】直接离线开会！
                     </p>
                   </div>
                 </div>
@@ -559,7 +647,7 @@ export const SettingsView: React.FC = () => {
                   disabled={testingAsr}
                   className="px-3 py-1.5 rounded-lg bg-subtle border border-border-subtle text-xs font-semibold text-text-primary hover:bg-hover transition-colors"
                 >
-                  {testingAsr ? '检查中...' : '检查就绪状态'}
+                  {testingAsr ? '检查中...' : '检查模型状态'}
                 </button>
               </div>
 
@@ -569,7 +657,7 @@ export const SettingsView: React.FC = () => {
                   className={`text-xs p-2 rounded ${
                     asrTestStatus.startsWith('✓')
                       ? 'bg-status-success-bg text-status-success'
-                      : 'bg-status-danger/10 text-status-danger'
+                      : 'bg-status-warning-bg text-status-warning border border-status-warning-border'
                   }`}
                 >
                   {asrTestStatus}
