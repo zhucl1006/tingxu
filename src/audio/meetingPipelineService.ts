@@ -12,6 +12,7 @@ import { RealAudioCapture } from './realAudioCapture';
 import { RealStreamingAsrClient, streamingAsrUrl } from './realStreamingAsrClient';
 import { LocalAsrClient } from './localAsrClient';
 import { EmbeddedAsrClient } from './embeddedAsrClient';
+import { LlmTranscriptCorrector } from './llmTranscriptCorrector';
 import { TranscriptEventState } from './transcriptEventState';
 import { InterimTextStabilizer } from './interimTextStabilizer';
 import { SentenceAudioBuffer } from './sentenceAudioBuffer';
@@ -163,6 +164,16 @@ export class MeetingPipelineService {
 
         // 正文立即落稿到全局 Store
         useMeetingStore.getState().addTranscriptSegment(newSeg);
+
+        // 方案 4：会话级轻量 LLM 实时语法与术语异步纠偏 (Plan 028)
+        if (useMeetingStore.getState().byokSettings.enableLlmCorrection) {
+          const corrector = new LlmTranscriptCorrector((segId, correctedText, rawText) => {
+            if (isCurrent()) {
+              useMeetingStore.getState().updateTranscriptCorrection(segId, correctedText, rawText);
+            }
+          });
+          void corrector.correctTranscript(newSeg.id, newSeg.text, useMeetingStore.getState().byokSettings);
+        }
 
         // 推入滑动窗口并按需提炼洞察（遵循 Plan 026 控频策略，仅在 periodic 模式下自动触发大模型调用）
         const { liveInsightSettings } = useMeetingStore.getState();

@@ -12,6 +12,7 @@
 
 import type { AsrTranscriptEvent, FinalSentence } from './realStreamingAsrClient';
 import { createWavFromPcm16, normalizeOpenAiAsrEndpoint } from './localAsrClient';
+import { SmartVadBuffer } from './smartVadBuffer';
 
 export type AsrClientState = 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'ERROR';
 
@@ -62,6 +63,8 @@ export class EmbeddedAsrClient {
   private autoFlushTimer: ReturnType<typeof setInterval> | null = null;
   private lastProcessedTimeMs = 0;
   private isProcessing = false;
+  private vadBuffer: SmartVadBuffer | null = null;
+  private contextPrompt = '';
 
   constructor(options: EmbeddedAsrClientOptions = {}) {
     this.options = {
@@ -101,6 +104,14 @@ export class EmbeddedAsrClient {
 
   public getActiveEndpoint(): string {
     return this.activeEndpoint;
+  }
+
+  public setContextPrompt(prompt: string): void {
+    this.contextPrompt = prompt;
+  }
+
+  public getContextPrompt(): string {
+    return this.contextPrompt;
   }
 
   public onTranscriptEvent(callback: (event: AsrTranscriptEvent) => void): void {
@@ -193,8 +204,20 @@ export class EmbeddedAsrClient {
       this.isLocalModelReady = false;
     }
 
-    // 3. 启动定时音频切片提交窗口（默认 2000ms）
-    const flushIntervalMs = Math.max(1500, this.options.chunkDurationMs || 2000);
+    // 3. 挂载智能 VAD 自然停顿断句器
+    this.vadBuffer = new SmartVadBuffer({
+      silenceDurationMs: 500,
+      minSpeechDurationMs: 1000,
+      maxDurationMs: 8000,
+      onSegmentReady: (pcm) => {
+        this.flushSegment(pcm).catch((err) => {
+          console.warn('[EmbeddedAsrClient] VAD 触发分块转写异常:', err);
+        });
+      },
+    });
+
+    // 4. 启动定时音频切片兜底提交窗口（默认 2500ms）
+    const flushIntervalMs = Math.max(2000, this.options.chunkDurationMs || 2500);
     this.autoFlushTimer = setInterval(() => {
       if (this.bufferedBytes >= 16000) {
         // 至少 0.5 秒音频（16000 字节）才触发切片转写
@@ -239,6 +262,10 @@ export class EmbeddedAsrClient {
 
     this.pcmChunks.push(u8);
     this.bufferedBytes += u8.length;
+
+    if (this.vadBuffer) {
+      this.vadBuffer.appendChunk(u8);
+    }
 
     // 当缓冲区达到 2 秒语音阈值（64,000 字节），主动触发切片转写
     const maxThresholdBytes = Math.round((16000 * 2 * (this.options.chunkDurationMs || 2000)) / 1000);
@@ -294,6 +321,7 @@ export class EmbeddedAsrClient {
             wavBase64,
             model: this.options.model || 'small',
             apiKey: this.options.apiKey,
+            prompt: this.contextPrompt || undefined,
           });
 
           try {
@@ -314,6 +342,9 @@ export class EmbeddedAsrClient {
         formData.append('file', wavBlob, 'audio.wav');
         formData.append('model', this.options.model || 'small');
         formData.append('language', 'zh');
+        if (this.contextPrompt) {
+          formData.append('prompt', this.contextPrompt);
+        }
 
         const headers: Record<string, string> = {};
         if (this.options.apiKey) {
@@ -341,6 +372,10 @@ export class EmbeddedAsrClient {
       const cleaned = recognizedText.replace(/^[.,?!。，？！\s]+|[.,?!。，？！\s]+$/g, '').trim();
 
       if (cleaned) {
+        // 更新前文记忆 prompt (保留最新 150 字符)
+        const combined = (this.contextPrompt ? `${this.contextPrompt} ` : '') + cleaned;
+        this.contextPrompt = combined.slice(-150);
+
         const utteranceId = `embedded_utt_${++this.utteranceIndex}`;
         const now = Date.now();
         const sentence: FinalSentence = {
@@ -375,9 +410,122 @@ export class EmbeddedAsrClient {
   }
 
   /**
+   * 由 VAD 触发的整句自然切片转写
+   */
+  public async flushSegment(pcmBytes: Uint8Array): Promise<void> {
+    if (pcmBytes.length === 0 || this.isProcessing) return;
+    this.pcmChunks = [];
+    this.bufferedBytes = 0;
+
+    const durationMs = Math.round((pcmBytes.length / 32000) * 1000);
+    const wavBytes = createWavFromPcm16(pcmBytes, 16000, 1);
+
+    try {
+      this.isProcessing = true;
+      let recognizedText = '';
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      const targetEndpoint = this.activeEndpoint || 'http://127.0.0.1:8009/v1/audio/transcriptions';
+
+      if (isTauri) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const wavBase64 = uint8ArrayToBase64(wavBytes);
+          const rawRes = await invoke<string>('proxy_post_local_asr', {
+            endpoint: targetEndpoint,
+            wavBase64,
+            model: this.options.model || 'small',
+            apiKey: this.options.apiKey,
+            prompt: this.contextPrompt || undefined,
+          });
+          try {
+            const data = JSON.parse(rawRes);
+            recognizedText = (data.text || '').trim();
+          } catch {
+            recognizedText = (rawRes || '').trim();
+          }
+        } catch {}
+      }
+
+      if (!recognizedText && typeof fetch !== 'undefined') {
+        const formData = new FormData();
+        const wavBlob = new Blob([wavBytes.buffer as ArrayBuffer], { type: 'audio/wav' });
+        formData.append('file', wavBlob, 'audio.wav');
+        formData.append('model', this.options.model || 'small');
+        formData.append('language', 'zh');
+        if (this.contextPrompt) {
+          formData.append('prompt', this.contextPrompt);
+        }
+
+        const headers: Record<string, string> = {};
+        if (this.options.apiKey) {
+          headers['Authorization'] = `Bearer ${this.options.apiKey}`;
+        }
+
+        const res = await fetch(targetEndpoint, {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        if (res.ok) {
+          const dataText = await res.text();
+          try {
+            const json = JSON.parse(dataText);
+            recognizedText = (json.text || '').trim();
+          } catch {
+            recognizedText = dataText.trim();
+          }
+        }
+      }
+
+      const cleaned = recognizedText.replace(/^[.,?!。，？！\s]+|[.,?!。，？！\s]+$/g, '').trim();
+      if (cleaned) {
+        const combined = (this.contextPrompt ? `${this.contextPrompt} ` : '') + cleaned;
+        this.contextPrompt = combined.slice(-150);
+
+        const utteranceId = `embedded_utt_${++this.utteranceIndex}`;
+        const now = Date.now();
+        const sentence: FinalSentence = {
+          text: cleaned,
+          timestamp: new Date(now).toISOString(),
+          beginTimeMs: this.lastProcessedTimeMs,
+          endTimeMs: this.lastProcessedTimeMs + durationMs,
+        };
+        this.lastProcessedTimeMs += durationMs;
+
+        const transcriptEvent: AsrTranscriptEvent = {
+          type: 'FINAL',
+          taskId: this.taskId,
+          utteranceId,
+          revision: 1,
+          source: 'mic',
+          beginTimeMs: sentence.beginTimeMs ?? null,
+          endTimeMs: sentence.endTimeMs ?? null,
+          text: cleaned,
+          sentence,
+        };
+
+        this.options.onInterimText?.(cleaned);
+        this.options.onFinalSentence?.(sentence);
+        this.dispatchTranscriptEvent(transcriptEvent);
+      }
+    } catch (err: any) {
+      console.warn('[EmbeddedAsrClient] VAD 切片转写处理异常:', err?.message || err);
+    } finally {
+      this.isProcessing = false;
+    }
+  }
+
+  /**
    * 会议结束时的排空处理
    */
   public async finish(): Promise<any> {
+    if (this.vadBuffer) {
+      const remaining = this.vadBuffer.flush();
+      if (remaining && remaining.length > 0) {
+        await this.flushSegment(remaining);
+      }
+    }
     if (this.bufferedBytes > 0) {
       await this.flush();
     }
@@ -391,6 +539,13 @@ export class EmbeddedAsrClient {
     if (this.autoFlushTimer) {
       clearInterval(this.autoFlushTimer);
       this.autoFlushTimer = null;
+    }
+    if (this.vadBuffer) {
+      const remaining = this.vadBuffer.flush();
+      if (remaining && remaining.length > 0) {
+        await this.flushSegment(remaining);
+      }
+      this.vadBuffer = null;
     }
     if (this.bufferedBytes > 0) {
       await this.flush();

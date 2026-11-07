@@ -142,6 +142,35 @@ describe('EmbeddedAsrClient - 内嵌轻量 ASR 引擎客户端 (TDD)', () => {
     }
   });
 
+  it('支持设置并维护前文 prompt 上下文记忆以提升转写准确率 (T02)', async () => {
+    let capturedPrompt: string | null = null;
+    const originalFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation((_url: string, init: any) => {
+      capturedPrompt = init?.body?.get?.('prompt') || null;
+      return Promise.resolve({
+        ok: true,
+        text: async () => JSON.stringify({ text: '我们继续听序讨论' }),
+      } as any);
+    });
+
+    try {
+      const client = new EmbeddedAsrClient({
+        endpoint: 'http://127.0.0.1:8009/v1/audio/transcriptions',
+      });
+      client.setContextPrompt('前文主题');
+      await client.connect();
+
+      const pcm = new Uint8Array(16000);
+      client.sendPcmChunk(pcm);
+      await client.flush();
+
+      expect(capturedPrompt).toBe('前文主题');
+      expect(client.getContextPrompt()).toContain('我们继续听序讨论');
+    } finally {
+      global.fetch = originalFetch;
+    }
+  });
+
   it('调用 disconnect() 能够优雅退出，状态流转为 DISCONNECTED', async () => {
     const client = new EmbeddedAsrClient();
     await client.connect();

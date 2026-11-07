@@ -168,4 +168,14 @@ describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
       expect(statusEl.textContent).toContain('就绪');
     });
   });
+
+  it('支持切换 AI 实时同音字/语法智能纠偏配置开关 (Plan 028 T05)', () => {
+    render(<SettingsView />);
+    const checkbox = screen.getByTestId('settings-byok-checkbox-enable-llm-correction') as HTMLInputElement;
+    expect(checkbox).toBeInTheDocument();
+    expect(checkbox.checked).toBe(true);
+
+    fireEvent.click(checkbox);
+    expect(checkbox.checked).toBe(false);
+  });
 });

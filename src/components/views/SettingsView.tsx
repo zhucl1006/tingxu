@@ -760,6 +760,32 @@ export const SettingsView: React.FC = () => {
               </div>
             </div>
           )}
+
+          {/* 4. 智能语音断句与 AI 实时纠偏配置 (Plan 028) */}
+          <div className="pt-3 border-t border-border-subtle/60 flex items-center justify-between flex-wrap gap-3">
+            <div>
+              <div className="text-xs font-semibold text-text-primary flex items-center gap-2">
+                <span>✨ AI 实时同音字与语法纠偏</span>
+                <span className="px-1.5 py-0.2 rounded text-[10px] bg-brand-blue/10 text-brand-blue font-medium">
+                  智能 VAD 自然断句 + Prompt 上下文
+                </span>
+              </div>
+              <p className="text-[11px] text-text-secondary mt-0.5">
+                结合人声停顿检测整句自然切片，并在出字后由大模型异步订正同音错别字与缺失标点，彻底告别十几个字机械切断！
+              </p>
+            </div>
+
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                data-testid="settings-byok-checkbox-enable-llm-correction"
+                checked={byokSettings.enableLlmCorrection ?? true}
+                onChange={(e) => updateByokSettings({ enableLlmCorrection: e.target.checked })}
+                className="sr-only peer"
+              />
+              <div className="w-9 h-5 bg-border-subtle peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-border-subtle after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-brand-blue" />
+            </label>
+          </div>
         </div>
       </div>
 

@@ -226,6 +226,7 @@ pub async fn proxy_post_asr_audio(
     wav_bytes: Vec<u8>,
     model: Option<&str>,
     api_key: Option<&str>,
+    prompt: Option<&str>,
 ) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
@@ -240,9 +241,15 @@ pub async fn proxy_post_asr_audio(
         .mime_str("audio/wav")
         .map_err(|e| e.to_string())?;
 
-    let form = reqwest::multipart::Form::new()
+    let mut form = reqwest::multipart::Form::new()
         .part("file", part)
         .text("model", target_model.to_string());
+
+    if let Some(p) = prompt {
+        if !p.trim().is_empty() {
+            form = form.text("prompt", p.trim().to_string());
+        }
+    }
 
     let mut req = client.post(endpoint).multipart(form);
     if let Some(key) = api_key {

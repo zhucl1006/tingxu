@@ -1240,6 +1240,20 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }));
   },
 
+  updateTranscriptCorrection: (id: string, correctedText: string, rawText?: string) => {
+    set(state => ({
+      transcripts: state.transcripts.map(segment => {
+        if (segment.id !== id) return segment;
+        return {
+          ...segment,
+          text: correctedText,
+          isCorrected: true,
+          rawText: segment.rawText || rawText || segment.text,
+        };
+      }),
+    }));
+  },
+
   addInsight: (insight) => {
     set((state) => ({
       insights: [

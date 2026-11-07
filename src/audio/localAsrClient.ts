@@ -5,6 +5,7 @@
 
 import type { LocalAsrProtocol } from '../types/meeting';
 import type { AsrTranscriptEvent, AsrFinishOutcome, FinalSentence } from './realStreamingAsrClient';
+import { SmartVadBuffer } from './smartVadBuffer';
 
 /**
  * 将 16-bit 线性 PCM 单声道音频数据添加标准 44 字节 WAV 头部
@@ -97,11 +98,21 @@ export class LocalAsrClient {
   private isRunning = false;
   private autoFlushTimer: ReturnType<typeof setInterval> | null = null;
   private lastProcessedTimeMs = 0;
+  private vadBuffer: SmartVadBuffer | null = null;
+  private contextPrompt = '';
 
   constructor(private options: LocalAsrClientOptions) {
     if (this.options.protocol === 'openai_http') {
       this.options.endpoint = normalizeOpenAiAsrEndpoint(this.options.endpoint);
     }
+  }
+
+  public setContextPrompt(prompt: string): void {
+    this.contextPrompt = prompt;
+  }
+
+  public getContextPrompt(): string {
+    return this.contextPrompt;
   }
 
   public async start(): Promise<void> {
@@ -111,11 +122,22 @@ export class LocalAsrClient {
     if (this.options.protocol === 'sherpa_ws') {
       await this.initWebSocket();
     } else {
-      // HTTP 协议：设置定时自动提交窗口
-      const intervalMs = Math.max(1500, this.options.chunkDurationMs || 2500);
+      // 启用智能 VAD 自然停顿断句缓冲区 (500ms 停顿切片，最大 8 秒强制保护)
+      this.vadBuffer = new SmartVadBuffer({
+        silenceDurationMs: 500,
+        minSpeechDurationMs: 1200,
+        maxDurationMs: 8000,
+        onSegmentReady: (pcm) => {
+          this.flushPcmSegment(pcm).catch((err) => {
+            console.warn('[LocalAsrClient] VAD 触发分块转写异常:', err);
+          });
+        },
+      });
+
+      // HTTP 协议保底定时器：防止纯底噪或 VAD 边界未触发时的兜底
+      const intervalMs = Math.max(3000, this.options.chunkDurationMs || 3000);
       this.autoFlushTimer = setInterval(() => {
-        if (this.bufferedBytes > 8000) {
-          // 至少 0.25 秒音频才触发
+        if (this.bufferedBytes > 16000) {
           this.flush().catch((err) => {
             console.warn('[LocalAsrClient] 自动分块提交失败:', err);
           });
@@ -164,7 +186,12 @@ export class LocalAsrClient {
         this.ws.send(pcmBytes.buffer.slice(pcmBytes.byteOffset, pcmBytes.byteOffset + pcmBytes.byteLength));
       }
     } else {
-      // 累积到内存缓冲区
+      // 接入智能 VAD 自然停顿断句
+      if (this.vadBuffer) {
+        this.vadBuffer.appendChunk(pcmBytes);
+      }
+
+      // 累积到内存缓冲区作为兜底
       this.pcmChunks.push(pcmBytes);
       this.bufferedBytes += pcmBytes.length;
 
@@ -217,6 +244,105 @@ export class LocalAsrClient {
     }
   }
 
+  /**
+   * 由 VAD 触发的整句自然切片转写
+   */
+  public async flushPcmSegment(pcmBytes: Uint8Array): Promise<void> {
+    if (pcmBytes.length === 0) return;
+    // 重置兜底缓冲计数，避免重复转写
+    this.pcmChunks = [];
+    this.bufferedBytes = 0;
+
+    const wavBytes = createWavFromPcm16(pcmBytes, 16000, 1);
+    const wavBlob = new Blob([wavBytes.buffer as ArrayBuffer], { type: 'audio/wav' });
+
+    const formData = new FormData();
+    formData.append('file', wavBlob, 'audio.wav');
+    formData.append('model', this.options.model || 'whisper-1');
+    formData.append('language', 'zh');
+    formData.append('response_format', 'json');
+    if (this.contextPrompt) {
+      formData.append('prompt', this.contextPrompt);
+    }
+
+    const headers: Record<string, string> = {};
+    if (this.options.apiKey) {
+      headers['Authorization'] = `Bearer ${this.options.apiKey}`;
+    }
+
+    const durationMs = Math.round((pcmBytes.length / 32000) * 1000);
+
+    try {
+      let text = '';
+      const isTauri = typeof window !== 'undefined' && ('__TAURI_INTERNALS__' in window || '__TAURI__' in window);
+      if (isTauri) {
+        try {
+          const { invoke } = await import('@tauri-apps/api/core');
+          const base64Wav = uint8ArrayToBase64(wavBytes);
+          const rawRes = await invoke<string>('proxy_post_local_asr', {
+            endpoint: this.options.endpoint,
+            wavBase64: base64Wav,
+            model: this.options.model || 'small',
+            apiKey: this.options.apiKey,
+            prompt: this.contextPrompt || undefined,
+          });
+          try {
+            const data = JSON.parse(rawRes);
+            text = (data.text || '').trim();
+          } catch {
+            text = (rawRes || '').trim();
+          }
+        } catch {}
+      }
+
+      if (!text) {
+        const res = await fetch(this.options.endpoint, {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+        if (res.ok) {
+          const data = await res.json();
+          text = (data.text || '').trim();
+        }
+      }
+
+      if (text) {
+        // 更新前文记忆 prompt (保留最新 150 字符)
+        const combined = (this.contextPrompt ? `${this.contextPrompt} ` : '') + text;
+        this.contextPrompt = combined.slice(-150);
+
+        const beginTimeMs = this.lastProcessedTimeMs;
+        const endTimeMs = beginTimeMs + durationMs;
+        this.lastProcessedTimeMs = endTimeMs;
+
+        const sentence: FinalSentence = {
+          text,
+          timestamp: new Date().toISOString(),
+          beginTimeMs,
+          endTimeMs,
+        };
+
+        const event: AsrTranscriptEvent = {
+          type: 'FINAL',
+          taskId: this.taskId,
+          utteranceId: `utt_${++this.utteranceIndex}`,
+          revision: 1,
+          source: 'mic',
+          beginTimeMs,
+          endTimeMs,
+          text,
+          sentence,
+        };
+
+        this.options.onTranscriptEvent?.(event);
+        this.options.onFinalSentence?.(sentence);
+      }
+    } catch (err) {
+      console.warn('[LocalAsrClient] VAD 切片识别处理异常:', err);
+    }
+  }
+
   public async flush(): Promise<void> {
     if (this.options.protocol !== 'openai_http' || this.bufferedBytes === 0) {
       return;
@@ -245,6 +371,9 @@ export class LocalAsrClient {
     formData.append('model', this.options.model || 'whisper-1');
     formData.append('language', 'zh');
     formData.append('response_format', 'json');
+    if (this.contextPrompt) {
+      formData.append('prompt', this.contextPrompt);
+    }
 
     const headers: Record<string, string> = {};
     if (this.options.apiKey) {
@@ -265,6 +394,7 @@ export class LocalAsrClient {
             wavBase64: base64Wav,
             model: this.options.model || 'small',
             apiKey: this.options.apiKey,
+            prompt: this.contextPrompt || undefined,
           });
           try {
             const data = JSON.parse(rawRes);
@@ -288,11 +418,25 @@ export class LocalAsrClient {
           throw new Error(`本地 ASR 端点响应异常: HTTP ${res.status}`);
         }
 
-        const data = await res.json();
+        let data: any = {};
+        try {
+          data = typeof res.json === 'function' ? await res.json() : JSON.parse(await res.text());
+        } catch {
+          const raw = typeof res.text === 'function' ? await res.text() : '';
+          try {
+            data = JSON.parse(raw);
+          } catch {
+            data = { text: raw };
+          }
+        }
         text = (data.text || '').trim();
       }
 
       if (text) {
+        // 更新前文记忆 prompt (保留最新 150 字符)
+        const combined = (this.contextPrompt ? `${this.contextPrompt} ` : '') + text;
+        this.contextPrompt = combined.slice(-150);
+
         const beginTimeMs = this.lastProcessedTimeMs;
         const endTimeMs = beginTimeMs + durationMs;
         this.lastProcessedTimeMs = endTimeMs;

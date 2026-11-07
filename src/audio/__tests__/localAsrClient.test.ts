@@ -165,6 +165,36 @@ describe('LocalAsrClient 本地离线 ASR 客户端 (Plan 027 T02 TDD)', () => {
     expect(res.message).toContain('Whisper 模型权重');
   });
 
+  it('HTTP 模式下转写请求应携带前文 prompt 上下文以提高同音字准确率 (T02)', async () => {
+    let capturedBody: FormData | null = null;
+    global.fetch = vi.fn().mockImplementation((_url: string, init: any) => {
+      capturedBody = init.body;
+      return Promise.resolve({
+        ok: true,
+        text: async () => JSON.stringify({ text: '听序是本地会议助手' }),
+      });
+    });
+
+    const client = new LocalAsrClient({
+      protocol: 'openai_http',
+      endpoint: 'http://127.0.0.1:8000/v1/audio/transcriptions',
+    });
+
+    client.setContextPrompt('上一句讨论的会议议题');
+    await client.start();
+
+    // 发送测试音频
+    const pcm = new Uint8Array(32000);
+    client.sendPcmChunk(pcm);
+    await client.flush();
+
+    expect(capturedBody).toBeDefined();
+    expect(capturedBody!.get('prompt')).toBe('上一句讨论的会议议题');
+    expect(client.getContextPrompt()).toContain('听序是本地会议助手');
+
+    await client.stop();
+  });
+
   it('normalizeOpenAiAsrEndpoint 应正确自动规整缺失的 /v1/audio/transcriptions 路径，杜绝 404', () => {
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');

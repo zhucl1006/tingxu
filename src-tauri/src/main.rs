@@ -127,6 +127,7 @@ async fn proxy_post_local_asr(
     wav_base64: String,
     model: Option<String>,
     api_key: Option<String>,
+    prompt: Option<String>,
 ) -> Result<String, AppError> {
     use base64::Engine;
     let bytes = base64::engine::general_purpose::STANDARD
@@ -141,6 +142,7 @@ async fn proxy_post_local_asr(
         bytes,
         model.as_deref(),
         api_key.as_deref(),
+        prompt.as_deref(),
     ).await.map_err(|e| AppError {
         code: "LOCAL_ASR_REQUEST_ERROR".into(),
         message: e,

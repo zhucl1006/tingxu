@@ -409,6 +409,15 @@ const TranscriptRow = memo<TranscriptRowProps>(({
 
       <p className="text-xs text-text-primary leading-relaxed">
         {segment.text}
+        {segment.isCorrected && (
+          <span
+            data-testid={`workbench-page-transcript-panel-badge-corrected-${segment.id}`}
+            title={`✨ AI 实时纠偏前原文: "${segment.rawText || ''}"`}
+            className="ml-1.5 inline-flex items-center text-[10px] px-1 py-0.2 rounded bg-brand-blue/10 text-brand-blue border border-brand-blue/20 font-medium select-none cursor-help"
+          >
+            ✨ 润色
+          </span>
+        )}
       </p>
     </div>
   );

@@ -47,6 +47,8 @@ export interface TranscriptSegment {
   endTimeMs?: number;
   text: string;
   isStreaming?: boolean;
+  isCorrected?: boolean;
+  rawText?: string;
 }
 
 export interface SpeakerVoiceprintProfile {
@@ -261,6 +263,8 @@ export interface ByokSettings {
   asrEndpoint: string;
   localAsrProtocol?: LocalAsrProtocol;
   localAsrModel?: string;
+  enableLlmCorrection?: boolean;
+  llmEndpoint?: string;
 }
 
 export const DEFAULT_BYOK_SETTINGS: ByokSettings = {
@@ -274,6 +278,7 @@ export const DEFAULT_BYOK_SETTINGS: ByokSettings = {
   asrEndpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
   localAsrProtocol: 'openai_http',
   localAsrModel: 'whisper-1',
+  enableLlmCorrection: true,
 };
 
 // 实时洞察模式与控频配置 (026 算力降费)
@@ -491,6 +496,7 @@ export interface MeetingState {
   addTranscriptSegment: (segment: TranscriptSegment) => void;
   updateTranscriptSpeaker: (id: string, patch: Pick<TranscriptSegment, 'speaker'> & Partial<Pick<TranscriptSegment,
     'speakerId' | 'speakerStatus' | 'speakerConfidence' | 'speakerColorIndex' | 'matchedProfileId' | 'tentativeProfileId' | 'tentativeProfileName'>>) => void;
+  updateTranscriptCorrection: (id: string, correctedText: string, rawText?: string) => void;
   addInsight: (insight: Omit<InsightCard, 'isConfirmed' | 'isEdited'>) => void;
   applyInsightPatch: (patch: any) => void;
   confirmInsight: (id: string) => void;
