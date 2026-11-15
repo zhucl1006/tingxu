@@ -15,6 +15,7 @@ export interface RealAudioCaptureOptions {
   autoGainControl?: boolean;
   highpassFilter?: boolean;
   onAudioChunk?: (pcmChunk: ArrayBuffer) => void;
+  onTrackAudioChunk?: (pcmChunk: ArrayBuffer, source: 'mic' | 'system') => void;
   onRmsLevel?: (rms: number) => void;
   onDeviceEnded?: () => void;
   onDeviceChange?: () => void;
@@ -247,6 +248,7 @@ export class RealAudioCapture {
       autoGainControl: options?.autoGainControl,
       highpassFilter: options?.highpassFilter,
       onAudioChunk: options?.onAudioChunk || (() => {}),
+      onTrackAudioChunk: options?.onTrackAudioChunk,
       onRmsLevel: options?.onRmsLevel || (() => {}),
       onDeviceEnded: options?.onDeviceEnded || (() => {}),
       onDeviceChange: options?.onDeviceChange || (() => {}),
@@ -273,6 +275,7 @@ export class RealAudioCapture {
 
     // 转换为 16-bit 线性 PCM 并通过双轨时钟对齐混音器派发（防止时钟错位与数据率翻倍）
     const pcmBuffer = floatTo16BitPCM(resampledData);
+    this.options.onTrackAudioChunk?.(pcmBuffer, 'mic');
     const alignedBuffer = this.dualTrackMixer.mixWithMic(pcmBuffer);
     this.options.onAudioChunk(alignedBuffer);
   }
@@ -565,6 +568,9 @@ export class RealAudioCapture {
             if (rms > 0.01) {
               this.options.onRmsLevel(rms);
             }
+
+            // 独立派发系统内录纯声道给支持物理双轨的 ASR 引擎
+            this.options.onTrackAudioChunk?.(pcmBuffer, 'system');
 
             // 推入双轨时钟对齐混音器，在同一 16kHz 时钟节拍下与麦克风精准并轨输出（防止数据率翻倍与多人抢话时序撕裂）
             if (this.capturing) {

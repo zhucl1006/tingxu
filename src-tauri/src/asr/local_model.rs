@@ -127,7 +127,36 @@ pub struct LocalAsrProbeResult {
     pub response_text: Option<String>,
 }
 
-/// 在 Rust 原生层发起本地 ASR 端点测试，100% 免疫浏览器的 CORS 限制与 WebKit 的 Load failed 拦截
+/// 判定目标端点是否为 DeepSeek 全家桶独立 ASR 接口 (/v1/tools/asr)
+/// 该接口仅接收纯净的 `file` multipart 字段，不应注入 OpenAI Whisper 专属的 `model` 与 `prompt` 字段
+pub fn is_deepseek_tools_asr_endpoint(endpoint: &str, model: Option<&str>) -> bool {
+    let lower_ep = endpoint.trim().to_lowercase();
+    if lower_ep.contains("/tools/asr") {
+        return true;
+    }
+    if let Some(m) = model {
+        if m.trim().eq_ignore_ascii_case("deepseek-asr") {
+            return true;
+        }
+    }
+    false
+}
+
+fn format_reqwest_error(err: &reqwest::Error) -> String {
+    use std::error::Error;
+    let mut parts = vec![err.to_string()];
+    let mut current = err.source();
+    while let Some(src) = current {
+        let s = src.to_string();
+        if !s.is_empty() && !parts.iter().any(|existing| existing.contains(&s)) {
+            parts.push(s);
+        }
+        current = src.source();
+    }
+    parts.join(" -> ")
+}
+
+/// 在 Rust 原生层发起本地或云端 HTTP/HTTPS ASR 端点测试，100% 免疫浏览器的 CORS 限制与 WebKit 的 Load failed 拦截
 pub async fn probe_local_asr_http_endpoint(
     endpoint: &str,
     model: Option<&str>,
@@ -139,11 +168,12 @@ pub async fn probe_local_asr_http_endpoint(
         .build()
         .unwrap_or_default();
 
-    // 0.1s 16kHz 16-bit 单声道 PCM 静音数据构造有效 WAV
-    let silent_pcm = vec![0u8; 3200];
-    let mut wav_bytes = Vec::with_capacity(44 + 3200);
+    // 0.5s 16kHz 16-bit 单声道 PCM 静音数据构造有效 WAV (16,000 字节)
+    let pcm_len: u32 = 16000;
+    let silent_pcm = vec![0u8; pcm_len as usize];
+    let mut wav_bytes = Vec::with_capacity(44 + pcm_len as usize);
     wav_bytes.extend_from_slice(b"RIFF");
-    wav_bytes.extend_from_slice(&(36u32 + 3200u32).to_le_bytes());
+    wav_bytes.extend_from_slice(&(36u32 + pcm_len).to_le_bytes());
     wav_bytes.extend_from_slice(b"WAVEfmt ");
     wav_bytes.extend_from_slice(&16u32.to_le_bytes());
     wav_bytes.extend_from_slice(&1u16.to_le_bytes());
@@ -153,9 +183,10 @@ pub async fn probe_local_asr_http_endpoint(
     wav_bytes.extend_from_slice(&2u16.to_le_bytes());
     wav_bytes.extend_from_slice(&16u16.to_le_bytes());
     wav_bytes.extend_from_slice(b"data");
-    wav_bytes.extend_from_slice(&3200u32.to_le_bytes());
+    wav_bytes.extend_from_slice(&pcm_len.to_le_bytes());
     wav_bytes.extend_from_slice(&silent_pcm);
 
+    let is_ds_asr = is_deepseek_tools_asr_endpoint(endpoint, model);
     let model_name = model.unwrap_or("small");
     let target_model = if model_name.trim().is_empty() { "small" } else { model_name.trim() };
 
@@ -171,9 +202,13 @@ pub async fn probe_local_asr_http_endpoint(
         }
     };
 
-    let form = reqwest::multipart::Form::new()
-        .part("file", part)
-        .text("model", target_model.to_string());
+    let form = if is_ds_asr {
+        reqwest::multipart::Form::new().part("file", part)
+    } else {
+        reqwest::multipart::Form::new()
+            .part("file", part)
+            .text("model", target_model.to_string())
+    };
 
     let mut req = client.post(endpoint).multipart(form);
     if let Some(key) = api_key {
@@ -210,9 +245,13 @@ pub async fn probe_local_asr_http_endpoint(
                 success: false,
                 latency_ms,
                 message: if e.is_timeout() {
-                    "端点连接超时 (12s)：Faster-Whisper 可能正在加载模型权重，请稍后重试".into()
+                    if is_ds_asr {
+                        "DeepSeek 云端 ASR 连接超时 (12s)，请检查本机网络或代理设置后重试".into()
+                    } else {
+                        "端点连接超时 (12s)：Faster-Whisper 可能正在加载模型权重，请稍后重试".into()
+                    }
                 } else {
-                    format!("连接失败: {}", e)
+                    format!("连接失败: {}", format_reqwest_error(&e))
                 },
                 response_text: None,
             }
@@ -233,6 +272,7 @@ pub async fn proxy_post_asr_audio(
         .build()
         .map_err(|e| e.to_string())?;
 
+    let is_ds_asr = is_deepseek_tools_asr_endpoint(endpoint, model);
     let model_name = model.unwrap_or("small");
     let target_model = if model_name.trim().is_empty() { "small" } else { model_name.trim() };
 
@@ -241,13 +281,14 @@ pub async fn proxy_post_asr_audio(
         .mime_str("audio/wav")
         .map_err(|e| e.to_string())?;
 
-    let mut form = reqwest::multipart::Form::new()
-        .part("file", part)
-        .text("model", target_model.to_string());
+    let mut form = reqwest::multipart::Form::new().part("file", part);
 
-    if let Some(p) = prompt {
-        if !p.trim().is_empty() {
-            form = form.text("prompt", p.trim().to_string());
+    if !is_ds_asr {
+        form = form.text("model", target_model.to_string());
+        if let Some(p) = prompt {
+            if !p.trim().is_empty() {
+                form = form.text("prompt", p.trim().to_string());
+            }
         }
     }
 
@@ -258,10 +299,11 @@ pub async fn proxy_post_asr_audio(
         }
     }
 
-    let res = req.send().await.map_err(|e| format!("请求本地 ASR 失败: {}", e))?;
-    if !res.status().is_success() {
+    let res = req.send().await.map_err(|e| format!("请求 ASR 失败: {}", format_reqwest_error(&e)))?;
+    let status = res.status();
+    if !status.is_success() {
         let err_text = res.text().await.unwrap_or_default();
-        return Err(format!("ASR 服务返回异常: {}", err_text));
+        return Err(format!("ASR 服务返回异常 (HTTP {}): {}", status, err_text));
     }
 
     res.text().await.map_err(|e| format!("读取识别结果失败: {}", e))
@@ -270,12 +312,72 @@ pub async fn proxy_post_asr_audio(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn spawn_mock_asr_server(response_json: &'static str) -> (String, tokio::task::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind local mock port");
+        let addr = listener.local_addr().expect("local addr");
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept client");
+            let mut total_buf = Vec::with_capacity(32768);
+            let mut chunk = [0u8; 8192];
+            loop {
+                match tokio::time::timeout(std::time::Duration::from_millis(120), socket.read(&mut chunk)).await {
+                    Ok(Ok(0)) | Err(_) => break,
+                    Ok(Ok(n)) => {
+                        total_buf.extend_from_slice(&chunk[..n]);
+                        if total_buf.ends_with(b"--\r\n") {
+                            break;
+                        }
+                    }
+                    Ok(Err(_)) => break,
+                }
+            }
+            let raw_req = String::from_utf8_lossy(&total_buf).to_string();
+            let http_resp = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_json.len(),
+                response_json
+            );
+            let _ = socket.write_all(http_resp.as_bytes()).await;
+            let _ = socket.shutdown().await;
+            raw_req
+        });
+        (format!("http://{}", addr), handle)
+    }
 
     #[tokio::test]
-    async fn test_probe_real_docker_whisper() {
-        let res = probe_local_asr_http_endpoint("http://127.0.0.1:8009/v1/audio/transcriptions", Some("small"), None).await;
-        println!("Rust 端点实测探测结果: success={}, message={}, latency={}", res.success, res.message, res.latency_ms);
-        assert!(res.success, "应能成功连接本地 Docker whisper 端点: {}", res.message);
+    async fn test_probe_openai_whisper_endpoint_includes_model() {
+        let (base_url, server_task) = spawn_mock_asr_server(r#"{"text":"ok"}"#).await;
+        let endpoint = format!("{}/v1/audio/transcriptions", base_url);
+        let res = probe_local_asr_http_endpoint(&endpoint, Some("small"), None).await;
+        let raw_req = server_task.await.expect("server join");
+        assert!(res.success, "应成功探测本地 OpenAI Whisper 兼容端点: {}", res.message);
+        assert!(raw_req.contains("name=\"file\""));
+        assert!(raw_req.contains("name=\"model\""));
+    }
+
+    #[tokio::test]
+    async fn test_deepseek_tools_asr_omits_model_and_prompt_fields() {
+        let (base_url, server_task) =
+            spawn_mock_asr_server(r#"{"request_id":"req_1","text":"全家桶测试通过","duration_ms":2100}"#).await;
+        let endpoint = format!("{}/v1/tools/asr", base_url);
+        let res = proxy_post_asr_audio(
+            &endpoint,
+            vec![82, 73, 70, 70, 0, 0, 0, 0],
+            Some("deepseek-asr"),
+            Some("mock-ds-token-123"),
+            Some("should_be_omitted_prompt"),
+        )
+        .await;
+        let raw_req = server_task.await.expect("server join");
+        assert!(res.is_ok(), "DeepSeek ASR 代理转发应成功: {:?}", res);
+        assert!(res.unwrap().contains("全家桶测试通过"));
+        assert!(raw_req.to_lowercase().contains("authorization: bearer mock-ds-token-123"));
+        assert!(raw_req.contains("name=\"file\""));
+        assert!(!raw_req.contains("name=\"model\""), "DeepSeek /v1/tools/asr 不得夹带 model 字段");
+        assert!(!raw_req.contains("name=\"prompt\""), "DeepSeek /v1/tools/asr 不得夹带 prompt 字段");
     }
 
     #[test]
@@ -306,5 +408,27 @@ mod tests {
         let path = get_local_models_dir();
         assert!(path.to_string_lossy().contains(".tingxu"));
         assert!(path.to_string_lossy().contains("models"));
+    }
+
+    #[tokio::test]
+    async fn test_https_scheme_is_supported_by_reqwest_client() {
+        // 绑定真实本地端口：若 reqwest 未编译启用 TLS (hyper HttpConnector 仅允许 http)，
+        // 则在发起 TCP 握手前就会因 "scheme is not http" 直接失败，服务端绝不会收到连接！
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind local tls probe port");
+        let addr = listener.local_addr().expect("local addr");
+        let accept_task = tokio::spawn(async move {
+            tokio::time::timeout(std::time::Duration::from_secs(2), listener.accept())
+                .await
+                .is_ok()
+        });
+
+        let endpoint = format!("https://{}/v1/tools/asr", addr);
+        let res = probe_local_asr_http_endpoint(&endpoint, Some("deepseek-asr"), Some("mock-ds-key")).await;
+        let tcp_connected = accept_task.await.unwrap_or(false);
+        assert!(
+            tcp_connected,
+            "reqwest 未启用 HTTPS/TLS 连接器（未能向 https:// 端口发起 TCP/TLS 握手），返回信息: {}",
+            res.message
+        );
     }
 }

@@ -178,4 +178,57 @@ describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
     fireEvent.click(checkbox);
     expect(checkbox.checked).toBe(false);
   });
+
+  it('DeepSeek 全家桶 One-Key 预设：支持单密钥同步激活 LLM 与云端 ASR、切换纪要 Thinking 深度思考与 TTS 音色 (Plan 029 T05)', async () => {
+    const spyAsr = vi.spyOn(LocalAsrClient, 'testConnection').mockResolvedValueOnce({
+      success: true,
+      latencyMs: 62,
+      message: '连接成功 (延迟: 62ms)',
+    });
+
+    render(<SettingsView />);
+
+    // 先切到 Qwen 再切回 DeepSeek 全家桶预设
+    fireEvent.click(screen.getByTestId('settings-byok-btn-preset-qwen'));
+    fireEvent.click(screen.getByTestId('settings-byok-btn-preset-deepseek'));
+
+    const stateAfterPreset = useMeetingStore.getState().byokSettings;
+    expect(stateAfterPreset.llmProvider).toBe('deepseek');
+    expect(stateAfterPreset.llmModel).toBe('deepseek-flash');
+    expect(stateAfterPreset.asrProvider).toBe('deepseek');
+    expect(stateAfterPreset.asrEndpoint).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(stateAfterPreset.shareDeepSeekKey).toBe(true);
+
+    // 填入 1 个 DeepSeek API Key，验证直接可用于测试云端 ASR
+    fireEvent.change(screen.getByTestId('settings-byok-input-llm-key'), {
+      target: { value: 'mock-one-key-deepseek-suite' },
+    });
+
+    fireEvent.click(screen.getByTestId('settings-byok-btn-test-asr'));
+    await waitFor(() => {
+      expect(spyAsr).toHaveBeenCalledWith(
+        expect.objectContaining({
+          protocol: 'deepseek_http',
+          endpoint: 'https://api.deepseek.com/v1/tools/asr',
+          apiKey: 'mock-one-key-deepseek-suite',
+        })
+      );
+      expect(screen.getByTestId('settings-byok-text-asr-status').textContent).toContain('62ms');
+    });
+
+    // 切换纪要深度思考开关与 TTS 音色
+    const thinkingCheckbox = screen.getByTestId('settings-byok-checkbox-summary-thinking') as HTMLInputElement;
+    expect(thinkingCheckbox.checked).toBe(true);
+    fireEvent.click(thinkingCheckbox);
+    expect(useMeetingStore.getState().byokSettings.enableSummaryThinking).toBe(false);
+
+    const voiceSelect = screen.getByTestId('settings-byok-select-tts-voice') as HTMLSelectElement;
+    fireEvent.change(voiceSelect, { target: { value: 'tide' } });
+    expect(useMeetingStore.getState().byokSettings.ttsVoiceId).toBe('tide');
+
+    // 验证设置页内嵌渲染 DeepSeek 全家桶使用说明指引块
+    const suiteGuide = screen.getByTestId('settings-byok-div-deepseek-suite-guide');
+    expect(suiteGuide).toBeInTheDocument();
+    expect(suiteGuide.textContent).toContain('一钥通全栈');
+  });
 });

@@ -28,6 +28,8 @@ import {
   SummaryRevisionProposal,
   MeetingChatMessage,
   MeetingAiCost,
+  MeetingReferenceDoc,
+  LocalAiUsageInput,
   ByokSettings,
   DEFAULT_BYOK_SETTINGS,
   LiveInsightSettings,
@@ -36,7 +38,8 @@ import {
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
 import { getMeetingRepository } from '../storage/meetingRepository';
 import { getSpeakerRegistry } from '../speaker/speakerRegistry';
-import { getByokLlmClient } from '../api/byokLlmClient';
+import { getByokLlmClient, formatReferenceDocsContext } from '../api/byokLlmClient';
+import { calculateDeepSeekTokenCostYuan } from '../api/deepseekSuiteClient';
 
 import { finishLocalRecording, clearLocalMedia, deleteLocalMedia, getRecordingStorageUsage, pruneLocalRecordings } from '../audio/localRecording';
 
@@ -172,7 +175,9 @@ function saveStoredDetectionSettings(settings: MeetingDetectionSettings) {
 }
 
 function loadStoredByokSettings(): ByokSettings {
-  return getMeetingRepository().getByokSettings() || { ...DEFAULT_BYOK_SETTINGS };
+  const stored = getMeetingRepository().getByokSettings();
+  if (!stored) return { ...DEFAULT_BYOK_SETTINGS };
+  return { ...DEFAULT_BYOK_SETTINGS, ...stored };
 }
 
 function saveStoredByokSettings(settings: ByokSettings) {
@@ -234,6 +239,7 @@ const initialMeetingState = {
   byokSettings: loadStoredByokSettings(),
   liveInsightSettings: loadStoredLiveInsightSettings(),
   aiCost: null as MeetingAiCost | null,
+  referenceDocs: [] as MeetingReferenceDoc[],
   appearanceSettings: loadStoredAppearanceSettings(),
   voiceprintSettings: loadStoredVoiceprintSettings(),
   storageSettings: loadStoredStorageSettings(),
@@ -303,9 +309,23 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
           newStableText: combinedText,
           currentTopicSummary: latestTopic,
           contextAnchors,
+          referenceContext: formatReferenceDocsContext(get().referenceDocs),
         },
         byokSettings
       );
+
+      if (res?.usage) {
+        const activeId = get().meetingId || 'mtg_current';
+        const costYuan = calculateDeepSeekTokenCostYuan(byokSettings.llmModel, res.usage);
+        const totalTokens =
+          res.usage.total_tokens ?? (res.usage.prompt_tokens || 0) + (res.usage.completion_tokens || 0);
+        get().recordLocalAiUsage({
+          meetingId: activeId,
+          category: 'insights',
+          costYuan,
+          tokens: totalTokens,
+        });
+      }
 
       if (res && res.patch) {
         const { patch, topicId } = res;
@@ -391,12 +411,21 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
   fetchMeetingAiCost: async (meetingId: string) => {
     if (!meetingId) return null;
+    const stateBefore = get();
+    const existingLocalCost =
+      (stateBefore.meetingId === meetingId ? stateBefore.aiCost : undefined) ||
+      stateBefore.historyMeetings.find((m) => m.id === meetingId)?.aiCost ||
+      (stateBefore.activeSummaryMeeting?.id === meetingId ? stateBefore.activeSummaryMeeting.aiCost : undefined);
     const gatewayUrl = get().gatewayUrl || 'http://localhost:3201';
     try {
       const res = await fetch(`${gatewayUrl.replace(/\/$/, '')}/gateway/v1/billing/ai-usage?meetingId=${encodeURIComponent(meetingId)}`);
       if (res.ok) {
         const json = await res.json();
         if (json && json.code === 0 && json.data) {
+          const incomingRecords = Number(json.data.recordsCount || 0);
+          if (incomingRecords === 0 && existingLocalCost && existingLocalCost.recordsCount > 0) {
+            return existingLocalCost;
+          }
           const costData: MeetingAiCost = {
             totalCostYuan: Number(json.data.totalCostYuan || 0),
             totalTokens: Number(json.data.totalTokens || 0),
@@ -434,6 +463,106 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       // 离线容错降级
     }
     return null;
+  },
+
+  recordLocalAiUsage: (input: LocalAiUsageInput): MeetingAiCost => {
+    const round6 = (n: number) => Math.round(n * 1_000_000) / 1_000_000;
+    const state = get();
+    const targetHistory = state.historyMeetings.find((m) => m.id === input.meetingId);
+    const prevCost: MeetingAiCost =
+      (state.meetingId === input.meetingId ? state.aiCost : targetHistory?.aiCost) || {
+        totalCostYuan: 0,
+        totalTokens: 0,
+        audioSeconds: 0,
+        breakdown: {
+          asrCostYuan: 0,
+          asrAudioSeconds: 0,
+          insightsCostYuan: 0,
+          insightsTokens: 0,
+          summaryCostYuan: 0,
+          summaryTokens: 0,
+          chatCostYuan: 0,
+          chatTokens: 0,
+          toolsCostYuan: 0,
+          ocrPages: 0,
+          ttsChars: 0,
+          searchCalls: 0,
+        },
+        recordsCount: 0,
+        updatedAt: new Date().toISOString(),
+      };
+
+    const prevBd = prevCost.breakdown;
+    const addTokens = Math.max(0, input.tokens || 0);
+    const addAudioSec = Math.max(0, input.audioSeconds || 0);
+    const addCost = Math.max(0, input.costYuan || 0);
+
+    const nextBreakdown = {
+      asrCostYuan: round6(prevBd.asrCostYuan + (input.category === 'asr' ? addCost : 0)),
+      asrAudioSeconds: round6(prevBd.asrAudioSeconds + (input.category === 'asr' ? addAudioSec : 0)),
+      insightsCostYuan: round6(prevBd.insightsCostYuan + (input.category === 'insights' ? addCost : 0)),
+      insightsTokens: prevBd.insightsTokens + (input.category === 'insights' ? addTokens : 0),
+      summaryCostYuan: round6(prevBd.summaryCostYuan + (input.category === 'summary' ? addCost : 0)),
+      summaryTokens: prevBd.summaryTokens + (input.category === 'summary' ? addTokens : 0),
+      chatCostYuan: round6(prevBd.chatCostYuan + (input.category === 'chat' ? addCost : 0)),
+      chatTokens: prevBd.chatTokens + (input.category === 'chat' ? addTokens : 0),
+      toolsCostYuan: round6((prevBd.toolsCostYuan || 0) + (input.category === 'tools' ? addCost : 0)),
+      ocrPages: (prevBd.ocrPages || 0) + Math.max(0, input.ocrPages || 0),
+      ttsChars: (prevBd.ttsChars || 0) + Math.max(0, input.ttsChars || 0),
+      searchCalls: (prevBd.searchCalls || 0) + Math.max(0, input.searchCalls || 0),
+    };
+
+    const nextCost: MeetingAiCost = {
+      totalCostYuan: round6(prevCost.totalCostYuan + addCost),
+      totalTokens: prevCost.totalTokens + addTokens,
+      audioSeconds: round6(prevCost.audioSeconds + addAudioSec),
+      breakdown: nextBreakdown,
+      recordsCount: prevCost.recordsCount + 1,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const updatedHistory = state.historyMeetings.map((m) =>
+      m.id === input.meetingId ? { ...m, aiCost: nextCost } : m
+    );
+    if (updatedHistory !== state.historyMeetings && targetHistory) {
+      saveStoredHistoryMeetings(updatedHistory);
+    }
+
+    set({
+      aiCost: state.meetingId === input.meetingId || (!state.meetingId && !targetHistory) ? nextCost : state.aiCost,
+      historyMeetings: updatedHistory,
+      activeSummaryMeeting:
+        state.activeSummaryMeeting && state.activeSummaryMeeting.id === input.meetingId
+          ? { ...state.activeSummaryMeeting, aiCost: nextCost }
+          : state.activeSummaryMeeting,
+    });
+
+    return nextCost;
+  },
+
+  addMeetingReferenceDoc: (meetingId: string, doc: MeetingReferenceDoc) => {
+    set((state) => {
+      const isInHistory = state.historyMeetings.some((m) => m.id === meetingId);
+      const isCurrent = state.meetingId === meetingId || (!state.meetingId && !isInHistory);
+      const nextDocs = isCurrent ? [...state.referenceDocs, doc] : state.referenceDocs;
+      const updatedHistory = state.historyMeetings.map((m) =>
+        m.id === meetingId ? { ...m, referenceDocs: [...(m.referenceDocs || []), doc] } : m
+      );
+      if (isInHistory) {
+        saveStoredHistoryMeetings(updatedHistory);
+      }
+      return {
+        referenceDocs: nextDocs,
+        historyMeetings: updatedHistory,
+        activeSummaryMeeting:
+          state.activeSummaryMeeting && state.activeSummaryMeeting.id === meetingId
+            ? {
+                ...state.activeSummaryMeeting,
+                referenceDocs: [...(state.activeSummaryMeeting.referenceDocs || []), doc],
+              }
+            : state.activeSummaryMeeting,
+      };
+    });
   },
 
   refreshStorageUsage: async () => {
@@ -842,6 +971,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       initialQuotaSeconds: initialSec,
       transcripts: [],
       insights: [],
+      aiCost: get().status === 'IDLE' ? get().aiCost : null,
+      referenceDocs: get().status === 'IDLE' ? get().referenceDocs : [],
       insightError: null,
       speakerNames: {},
       highlightedTranscriptId: null,
@@ -1007,11 +1138,25 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
                 speaker: t.speaker,
                 text: t.text,
               })),
+              referenceContext: formatReferenceDocsContext(get().referenceDocs),
             },
             byokSettings
           );
           if (directSummary) {
             structuredSummary = directSummary;
+            if (directSummary._usage) {
+              const summaryModel = byokSettings.summaryModel || byokSettings.llmModel;
+              const costYuan = calculateDeepSeekTokenCostYuan(summaryModel, directSummary._usage);
+              const tokens =
+                directSummary._usage.total_tokens ??
+                (directSummary._usage.prompt_tokens || 0) + (directSummary._usage.completion_tokens || 0);
+              get().recordLocalAiUsage({
+                meetingId,
+                category: 'summary',
+                costYuan,
+                tokens,
+              });
+            }
           }
         } else {
           const res = await fetch(`${gatewayUrl}/gateway/v1/meeting-summary`, {
@@ -1152,6 +1297,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       structuredSummary,
       insights: finalInsights,
       transcripts: [...transcripts],
+      aiCost: get().aiCost || undefined,
+      referenceDocs: get().referenceDocs.length ? [...get().referenceDocs] : undefined,
     };
 
     // 过滤掉同 id 会议，杜绝重复写入
@@ -1382,6 +1529,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       elapsedSeconds: 0,
       transcripts: [],
       insights: [],
+      aiCost: null,
+      referenceDocs: [],
       insightError: null,
       speakerNames: {},
       highlightedTranscriptId: null,

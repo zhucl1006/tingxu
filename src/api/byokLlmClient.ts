@@ -1,15 +1,16 @@
 /**
-/**
  * 听序（Tingxu）— 客户端直连大模型适配器 (ByokLlmClient)
  *
  * 核心架构定位：
  * 面向开源单机 BYOK（Bring Your Own Key）模式，
- * 封装对各大兼容 OpenAI 协议服务商（DeepSeek、阿里云百炼 Qwen、本地 Ollama 等）的直连调度。
+ * 封装对 DeepSeek 全家桶（V4.1-Flash / V4-Pro 快慢双模推理、受控联网查证与 URL 精读）、
+ * 阿里云百炼 Qwen、本地 Ollama 等兼容 OpenAI 协议服务商的直连调度。
  * 用户密钥保存在本机受保护环境，直接由客户端与 Provider 通信，无需经过云端中间件。
  */
 
-import type { ByokSettings } from '../types/meeting';
+import type { ByokSettings, MeetingReferenceDoc } from '../types/meeting';
 import type { CopilotChatRequest, CopilotChatResponse } from './tingxuClient';
+import type { DeepSeekTokenUsage } from './deepseekSuiteClient';
 
 export interface TestConnectionResult {
   ok: boolean;
@@ -27,6 +28,7 @@ export interface LiveInsightExtractionRequest {
   newStableText: string;
   currentTopicSummary?: string;
   contextAnchors?: Array<{ segmentId: string; quote: string }>;
+  referenceContext?: string;
 }
 
 export interface LiveInsightPatchResult {
@@ -40,11 +42,26 @@ export interface LiveInsightPatchResult {
     decisions?: string[];
     evidenceRefs?: Array<{ segmentId: string; quote: string }>;
   };
+  usage?: DeepSeekTokenUsage;
 }
 
 export interface GenerateSummaryRequest {
   meetingId: string;
   transcripts: SummaryTranscriptInput[];
+  referenceContext?: string;
+}
+
+/**
+ * 将无状态 OCR 提取的会议参考文档拼装为结构化提示词上下文（自动保护单文档最大长度）
+ */
+export function formatReferenceDocsContext(docs?: MeetingReferenceDoc[]): string {
+  if (!docs || docs.length === 0) return '';
+  return docs
+    .map((doc, idx) => {
+      const snippet = (doc.extractedText || '').trim().slice(0, 24000);
+      return `【参考资料 ${idx + 1}：${doc.fileName}（共 ${doc.pageCount} 页）】\n${snippet}`;
+    })
+    .join('\n\n');
 }
 
 function normalizeChatUrl(baseUrl: string): string {
@@ -94,7 +111,7 @@ export class ByokLlmClient {
     }
 
     const endpoint = normalizeChatUrl(settings.llmBaseUrl || 'https://api.deepseek.com/v1');
-    const model = settings.llmModel.trim() || 'deepseek-chat';
+    const model = settings.llmModel.trim() || 'deepseek-flash';
     const startTime = Date.now();
 
     try {
@@ -153,14 +170,19 @@ export class ByokLlmClient {
   }
 
   /**
-   * 针对当前会议进行会中或会后问答与修订交互
+   * 针对当前会议进行会中或会后问答与修订交互（支持受控显式开启 DeepSeek 联网核查与 URL 精读）
    */
   public async chatCopilot(req: CopilotChatRequest, settings: ByokSettings): Promise<CopilotChatResponse> {
     const endpoint = normalizeChatUrl(settings.llmBaseUrl || 'https://api.deepseek.com/v1');
-    const model = settings.llmModel.trim() || 'deepseek-chat';
+    const model = settings.llmModel.trim() || 'deepseek-flash';
+    const useDeepSeekWebTools = Boolean(req.enableWebSearch) && settings.llmProvider === 'deepseek';
+
+    const groundingRule = useDeepSeekWebTools
+      ? '请优先依据现场逐字稿、参考资料与现有纪要回答；当问题涉及外部公开事实、最新动态或指定链接时，可调用 deepseek_web_search 或 deepseek_read_url 权威核实，并在回答中明确区分现场发言与外部查证来源。'
+      : '请依据现场逐字稿、参考资料与现有纪要回答用户问题。只能依据上下文回答，严禁臆造。';
 
     const systemPrompt = `你是一款专为会议场景打造的极简无感 AI 会议助手「听序（Tingxu）」。
-请依据现场逐字稿与现有纪要回答用户问题。只能依据上下文回答，严禁臆造。
+${groundingRule}
 输出格式必须为标准 JSON 格式：
 {
   "answer": "回答正文...",
@@ -182,7 +204,11 @@ export class ByokLlmClient {
       .map((t) => `[${t.id}] ${t.speaker}: ${t.text}`)
       .join('\n');
 
-    let userPrompt = `【现场逐字稿】：\n${transcriptContext}\n\n`;
+    let userPrompt = '';
+    if (req.referenceContext && req.referenceContext.trim()) {
+      userPrompt += `【本场参考资料（OCR 提取）】：\n${req.referenceContext.trim()}\n\n`;
+    }
+    userPrompt += `【现场逐字稿】：\n${transcriptContext}\n\n`;
     if (req.currentSummary) {
       userPrompt += `【当前会议纪要】：\n${JSON.stringify(req.currentSummary, null, 2)}\n\n`;
     }
@@ -193,17 +219,26 @@ export class ByokLlmClient {
       headers['Authorization'] = `Bearer ${settings.llmApiKey.trim()}`;
     }
 
+    const requestBody: Record<string, any> = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+      temperature: 0.2,
+    };
+
+    if (useDeepSeekWebTools) {
+      requestBody.tools = [
+        { type: 'deepseek_web_search', name: 'deepseek_web_search' },
+        { type: 'deepseek_read_url', name: 'deepseek_read_url' },
+      ];
+    }
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
-        ],
-        temperature: 0.2,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!res.ok) {
@@ -214,6 +249,7 @@ export class ByokLlmClient {
     const data = await res.json();
     const content = data.choices?.[0]?.message?.content || '';
     const parsed = extractJson(content);
+    const usage = data.usage as DeepSeekTokenUsage | undefined;
 
     if (parsed && typeof parsed.answer === 'string') {
       return {
@@ -223,6 +259,7 @@ export class ByokLlmClient {
           quote: e.quote,
         })),
         proposals: parsed.proposals || [],
+        usage,
       };
     }
 
@@ -230,18 +267,20 @@ export class ByokLlmClient {
       answer: content || '已完成本场会议分析。',
       citations: [],
       proposals: [],
+      usage,
     };
   }
 
   /**
-   * 全场会议结束后，生成全场高精总结与推荐标题
+   * 全场会议结束后，生成全场高精总结与推荐标题（支持 DeepSeek Thinking 深度思考慢模型路由）
    */
   public async generateMeetingSummary(
     req: GenerateSummaryRequest,
     settings: ByokSettings
   ): Promise<any> {
     const endpoint = normalizeChatUrl(settings.llmBaseUrl || 'https://api.deepseek.com/v1');
-    const model = settings.llmModel.trim() || 'deepseek-chat';
+    const model = (settings.summaryModel || settings.llmModel || 'deepseek-flash').trim();
+    const enableThinking = settings.llmProvider === 'deepseek' && Boolean(settings.enableSummaryThinking);
 
     const systemPrompt = `你是一款专为会议场景打造的极简无感 AI 助理「听序（Tingxu）」。
 请对会议全文逐字稿进行结构化整理，输出标准 JSON 格式，严格包含：
@@ -260,22 +299,36 @@ export class ByokLlmClient {
       .map((t) => `[${t.segmentId}] ${t.speaker}: ${t.text}`)
       .join('\n');
 
+    let userContent = '';
+    if (req.referenceContext && req.referenceContext.trim()) {
+      userContent += `【会前/会中参考文档背景】：\n${req.referenceContext.trim()}\n\n`;
+    }
+    userContent += `【会议逐字稿全文】：\n${transcriptContext}\n\n请提取结构化总结与标题：`;
+
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (settings.llmApiKey.trim()) {
       headers['Authorization'] = `Bearer ${settings.llmApiKey.trim()}`;
     }
 
+    const requestBody: Record<string, any> = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userContent },
+      ],
+    };
+
+    if (enableThinking) {
+      // DeepSeek V4.1 规范：开启 thinking 深度思考模式时严禁传递无效的 temperature
+      requestBody.thinking = { type: 'enabled' };
+    } else {
+      requestBody.temperature = 0.2;
+    }
+
     const res = await fetch(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: `【会议逐字稿全文】：\n${transcriptContext}\n\n请提取结构化总结与标题：` },
-        ],
-        temperature: 0.2,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!res.ok) {
@@ -290,18 +343,26 @@ export class ByokLlmClient {
       throw new Error('大模型未能输出合规的结构化 JSON 纪要');
     }
 
+    if (data.usage) {
+      Object.defineProperty(parsed, '_usage', {
+        value: data.usage as DeepSeekTokenUsage,
+        enumerable: false,
+        configurable: true,
+      });
+    }
+
     return parsed;
   }
 
   /**
-   * 客户端直连提取增量实时洞察与待办 (Plan 026)
+   * 客户端直连提取增量实时洞察与待办 (Plan 026 / Plan 029 固定极速非思考 Flash 模式)
    */
   public async extractLiveInsights(
     req: LiveInsightExtractionRequest,
     settings: ByokSettings
   ): Promise<LiveInsightPatchResult | null> {
     const endpoint = normalizeChatUrl(settings.llmBaseUrl || 'https://api.deepseek.com/v1');
-    const model = settings.llmModel.trim() || 'deepseek-chat';
+    const model = settings.llmModel.trim() || 'deepseek-flash';
 
     const systemPrompt = `你是一款专为会议场景打造的极简无感 AI 助理「听序（Tingxu）」。
 你的职责是在会议进行中，实时提炼结构化段落洞察（议题讨论总结、阶段性关键结论、核心事实，以及真正有执行主体的待办）。
@@ -331,6 +392,9 @@ export class ByokLlmClient {
 }`;
 
     let userPrompt = `【当前会议上下文】：\n`;
+    if (req.referenceContext && req.referenceContext.trim()) {
+      userPrompt += `会议参考资料术语与背景：\n${req.referenceContext.trim()}\n\n`;
+    }
     if (req.currentTopicSummary) {
       userPrompt += `上一阶段议题摘要：${req.currentTopicSummary}\n`;
     }
@@ -369,7 +433,11 @@ export class ByokLlmClient {
         return null;
       }
 
-      return parsed as LiveInsightPatchResult;
+      const result = parsed as LiveInsightPatchResult;
+      if (data.usage) {
+        result.usage = data.usage as DeepSeekTokenUsage;
+      }
+      return result;
     } catch {
       return null;
     }

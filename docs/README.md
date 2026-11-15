@@ -1,17 +1,17 @@
 # 听序（Tingxu） - 技术文档中心
 
-**最后更新：** 2026-11-07  
-**文档版本：** v0.3（纯单机 BYOK 与本地离线 ASR 双轨演进基准）  
+**最后更新：** 2026-11-14  
+**文档版本：** v0.4（单机 BYOK、DeepSeek One-Key 全家桶多模态全栈与本地离线 ASR 演进基准）  
 **文档中心维护者：** 听序研发团队（PM / 架构师 / 文档工程）
 
 ---
 
 ## 项目概述
 
-当前开发记录：[计划014：混音说话人与ASR稳定性](./plans/014-mixed-audio-speakers-and-asr-stability.md)、[实施基线与门禁](./research/014-asr-baseline-and-decisions.md)。字幕协议与时序已有实现；双轨与真实声纹模型仍需后续门禁，不代表整项计划已完成。
+当前开发记录：[计划029：DeepSeek 全家桶应用 API（One-Key 多模态全栈）分析与实施计划](./plans/029-deepseek-full-suite-integration.md)、[计划014：混音说话人与ASR稳定性](./plans/014-mixed-audio-speakers-and-asr-stability.md)、[实施基线与门禁](./research/014-asr-baseline-and-decisions.md)。
 
 **听序（Tingxu / 代号 tingxu-desktop）** 是一款运行在 Windows 与 macOS 桌面的极简无感、开源优先的 AI 会议助手（类似 Granola / 讯飞听见）。  
-无需向 Teams、腾讯会议、飞书等软件添加任何虚拟参会机器人，通过纯本地免驱双轨音频捕获、流式 ASR 直连、用户自备 Key（BYOK - 支持阿里云百炼、DeepSeek、自定义 OpenAI 兼容端点及本地离线模型）与本地优先（Local-First）存储体系，为个人办公用户（优先服务产品经理与项目经理）提供会中实时字幕、增量结构化洞察、本场问答追溯以及会后高精纪要与待办提取。
+无需向 Teams、腾讯会议、飞书等软件添加任何虚拟参会机器人，通过纯本地免驱双轨音频捕获、流式/VAD ASR 直连、用户自备 Key（BYOK — 默认支持 **DeepSeek One-Key 全家桶**一钥打通 `deepseek-flash`/`deepseek-v4-pro` 快慢分级推理、`/v1/tools/asr` 双轨语音转写、无状态 `/v1/tools/ocr` 资料解析、受控联网查证与 `/v1/tools/tts` 纪要播报，同时兼容阿里云百炼、自定义 OpenAI 端点及本地离线模型）与本地优先（Local-First）存储体系，为个人办公用户（优先服务产品经理与项目经理）提供会中实时字幕、增量结构化洞察、本场问答追溯以及会后高精纪要与待办提取。
 
 **核心价值：** 
 - **极简无感**：无需会议机器人入会，不侵入会议链接，零驱动门槛即可双轨物理内录。

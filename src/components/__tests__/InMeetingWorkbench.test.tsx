@@ -715,4 +715,43 @@ describe('014 final先显示，身份后补齐', () => {
     fireEvent.click(dismissBtn);
     expect(useMeetingStore.getState().asrError).toBe('');
   });
+
+  it('会中工作台支持 DeepSeek 全家桶 ASR 状态徽章与无状态 OCR 资料解析挂载 (Plan 029 T05)', async () => {
+    const { getDeepSeekSuiteClient } = await import('../../api/deepseekSuiteClient');
+    const ocrSpy = vi.spyOn(getDeepSeekSuiteClient(), 'recognizeDocumentOcr').mockResolvedValueOnce({
+      id: 'ocr_doc_01',
+      purpose: 'rich_layout_recognition',
+      pageCount: 2,
+      pages: [
+        { index: 0, text: '议程一：V4.1-Flash 1M 上下文升级', finishReason: 'stop' },
+        { index: 1, text: '议程二：0.39元/小时 ASR 替换双 Key', finishReason: 'stop' },
+      ],
+      fullText: '议程一：V4.1-Flash 1M 上下文升级\n议程二：0.39元/小时 ASR 替换双 Key',
+    });
+
+    useMeetingStore.getState().resetMeeting();
+    useMeetingStore.getState().updateByokSettings({
+      llmProvider: 'deepseek',
+      llmApiKey: 'mock-ds-workbench-key',
+      asrProvider: 'deepseek',
+    });
+    useMeetingStore.getState().setAsrStatus('connected');
+
+    render(<InMeetingWorkbench />);
+
+    const badge = screen.getByTestId('workbench-page-transcript-panel-badge-channel-source');
+    expect(badge.textContent).toContain('DeepSeek ASR就绪');
+
+    const fileInput = screen.getByTestId('workbench-page-insights-panel-input-ocr-file') as HTMLInputElement;
+    const mockPdf = new File(['mock pdf'], 'Q4架构议程.pdf', { type: 'application/pdf' });
+    fireEvent.change(fileInput, { target: { files: [mockPdf] } });
+
+    await vi.waitFor(() => {
+      expect(ocrSpy).toHaveBeenCalled();
+      expect(useMeetingStore.getState().referenceDocs).toHaveLength(1);
+      expect(screen.getByTestId('workbench-page-insights-panel-div-ref-docs-bar').textContent).toContain(
+        'Q4架构议程.pdf'
+      );
+    });
+  });
 });

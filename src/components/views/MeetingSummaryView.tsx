@@ -6,7 +6,12 @@ import { parseTimecode, segmentPlaybackSeconds, playingSegment } from '../../uti
 import { MeetingMindmap } from '../MeetingMindmap';
 import { SummaryRevisionProposal, MeetingChatMessage } from '../../types/meeting';
 import { getTingxuClient } from '../../api/tingxuClient';
-import { getByokLlmClient } from '../../api/byokLlmClient';
+import { getByokLlmClient, formatReferenceDocsContext } from '../../api/byokLlmClient';
+import {
+  getDeepSeekSuiteClient,
+  calculateDeepSeekTokenCostYuan,
+  calculateDeepSeekToolCostYuan,
+} from '../../api/deepseekSuiteClient';
 
 export const MeetingSummaryView: React.FC = () => {
   const {
@@ -36,9 +41,16 @@ export const MeetingSummaryView: React.FC = () => {
     updateHistoryMeetingTitle,
     regenerateMeetingTitle,
     fetchMeetingAiCost,
+    recordLocalAiUsage,
+    byokSettings,
   } = useMeetingStore();
 
   const [isCostModalOpen, setIsCostModalOpen] = useState(false);
+  const [enableWebSearch, setEnableWebSearch] = useState(false);
+  const [isSynthesizingTts, setIsSynthesizingTts] = useState(false);
+  const [isPlayingTts, setIsPlayingTts] = useState(false);
+  const ttsAudioRef = useRef<HTMLAudioElement | null>(null);
+  const ttsBlobUrlRef = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState<'summary' | 'mindmap' | 'transcripts'>('summary');
   const [summaryMode, setSummaryMode] = useState<'cards' | 'outline'>('cards');
   const [copied, setCopied] = useState(false);
@@ -150,6 +162,23 @@ export const MeetingSummaryView: React.FC = () => {
       copilotMessagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
   }, [activeSummaryMeeting?.chatHistory, rightPanelTab, isCopilotLoading]);
+
+  // 切换会议或卸载组件时释放 TTS 音频资源，杜绝内存泄漏
+  useEffect(() => {
+    return () => {
+      if (ttsAudioRef.current) {
+        try {
+          ttsAudioRef.current.pause();
+        } catch {}
+        ttsAudioRef.current = null;
+      }
+      if (ttsBlobUrlRef.current && typeof URL.revokeObjectURL === 'function') {
+        URL.revokeObjectURL(ttsBlobUrlRef.current);
+        ttsBlobUrlRef.current = null;
+      }
+      setIsPlayingTts(false);
+    };
+  }, [activeSummaryMeeting?.id]);
 
   if (!activeSummaryMeeting) {
     return (
@@ -413,6 +442,8 @@ export const MeetingSummaryView: React.FC = () => {
         meetingId: meeting.id,
         question: text,
         asOfTextVersion: transcripts.length,
+        enableWebSearch,
+        referenceContext: formatReferenceDocsContext(meeting.referenceDocs),
         transcripts: transcripts.length
           ? transcripts.map((t) => ({ id: t.id, speaker: t.speaker, text: t.text }))
           : [{ id: 'seg_init', speaker: '系统', text: '本场会议已完成，正在查阅本地纪要与录音。' }],
@@ -421,6 +452,18 @@ export const MeetingSummaryView: React.FC = () => {
 
       if (isStandaloneConfigured) {
         chatData = await getByokLlmClient().chatCopilot(chatReq, byokSettings);
+        if (chatData?.usage) {
+          const chatCost = calculateDeepSeekTokenCostYuan(byokSettings.llmModel, chatData.usage);
+          const chatTokens =
+            chatData.usage.total_tokens ??
+            (chatData.usage.prompt_tokens || 0) + (chatData.usage.completion_tokens || 0);
+          recordLocalAiUsage({
+            meetingId: meeting.id,
+            category: 'chat',
+            costYuan: chatCost,
+            tokens: chatTokens,
+          });
+        }
       } else {
         const client = getTingxuClient();
         if ('setGatewayUrl' in client) {
@@ -465,6 +508,83 @@ export const MeetingSummaryView: React.FC = () => {
   // 采纳 AI 修订提案
   const handleApplyProposal = (proposal: SummaryRevisionProposal) => {
     applySummaryProposal(meeting.id, proposal);
+  };
+
+  // 一键 TTS 语音朗读纪要（DeepSeek /v1/tools/tts）
+  const handleToggleTtsPlay = async () => {
+    if (isPlayingTts) {
+      if (ttsAudioRef.current) {
+        try {
+          ttsAudioRef.current.pause();
+        } catch {}
+        ttsAudioRef.current = null;
+      }
+      if (ttsBlobUrlRef.current && typeof URL.revokeObjectURL === 'function') {
+        URL.revokeObjectURL(ttsBlobUrlRef.current);
+        ttsBlobUrlRef.current = null;
+      }
+      setIsPlayingTts(false);
+      return;
+    }
+
+    const overviewText = summary?.overview || meeting.summary || '';
+    const decisionLines = decisions.slice(0, 5).map((d, i) => `决策${i + 1}：${d.title}，${d.content}`);
+    const actionLines = actions.slice(0, 5).map((a, i) => `待办${i + 1}：${a.title}，负责人${a.assignee || '待确认'}`);
+    const speechText = [`会议主题：${meeting.title}`, overviewText, ...decisionLines, ...actionLines]
+      .filter(Boolean)
+      .join('。')
+      .slice(0, 3500);
+
+    if (!speechText.trim()) return;
+
+    setIsSynthesizingTts(true);
+    try {
+      const currentByok = useMeetingStore.getState().byokSettings;
+      const wavBuffer = await getDeepSeekSuiteClient().synthesizeSpeech(
+        {
+          text: speechText,
+          voiceId: currentByok.ttsVoiceId || 'stella',
+          format: 'wav',
+          filterMarkdown: true,
+        },
+        currentByok
+      );
+
+      const ttsCost = calculateDeepSeekToolCostYuan({ type: 'tts', charCount: speechText.length });
+      recordLocalAiUsage({
+        meetingId: meeting.id,
+        category: 'tools',
+        costYuan: ttsCost,
+        ttsChars: speechText.length,
+      });
+
+      if (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function' && typeof Audio !== 'undefined') {
+        const blob = new Blob([wavBuffer], { type: 'audio/wav' });
+        const objectUrl = URL.createObjectURL(blob);
+        ttsBlobUrlRef.current = objectUrl;
+        const audio = new Audio(objectUrl);
+        ttsAudioRef.current = audio;
+        audio.onended = () => {
+          setIsPlayingTts(false);
+          if (ttsBlobUrlRef.current && typeof URL.revokeObjectURL === 'function') {
+            URL.revokeObjectURL(ttsBlobUrlRef.current);
+            ttsBlobUrlRef.current = null;
+          }
+        };
+        audio.onerror = () => {
+          setIsPlayingTts(false);
+        };
+        setIsPlayingTts(true);
+        await Promise.resolve(audio.play()).catch(() => {});
+      } else {
+        setIsPlayingTts(true);
+      }
+    } catch (err) {
+      setTitleNotice({ type: 'error', text: `语音合成失败：${(err as Error).message}` });
+      setTimeout(() => setTitleNotice(null), 4000);
+    } finally {
+      setIsSynthesizingTts(false);
+    }
   };
 
   // 原地人工编辑：主旨综述
@@ -642,6 +762,22 @@ export const MeetingSummaryView: React.FC = () => {
             </button>
 
             <span className="text-border-subtle/80">|</span>
+
+            <button
+              type="button"
+              data-testid="summary-page-header-btn-tts-play"
+              disabled={isSynthesizingTts}
+              onClick={handleToggleTtsPlay}
+              title="使用 DeepSeek 全家桶 TTS 自然人声播报本场纪要"
+              className={`px-3 py-1 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50 ${
+                isPlayingTts
+                  ? 'bg-status-warning-bg border-status-warning-border text-status-warning'
+                  : 'bg-panel border-border-subtle hover:bg-hover text-text-primary'
+              }`}
+            >
+              <span>{isSynthesizingTts ? '⏳' : isPlayingTts ? '⏹' : '🔊'}</span>
+              <span>{isSynthesizingTts ? '合成语音...' : isPlayingTts ? '停止朗读' : '朗读纪要'}</span>
+            </button>
 
             <button
               type="button"
@@ -2295,7 +2431,7 @@ export const MeetingSummaryView: React.FC = () => {
                     <div ref={copilotMessagesEndRef} />
                   </div>
 
-                  {/* 底部提问与指令输入表单 */}
+                  {/* 底部提问与指令输入表单（支持受控显式开启 DeepSeek 联网核查） */}
                   <form
                     data-testid="summary-page-copilot-form-ask"
                     onSubmit={(e) => {
@@ -2304,6 +2440,19 @@ export const MeetingSummaryView: React.FC = () => {
                     }}
                     className="p-3 border-t border-border-subtle bg-subtle flex items-center gap-2 shrink-0"
                   >
+                    <button
+                      type="button"
+                      data-testid="summary-page-copilot-btn-toggle-web-search"
+                      onClick={() => setEnableWebSearch((v) => !v)}
+                      title="显式开启后，允许 Copilot 调用 DeepSeek 联网搜索与网页精读工具（默认关闭保护隐私）"
+                      className={`px-2.5 py-2 rounded-md text-xs border transition-colors shrink-0 ${
+                        enableWebSearch
+                          ? 'bg-brand-blue/15 border-brand-blue text-brand-blue font-semibold'
+                          : 'bg-canvas border-border-subtle text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      🌐 联网{enableWebSearch ? '已开' : '查证'}
+                    </button>
                     <input
                       type="text"
                       data-testid="summary-page-copilot-input-ask"
@@ -2381,8 +2530,13 @@ export const MeetingSummaryView: React.FC = () => {
                   <span className="text-base">🎙️</span>
                   <div>
                     <div className="font-medium text-text-primary">语音识别 (ASR)</div>
-                    <div className="text-[11px] text-text-tertiary font-mono">
-                      阿里 DashScope · {meeting.aiCost?.breakdown.asrAudioSeconds ?? 0} 秒 ({Math.round((meeting.aiCost?.breakdown.asrAudioSeconds ?? 0) / 60)} 分钟)
+                    <div className="text-[11px] text-text-tertiary font-mono tabular-nums">
+                      {byokSettings.asrProvider === 'deepseek'
+                        ? 'DeepSeek ASR'
+                        : byokSettings.asrProvider === 'dashscope'
+                        ? '阿里 DashScope'
+                        : '本地离线 ASR'}{' '}
+                      · {meeting.aiCost?.breakdown.asrAudioSeconds ?? 0} 秒 ({Math.round((meeting.aiCost?.breakdown.asrAudioSeconds ?? 0) / 60)} 分钟)
                     </div>
                   </div>
                 </div>
@@ -2397,8 +2551,8 @@ export const MeetingSummaryView: React.FC = () => {
                   <span className="text-base">💡</span>
                   <div>
                     <div className="font-medium text-text-primary">实时洞察 (Live Insights)</div>
-                    <div className="text-[11px] text-text-tertiary font-mono">
-                      DeepSeek-V3 · {(meeting.aiCost?.breakdown.insightsTokens ?? 0).toLocaleString()} Tokens
+                    <div className="text-[11px] text-text-tertiary font-mono tabular-nums">
+                      {byokSettings.llmModel || 'deepseek-flash'} · {(meeting.aiCost?.breakdown.insightsTokens ?? 0).toLocaleString()} Tokens
                     </div>
                   </div>
                 </div>
@@ -2413,8 +2567,8 @@ export const MeetingSummaryView: React.FC = () => {
                   <span className="text-base">💬</span>
                   <div>
                     <div className="font-medium text-text-primary">会中问答 (Meeting Chat)</div>
-                    <div className="text-[11px] text-text-tertiary font-mono">
-                      DeepSeek-V3 · {(meeting.aiCost?.breakdown.chatTokens ?? 0).toLocaleString()} Tokens
+                    <div className="text-[11px] text-text-tertiary font-mono tabular-nums">
+                      {byokSettings.llmModel || 'deepseek-flash'} · {(meeting.aiCost?.breakdown.chatTokens ?? 0).toLocaleString()} Tokens
                     </div>
                   </div>
                 </div>
@@ -2429,8 +2583,8 @@ export const MeetingSummaryView: React.FC = () => {
                   <span className="text-base">📝</span>
                   <div>
                     <div className="font-medium text-text-primary">纪要总结 (Summary)</div>
-                    <div className="text-[11px] text-text-tertiary font-mono">
-                      DeepSeek-V3 · {(meeting.aiCost?.breakdown.summaryTokens ?? 0).toLocaleString()} Tokens
+                    <div className="text-[11px] text-text-tertiary font-mono tabular-nums">
+                      {byokSettings.summaryModel || byokSettings.llmModel || 'deepseek-flash'} · {(meeting.aiCost?.breakdown.summaryTokens ?? 0).toLocaleString()} Tokens
                     </div>
                   </div>
                 </div>
@@ -2438,6 +2592,24 @@ export const MeetingSummaryView: React.FC = () => {
                   ￥{(meeting.aiCost?.breakdown.summaryCostYuan ?? 0).toFixed(4)}
                 </div>
               </div>
+
+              {/* 5. 全家桶扩展工具 (OCR / TTS / 联网核查) */}
+              {(meeting.aiCost?.breakdown.toolsCostYuan ?? 0) > 0 && (
+                <div className="p-2.5 bg-subtle rounded-lg border border-border-subtle flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-base">🧰</span>
+                    <div>
+                      <div className="font-medium text-text-primary">多模态工具 (OCR / TTS / 联网)</div>
+                      <div className="text-[11px] text-text-tertiary font-mono tabular-nums">
+                        OCR {meeting.aiCost?.breakdown.ocrPages ?? 0} 页 · TTS {(meeting.aiCost?.breakdown.ttsChars ?? 0).toLocaleString()} 字
+                      </div>
+                    </div>
+                  </div>
+                  <div className="font-mono font-semibold text-text-primary tabular-nums">
+                    ￥{(meeting.aiCost?.breakdown.toolsCostYuan ?? 0).toFixed(4)}
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="text-[11px] text-text-tertiary bg-canvas p-2.5 rounded-lg border border-border-subtle leading-relaxed">

@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { LocalAsrClient, createWavFromPcm16, normalizeOpenAiAsrEndpoint } from '../localAsrClient';
+import {
+  LocalAsrClient,
+  createWavFromPcm16,
+  normalizeOpenAiAsrEndpoint,
+  normalizeDeepSeekAsrEndpoint,
+} from '../localAsrClient';
 import type { AsrTranscriptEvent } from '../realStreamingAsrClient';
 
 describe('LocalAsrClient 本地离线 ASR 客户端 (Plan 027 T02 TDD)', () => {
@@ -200,5 +205,180 @@ describe('LocalAsrClient 本地离线 ASR 客户端 (Plan 027 T02 TDD)', () => {
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/v1')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
     expect(normalizeOpenAiAsrEndpoint('http://127.0.0.1:8000/v1/audio/transcriptions')).toBe('http://127.0.0.1:8000/v1/audio/transcriptions');
+    expect(normalizeOpenAiAsrEndpoint('https://api.deepseek.com/v1/tools/asr')).toBe('https://api.deepseek.com/v1/tools/asr');
+  });
+
+  it('normalizeDeepSeekAsrEndpoint 应将基础域名或 /v1 规整为标准 /v1/tools/asr 路径 (Plan 029 T03)', () => {
+    expect(normalizeDeepSeekAsrEndpoint('')).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(normalizeDeepSeekAsrEndpoint('https://api.deepseek.com')).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(normalizeDeepSeekAsrEndpoint('https://api.deepseek.com/v1/')).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(normalizeDeepSeekAsrEndpoint('https://api.deepseek.com/v1/tools/asr')).toBe('https://api.deepseek.com/v1/tools/asr');
+  });
+
+  it('DeepSeek HTTP 协议 (deepseek_http)：发送纯净单 file 表单并回传服务端 duration_ms 用量 (Plan 029 T03)', async () => {
+    let capturedUrl = '';
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody: FormData | null = null;
+    const usages: Array<{ durationMs: number; source: 'mic' | 'system' }> = [];
+    const events: AsrTranscriptEvent[] = [];
+
+    global.fetch = vi.fn().mockImplementation((url: string, init: any) => {
+      capturedUrl = url;
+      capturedHeaders = init.headers;
+      capturedBody = init.body;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          request_id: 'req_ds_asr_01',
+          text: '使用 DeepSeek 全家桶语音识别接口',
+          duration_ms: 3600,
+        }),
+      });
+    });
+
+    const client = new LocalAsrClient({
+      protocol: 'deepseek_http',
+      endpoint: 'https://api.deepseek.com/v1',
+      apiKey: 'mock-ds-key',
+      onTranscriptEvent: (ev) => events.push(ev),
+      onAsrUsage: (u) => usages.push(u),
+    });
+
+    await client.start();
+    client.sendAudioChunk(new Uint8Array(32000), 'mic');
+    await client.flush('mic');
+
+    expect(capturedUrl).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(capturedHeaders.Authorization).toBe('Bearer mock-ds-key');
+    expect(capturedBody).toBeInstanceOf(FormData);
+    expect(capturedBody!.get('file')).toBeTruthy();
+    expect(capturedBody!.get('model')).toBeNull();
+    expect(capturedBody!.get('prompt')).toBeNull();
+
+    expect(usages).toEqual([{ durationMs: 3600, source: 'mic' }]);
+    expect(events).toHaveLength(1);
+    expect(events[0].source).toBe('mic');
+    expect(events[0].text).toBe('使用 DeepSeek 全家桶语音识别接口');
+
+    await client.stop();
+  });
+
+  it('双轨独立缓冲：mic 与 system 物理声道应各自独立缓冲并保留对应的 source 标签 (Plan 029 T03)', async () => {
+    const events: AsrTranscriptEvent[] = [];
+    let callIndex = 0;
+
+    global.fetch = vi.fn().mockImplementation(() => {
+      callIndex += 1;
+      const text = callIndex === 1 ? '这是我方麦克风发言' : '这是远端系统内录发言';
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          request_id: `req_${callIndex}`,
+          text,
+          duration_ms: 1500,
+        }),
+      });
+    });
+
+    const client = new LocalAsrClient({
+      protocol: 'deepseek_http',
+      endpoint: 'https://api.deepseek.com/v1/tools/asr',
+      apiKey: 'mock-ds-key',
+      onTranscriptEvent: (ev) => events.push(ev),
+    });
+
+    await client.start();
+    client.sendAudioChunk(new Uint8Array(32000), 'mic');
+    client.sendAudioChunk(new Uint8Array(32000), 'system');
+
+    await client.flush('mic');
+    await client.flush('system');
+
+    expect(events).toHaveLength(2);
+    expect(events[0].source).toBe('mic');
+    expect(events[0].text).toBe('这是我方麦克风发言');
+    expect(events[1].source).toBe('system');
+    expect(events[1].text).toBe('这是远端系统内录发言');
+
+    await client.stop();
+  });
+
+  it('testConnection 静态探测：deepseek_http 协议应向 /v1/tools/asr 发送不含 model 的探测包 (Plan 029 T03)', async () => {
+    let capturedUrl = '';
+    let capturedBody: FormData | null = null;
+    global.fetch = vi.fn().mockImplementation((url: string, init: any) => {
+      capturedUrl = url;
+      capturedBody = init.body;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ request_id: 'probe_1', text: '', duration_ms: 100 }),
+      });
+    });
+
+    const res = await LocalAsrClient.testConnection({
+      protocol: 'deepseek_http',
+      endpoint: 'https://api.deepseek.com/v1',
+      apiKey: 'mock-ds-key',
+    });
+
+    expect(res.success).toBe(true);
+    expect(capturedUrl).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(capturedBody!.get('file')).toBeTruthy();
+    expect(capturedBody!.get('model')).toBeNull();
+  });
+
+  it('testConnection 容灾与协议自识别：Tauri 原生探针报客户端构建错误时应自动回退 fetch，且在 openai_http 下遇到 /tools/asr 自动省略 model 字段', async () => {
+    // 模拟处于 Tauri 窗口环境，且旧版原生探针未启用 TLS 返回 builder error
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {
+      invoke: vi.fn().mockResolvedValue({
+        success: false,
+        latencyMs: 0,
+        message: '连接失败: builder error for url (https://api.deepseek.com/v1/tools/asr)',
+      }),
+    };
+
+    let capturedUrl = '';
+    let capturedBody: FormData | null = null;
+    global.fetch = vi.fn().mockImplementation((url: string, init: RequestInit) => {
+      capturedUrl = url;
+      capturedBody = init.body as FormData;
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => ({ request_id: 'probe_fallback_ok', text: '', duration_ms: 500 }),
+      });
+    });
+
+    try {
+      const res = await LocalAsrClient.testConnection({
+        protocol: 'openai_http',
+        endpoint: 'https://api.deepseek.com/v1/tools/asr',
+        apiKey: 'mock-ds-key',
+      });
+
+      expect(res.success).toBe(true);
+      expect(capturedUrl).toBe('https://api.deepseek.com/v1/tools/asr');
+      expect(capturedBody).not.toBeNull();
+      expect(capturedBody!.get('file')).toBeTruthy();
+      expect(capturedBody!.get('model')).toBeNull();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
+  });
+
+  it('normalizeDeepSeekAsrEndpoint: 遇到遗留的 wss:// 或 /audio/transcriptions 地址应安全收敛至合法的 /v1/tools/asr', async () => {
+    const { normalizeDeepSeekAsrEndpoint } = await import('../localAsrClient');
+    expect(normalizeDeepSeekAsrEndpoint('wss://dashscope.aliyuncs.com/api-ws/v1/inference')).toBe(
+      'https://api.deepseek.com/v1/tools/asr'
+    );
+    expect(normalizeDeepSeekAsrEndpoint('http://127.0.0.1:8000/v1/audio/transcriptions')).toBe(
+      'https://api.deepseek.com/v1/tools/asr'
+    );
+    expect(normalizeDeepSeekAsrEndpoint('https://api.deepseek.com/v1/chat/completions')).toBe(
+      'https://api.deepseek.com/v1/tools/asr'
+    );
   });
 });

@@ -4,7 +4,12 @@ import { formatSeconds } from '../utils/formatTime';
 import { InsightCard, InsightType, TranscriptSegment } from '../types/meeting';
 import { getMeetingPipelineService, type CaptureMode } from '../audio/meetingPipelineService';
 import { getTingxuClient } from '../api/tingxuClient';
-import { getByokLlmClient } from '../api/byokLlmClient';
+import { getByokLlmClient, formatReferenceDocsContext } from '../api/byokLlmClient';
+import {
+  getDeepSeekSuiteClient,
+  calculateDeepSeekTokenCostYuan,
+  calculateDeepSeekToolCostYuan,
+} from '../api/deepseekSuiteClient';
 
 const SPEAKER_DOT_CLASSES = [
   'bg-brand-blue',
@@ -481,6 +486,9 @@ export const InMeetingWorkbench: React.FC = () => {
     updateLiveInsightSettings,
     triggerManualInsight,
     byokSettings,
+    referenceDocs,
+    addMeetingReferenceDoc,
+    recordLocalAiUsage,
   } = useMeetingStore();
 
   const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -490,6 +498,10 @@ export const InMeetingWorkbench: React.FC = () => {
   const [filterKeyword, setFilterKeyword] = useState('');
   const [questionText, setQuestionText] = useState('');
   const [isAsking, setIsAsking] = useState(false);
+  const [enableWebSearch, setEnableWebSearch] = useState(false);
+  const [isUploadingOcr, setIsUploadingOcr] = useState(false);
+  const [ocrFeedback, setOcrFeedback] = useState<string | null>(null);
+  const ocrFileInputRef = useRef<HTMLInputElement | null>(null);
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const [showAudioHelpModal, setShowAudioHelpModal] = useState<boolean>(false);
   const [editingHeaderSpeaker, setEditingHeaderSpeaker] = useState<{
@@ -732,6 +744,40 @@ export const InMeetingWorkbench: React.FC = () => {
     toggleFloatingPill(true);
   }, [toggleFloatingPill]);
 
+  const handleOcrFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setIsUploadingOcr(true);
+    setOcrFeedback(null);
+    try {
+      const ocrRes = await getDeepSeekSuiteClient().recognizeDocumentOcr(
+        { file, purpose: 'rich_layout_recognition' },
+        byokSettings
+      );
+      addMeetingReferenceDoc(meetingId || 'meet_live', {
+        id: ocrRes.id || `ocr_${Date.now()}`,
+        fileName: file.name,
+        pageCount: ocrRes.pageCount,
+        extractedText: ocrRes.fullText,
+        createdAt: new Date().toISOString(),
+      });
+      const ocrCost = calculateDeepSeekToolCostYuan({ type: 'ocr', pageCount: ocrRes.pageCount });
+      recordLocalAiUsage({
+        meetingId: meetingId || 'meet_live',
+        category: 'tools',
+        costYuan: ocrCost,
+        ocrPages: ocrRes.pageCount,
+      });
+      setOcrFeedback(`✓ 已解析《${file.name}》(${ocrRes.pageCount}页)，仅本地会话生效`);
+      setTimeout(() => setOcrFeedback(null), 4000);
+    } catch (err) {
+      setOcrFeedback(`× 资料解析失败: ${(err as Error).message}`);
+    } finally {
+      setIsUploadingOcr(false);
+    }
+  };
+
   const handleAskQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!questionText.trim()) return;
@@ -741,7 +787,7 @@ export const InMeetingWorkbench: React.FC = () => {
     setIsAsking(true);
 
     try {
-      const { byokSettings, gatewayUrl } = useMeetingStore.getState();
+      const { byokSettings, gatewayUrl, referenceDocs: liveRefDocs } = useMeetingStore.getState();
       const isStandaloneConfigured =
         byokSettings.mode === 'standalone' &&
         (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
@@ -750,6 +796,8 @@ export const InMeetingWorkbench: React.FC = () => {
       const chatReq = {
         meetingId: meetingId || 'meet_live',
         question: q,
+        enableWebSearch,
+        referenceContext: formatReferenceDocsContext(liveRefDocs),
         transcripts: transcripts.length
           ? transcripts.map((t) => ({ id: t.id, speaker: t.speaker, text: t.text }))
           : [{ id: 'seg_init', speaker: '系统', text: '本场会议已开启，正在监听双轨音频。' }],
@@ -757,6 +805,17 @@ export const InMeetingWorkbench: React.FC = () => {
 
       if (isStandaloneConfigured) {
         data = await getByokLlmClient().chatCopilot(chatReq, byokSettings);
+        if (data?.usage) {
+          const chatCost = calculateDeepSeekTokenCostYuan(byokSettings.llmModel, data.usage);
+          const chatTokens =
+            data.usage.total_tokens ?? (data.usage.prompt_tokens || 0) + (data.usage.completion_tokens || 0);
+          recordLocalAiUsage({
+            meetingId: meetingId || 'meet_live',
+            category: 'chat',
+            costYuan: chatCost,
+            tokens: chatTokens,
+          });
+        }
       } else {
         const client = getTingxuClient();
         if ('setGatewayUrl' in client) {
@@ -1339,12 +1398,61 @@ export const InMeetingWorkbench: React.FC = () => {
             </div>
           )}
 
-          {/* 底部提问输入框 */}
+          {/* 参考资料状态条与无状态 OCR 反馈 */}
+          {(referenceDocs.length > 0 || ocrFeedback) && (
+            <div
+              data-testid="workbench-page-insights-panel-div-ref-docs-bar"
+              className="px-3 py-1.5 bg-canvas border-t border-border-subtle flex items-center justify-between gap-2 text-[11px] shrink-0"
+            >
+              <div className="flex items-center gap-1.5 truncate text-text-secondary">
+                <span>📄</span>
+                <span className="truncate">
+                  已挂载 {referenceDocs.length} 份参考资料（{referenceDocs.map((d) => d.fileName).join('、')}）
+                </span>
+              </div>
+              {ocrFeedback && (
+                <span className="text-[10px] text-brand-blue shrink-0">{ocrFeedback}</span>
+              )}
+            </div>
+          )}
+
+          {/* 底部提问输入框（集成无状态 OCR 资料注入与受控显式联网开关） */}
           <form
             onSubmit={handleAskQuestion}
             data-testid="workbench-page-insights-panel-form-ask"
             className="p-3 border-t border-border-subtle bg-subtle flex items-center gap-2 shrink-0"
           >
+            <input
+              ref={ocrFileInputRef}
+              type="file"
+              accept=".pdf,.png,.jpg,.jpeg,.webp"
+              data-testid="workbench-page-insights-panel-input-ocr-file"
+              onChange={handleOcrFileUpload}
+              className="hidden"
+            />
+            <button
+              type="button"
+              disabled={isUploadingOcr}
+              onClick={() => ocrFileInputRef.current?.click()}
+              data-testid="workbench-page-insights-panel-btn-upload-ocr"
+              title="导入议程 PDF 或投屏截图（采用 DeepSeek 无状态 OCR 提取文本，云端零留存）"
+              className="px-2.5 py-2 text-xs rounded-md bg-canvas border border-border-subtle hover:border-brand-blue text-text-secondary hover:text-brand-blue transition-colors shrink-0 disabled:opacity-50"
+            >
+              {isUploadingOcr ? '⏳ 解析中' : '📄 资料'}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEnableWebSearch((v) => !v)}
+              data-testid="workbench-page-insights-panel-btn-toggle-web-search"
+              title="显式开启后，本次提问允许调用 DeepSeek 联网核查与网页精读（默认关闭以严守隐私铁律）"
+              className={`px-2.5 py-2 text-xs rounded-md border transition-colors shrink-0 ${
+                enableWebSearch
+                  ? 'bg-brand-blue/15 border-brand-blue text-brand-blue font-semibold'
+                  : 'bg-canvas border-border-subtle text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              🌐 联网{enableWebSearch ? '开' : '关'}
+            </button>
             <input
               type="text"
               value={questionText}
@@ -1403,17 +1511,23 @@ export const InMeetingWorkbench: React.FC = () => {
                   : micStatus === 'error'
                   ? '设备异常'
                   : asrStatus === 'connected'
-                  ? byokSettings.asrProvider === 'local_endpoint'
+                  ? byokSettings.asrProvider === 'deepseek'
+                    ? 'DeepSeek ASR就绪'
+                    : byokSettings.asrProvider === 'local_endpoint'
                     ? '本地ASR就绪'
                     : byokSettings.asrProvider === 'local_embedded'
                     ? '内嵌ASR就绪'
                     : '已就绪'
                   : asrStatus === 'connecting'
-                  ? byokSettings.asrProvider === 'local_endpoint'
+                  ? byokSettings.asrProvider === 'deepseek'
+                    ? 'DeepSeek连接中'
+                    : byokSettings.asrProvider === 'local_endpoint'
                     ? '本地ASR连接中'
                     : '连接中'
                   : asrStatus === 'error'
-                  ? byokSettings.asrProvider === 'local_endpoint'
+                  ? byokSettings.asrProvider === 'deepseek'
+                    ? 'DeepSeek未连接'
+                    : byokSettings.asrProvider === 'local_endpoint'
                     ? '本地ASR未连接'
                     : 'ASR异常'
                   : '拾音中'}

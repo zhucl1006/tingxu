@@ -3,6 +3,8 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { MeetingSummaryView } from '../views/MeetingSummaryView';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { HistoryMeeting } from '../../types/meeting';
+import { getByokLlmClient } from '../../api/byokLlmClient';
+import { getDeepSeekSuiteClient } from '../../api/deepseekSuiteClient';
 
 const mediaRelease = vi.fn();
 vi.mock('../../audio/localRecording', async (importOriginal) => ({
@@ -81,6 +83,7 @@ describe('MeetingSummaryView - 会后 Copilot 助手与原地人工修订功能 
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    useMeetingStore.getState().resetByokSettings();
     useMeetingStore.setState({
       historyMeetings: [JSON.parse(JSON.stringify(mockMeeting))],
       activeSummaryMeeting: JSON.parse(JSON.stringify(mockMeeting)),
@@ -306,5 +309,72 @@ describe('MeetingSummaryView - 会后 Copilot 助手与原地人工修订功能 
     expect(screen.getByText('经过评审，我们同意全面采用 TiDB 数据库分布式方案。')).toBeDefined();
     const updated = useMeetingStore.getState().activeSummaryMeeting;
     expect(updated?.transcripts?.[0].text).toBe('经过评审，我们同意全面采用 TiDB 数据库分布式方案。');
+  });
+
+  it('9. 支持显式点亮【联网查证】开关调用 DeepSeek Web Search 工具并计入本地问答账单 (Plan 029 T05)', async () => {
+    useMeetingStore.getState().updateByokSettings({
+      llmProvider: 'deepseek',
+      llmApiKey: 'mock-ds-suite-key',
+      llmModel: 'deepseek-flash',
+    });
+
+    const chatSpy = vi.spyOn(getByokLlmClient(), 'chatCopilot').mockResolvedValueOnce({
+      answer: '经联网核实，TiDB 最新 LTS 版本支持向量检索能力。',
+      citations: [{ segmentId: 'seg_1', quote: '同意采用 TiDB 数据库' }],
+      proposals: [],
+      usage: {
+        prompt_tokens: 1000,
+        completion_tokens: 200,
+        total_tokens: 1200,
+      },
+    });
+
+    render(<MeetingSummaryView />);
+    fireEvent.click(screen.getByTestId('summary-page-btn-tab-right-copilot'));
+
+    const webToggleBtn = screen.getByTestId('summary-page-copilot-btn-toggle-web-search');
+    fireEvent.click(webToggleBtn);
+
+    fireEvent.change(screen.getByTestId('summary-page-copilot-input-ask'), {
+      target: { value: '帮我联网查一下 TiDB 最新 LTS 特性' },
+    });
+    fireEvent.click(screen.getByTestId('summary-page-copilot-btn-send'));
+
+    await waitFor(() => {
+      expect(chatSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          enableWebSearch: true,
+        }),
+        expect.anything()
+      );
+    });
+    expect(screen.getByText('经联网核实，TiDB 最新 LTS 版本支持向量检索能力。')).toBeDefined();
+  });
+
+  it('10. 顶部支持一键调用 DeepSeek TTS 语音朗读纪要并计入工具成本 (Plan 029 T05)', async () => {
+    useMeetingStore.getState().updateByokSettings({
+      llmProvider: 'deepseek',
+      llmApiKey: 'mock-ds-suite-key',
+      shareDeepSeekKey: true,
+      ttsVoiceId: 'stella',
+    });
+
+    const ttsSpy = vi
+      .spyOn(getDeepSeekSuiteClient(), 'synthesizeSpeech')
+      .mockResolvedValueOnce(new Uint8Array([82, 73, 70, 70]).buffer);
+
+    render(<MeetingSummaryView />);
+
+    const ttsBtn = screen.getByTestId('summary-page-header-btn-tts-play');
+    fireEvent.click(ttsBtn);
+
+    await waitFor(() => {
+      expect(ttsSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          voiceId: 'stella',
+        }),
+        expect.anything()
+      );
+    });
   });
 });

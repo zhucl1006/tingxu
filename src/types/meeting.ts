@@ -173,6 +173,29 @@ export interface MeetingAiCostBreakdown {
   summaryTokens: number;
   chatCostYuan: number;
   chatTokens: number;
+  toolsCostYuan?: number;
+  ocrPages?: number;
+  ttsChars?: number;
+  searchCalls?: number;
+}
+
+export interface MeetingReferenceDoc {
+  id: string;
+  fileName: string;
+  pageCount: number;
+  extractedText: string;
+  createdAt: string;
+}
+
+export interface LocalAiUsageInput {
+  meetingId: string;
+  category: 'asr' | 'insights' | 'summary' | 'chat' | 'tools';
+  costYuan: number;
+  tokens?: number;
+  audioSeconds?: number;
+  ocrPages?: number;
+  ttsChars?: number;
+  searchCalls?: number;
 }
 
 export interface MeetingAiCost {
@@ -201,6 +224,7 @@ export interface HistoryMeeting {
   transcripts?: TranscriptSegment[];
   chatHistory?: MeetingChatMessage[];
   aiCost?: MeetingAiCost;
+  referenceDocs?: MeetingReferenceDoc[];
 }
 
 export interface StorageSettings {
@@ -249,8 +273,9 @@ export const DEFAULT_APPEARANCE_SETTINGS: UiAppearanceSettings = {
 
 export type AppRunMode = 'standalone';
 export type LlmProviderType = 'deepseek' | 'qwen' | 'custom' | 'ollama';
-export type AsrProviderType = 'dashscope' | 'custom' | 'local_endpoint' | 'local_embedded';
-export type LocalAsrProtocol = 'openai_http' | 'sherpa_ws';
+export type AsrProviderType = 'deepseek' | 'dashscope' | 'custom' | 'local_endpoint' | 'local_embedded';
+export type LocalAsrProtocol = 'openai_http' | 'deepseek_http' | 'sherpa_ws';
+export type DeepSeekTtsVoiceId = 'stella' | 'tide';
 
 export interface ByokSettings {
   mode?: AppRunMode;
@@ -258,9 +283,13 @@ export interface ByokSettings {
   llmApiKey: string;
   llmBaseUrl: string;
   llmModel: string;
+  summaryModel?: string;
+  enableSummaryThinking?: boolean;
   asrProvider: AsrProviderType;
   asrApiKey: string;
   asrEndpoint: string;
+  shareDeepSeekKey?: boolean;
+  ttsVoiceId?: DeepSeekTtsVoiceId;
   localAsrProtocol?: LocalAsrProtocol;
   localAsrModel?: string;
   enableLlmCorrection?: boolean;
@@ -272,10 +301,14 @@ export const DEFAULT_BYOK_SETTINGS: ByokSettings = {
   llmProvider: 'deepseek',
   llmApiKey: '',
   llmBaseUrl: 'https://api.deepseek.com/v1',
-  llmModel: 'deepseek-chat',
-  asrProvider: 'dashscope',
+  llmModel: 'deepseek-flash',
+  summaryModel: 'deepseek-flash',
+  enableSummaryThinking: true,
+  asrProvider: 'deepseek',
   asrApiKey: '',
-  asrEndpoint: 'wss://dashscope.aliyuncs.com/api-ws/v1/inference',
+  asrEndpoint: 'https://api.deepseek.com/v1/tools/asr',
+  shareDeepSeekKey: true,
+  ttsVoiceId: 'stella',
   localAsrProtocol: 'openai_http',
   localAsrModel: 'whisper-1',
   enableLlmCorrection: true,
@@ -366,6 +399,9 @@ export interface MeetingState {
   refreshUserBalance: () => Promise<void>;
   aiCost: MeetingAiCost | null;
   fetchMeetingAiCost: (meetingId: string) => Promise<MeetingAiCost | null>;
+  recordLocalAiUsage: (input: LocalAiUsageInput) => MeetingAiCost;
+  referenceDocs: MeetingReferenceDoc[];
+  addMeetingReferenceDoc: (meetingId: string, doc: MeetingReferenceDoc) => void;
 
   // 待办与任务生命周期
   tasks: TaskItem[];

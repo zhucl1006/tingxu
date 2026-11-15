@@ -38,9 +38,10 @@
   - **macOS**：原生基于 Apple `ScreenCaptureKit`，绕过 BlackHole 等虚拟声卡驱动，直接内录会议软件扬声器；
   - **Windows**：基于原生 `WASAPI Loopback`，底层直接捕获系统渲染流；
   - **物理双轨打标**：麦克风（“我”）与扬声器（“对方”）在硬件层物理区隔，从源头杜绝角色混淆。
-- ⚡ **单机免部署开箱即用（BYOK - Bring Your Own Key）**
-  - **语音识别双轨演进**：既支持配置阿里云百炼（DashScope ASR），也支持直连本地运行的 Faster-Whisper / Sherpa-ONNX / OpenAI 格式本地端点，或内嵌轻量 SenseVoice 离线模型，实现 100% 断网可用；
-  - **大模型多端适配**：支持 DeepSeek、通义千问，以及标准 OpenAI 兼容协议（支持接入 Ollama 本地离线大模型、Kimi、智谱 GLM、硅基流动等）；
+- ⚡ **单机免部署开箱即用（BYOK & DeepSeek 全家桶 One-Key）**
+  - **One-Key 全家桶一钥驱动**：默认支持仅填入 **1 个 DeepSeek API Key**，即可同步驱动 `deepseek-flash`（1M 上下文多模态）/ `deepseek-v4-pro` 快慢分级 `thinking` 推理、双轨独立 VAD 云端语音识别（`/v1/tools/asr`，限时 0.39 元/小时）、会前/会中无状态文档与截图 OCR（`/v1/tools/ocr`）、受控联网查证（`deepseek_web_search` / `deepseek_read_url`）以及会后纪要 TTS 语音播报（`/v1/tools/tts`），并内置北京时间峰谷/缓存精准人民币账单统计；
+  - **语音识别多轨自由**：除 DeepSeek 云端 ASR 外，既支持阿里云百炼（DashScope ASR），也支持直连本地 Faster-Whisper / Sherpa-ONNX 端点或内嵌轻量 SenseVoice 离线模型，实现 100% 断网可用；
+  - **大模型多端适配**：支持 DeepSeek 全家桶、通义千问，以及标准 OpenAI 兼容协议（支持接入 Ollama 本地离线大模型、Kimi、智谱 GLM、硅基流动等）；
   - 零外部数据库或后端服务依赖，无需注册登录，个人下载即用。
 - 🛡️ **Zero-Content 本地隐私保障**
   - 会议标题、音视频切片、逐字稿与纪要全部存放在本地嵌入式 SQLite（支持全文检索 FTS5）；
@@ -105,28 +106,21 @@
 ### 2. 配置语音识别与大模型
 首次启动后，点击左侧导航栏的 **「设置（Settings）」**：
 
-1. **语音识别（ASR）配置（双轨任选）**：
-   - **方式 A（本地离线，0 费用）**：
-     - 选择「本地独立端点 (Faster-Whisper / Sherpa)」；
-     - 协议支持 `OpenAI 兼容 HTTP`（如 Faster-Whisper Server）或 `Sherpa-ONNX WebSocket`；
-     - 可直接点击「预设: Faster-Whisper」或「预设: Sherpa-ONNX」，并点击「测试端点连通性」；
-   - **方式 B（云端商用，开箱即用）**：
-     - 服务商选择：`阿里云百炼 (DashScope)`；
-     - 填入你的 `DashScope API Key`（开通阿里云百炼实时语音识别服务即可，新用户通常赠送免费额度）。
-2. **大语言模型（LLM）配置**：
-   - 服务商选择：`DeepSeek` 或 `通义千问 (Qwen)` 或 `自定义 OpenAI 兼容接口`；
-   - 填入对应平台的 `API Key` 或本地端点，例如：
-     - DeepSeek: `https://api.deepseek.com/v1`，模型 `deepseek-chat`（推荐，性价比高）
-     - 阿里云百炼: `https://dashscope.aliyuncs.com/compatible-mode/v1`，模型 `qwen-plus`
-     - 本地 Ollama: `http://localhost:11434/v1`，模型 `qwen2.5:7b`（100% 离线，0 费用）
+1. **方式一（推荐：DeepSeek 全家桶 One-Key 一键配置）**：
+   - 在「模型与语音设置」点击 **「预设: DeepSeek 全家桶 (一钥通)」**；
+   - 仅需填入 **1 个 DeepSeek API Key**（`<YOUR_DEEPSEEK_API_KEY>`），即可自动共享驱动 `deepseek-flash` 快慢分级推理、`/v1/tools/asr` 双轨云端语音识别（0.39 元/时）、`/v1/tools/ocr` 资料解析与 `/v1/tools/tts` 纪要朗读；
+2. **方式二（灵活组合本地离线或第三方 ASR/LLM）**：
+   - **本地离线 ASR（0 费用）**：选择「本地独立端点 (Faster-Whisper / Sherpa)」或内嵌轻量 `SenseVoice` 离线模型，100% 断网可用；
+   - **阿里云百炼 ASR**：服务商选择 `阿里云百炼 (DashScope)` 并填入 DashScope Key；
+   - **多端大模型（LLM）**：支持 `deepseek-flash` / `deepseek-v4-pro`、通义千问 `qwen-plus` 或本地 Ollama (`http://localhost:11434/v1`, `qwen2.5:7b`)；
 3. 点击 **「测试连接」**，指示灯变绿即配置完成！
 
 ### 3. 开始你的第一场会议
-1. 点击左上角 **「开始新会议」**；
+1. 点击左上角 **「开始新会议」**（会前或会中可按需点击「📄 资料 OCR」无状态导入议程 PDF/截图注入上下文）；
 2. 授予麦克风与系统音频捕获权限；
-3. 会议中你可以看到左右双栏实时滚动的逐字稿与智能提取的决策待办；
+3. 会议中你可以看到左右双栏实时滚动的逐字稿与智能提取的决策待办（Copilot 支持按需点亮「🌐 联网查证」）；
 4. 会中洞察栏支持随时切换模式（⚡ 手动按需提炼 / ⏱ 定时自动 / ⏸ 关闭）以控制 API 费用；
-5. 点击右上角悬浮窗按钮，可将听序缩小为 42px 迷你胶囊贴在屏幕边角。
+5. 点击右上角悬浮窗按钮，可将听序缩小为 42px 迷你胶囊贴在屏幕边角；会后纪要支持「🔊 朗读纪要」与精确人民币峰谷账单查看。
 
 ---
 
@@ -134,12 +128,30 @@
 
 | 服务类型 | 服务提供商 / 引擎 | 部署方式 | 官网 / 开源项目 | 推荐端点与模型 | 费用与网络 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| **云端全家桶** | **DeepSeek 全家桶 (推荐)** | 云端 SaaS | [platform.deepseek.com](https://platform.deepseek.com) | `deepseek-flash` / `deepseek-v4-pro` + `/v1/tools/asr` + `ocr` + `tts` | **单 Key 复用**（ASR 0.39 元/时 + 峰谷/缓存计费） |
 | **本地 ASR** | **Faster-Whisper** | 本地 Python / Docker | [faster-whisper-server](https://github.com/fedirz/faster-whisper-server) | `http://127.0.0.1:8000/v1/audio/transcriptions` | **免费 / 100% 离线** |
 | **本地 ASR** | **Sherpa-ONNX** | 本地可执行文件 | [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) | `ws://127.0.0.1:6006` | **免费 / 100% 离线** |
 | **云端 ASR** | **阿里云百炼** | 云端 SaaS | [aliyun.com/product/bailian](https://www.aliyun.com/product/bailian) | 实时语音转写 (DashScope) | 赠送额度 / 按量计费 |
 | **本地 LLM** | **Ollama** | 本地运行 | [ollama.ai](https://ollama.ai) | `qwen2.5:7b` (`http://localhost:11434/v1`) | **免费 / 100% 离线** |
-| **云端 LLM** | **DeepSeek** | 云端 SaaS | [platform.deepseek.com](https://platform.deepseek.com) | `deepseek-chat` (性价比极高，推荐) | 用户自备 Key 直连 |
 | **云端 LLM** | **通义千问 Qwen** | 云端 SaaS | [dashscope.aliyun.com](https://dashscope.aliyun.com) | `qwen-plus` / `qwen-2.5-72b` | 用户自备 Key 直连 |
+
+### 🌟 DeepSeek 全家桶（One-Key 一钥通）能力详解
+
+听序深度适配了 DeepSeek 官方发布的「全家桶应用 API」，只需在 **「系统设置 → 快速填充：DeepSeek 全家桶」** 中填入 **1 个 DeepSeek API Key**，即可解锁全链路多模态会议辅助：
+
+1. **快慢双模分级推理（Flash + Thinking / V4-Pro）**
+   - **会中极速响应**：实时同音字纠偏与增量洞察固定采用非思考模式的 `deepseek-flash`（1M 超长上下文），结合固定前缀吃满 Prompt Cache 缓存命中折扣（空闲时段低至 `0.02 元/百万 Tokens`）；
+   - **会后深度纪要**：结束会议生成全局总结时，默认自动开启 `thinking: { type: "enabled" }` 深度思考推理（或一键切换 `deepseek-v4-pro`），一次性通读数小时完整逐字稿提炼高精决策与待办。
+2. **物理双轨独立 VAD 云端语音转写（`/v1/tools/asr`）**
+   - 麦克风（`我`）与系统内录（`远端参会者`）分别拥有独立的智能 VAD 自然断句缓冲，双人同时发言不串轨；
+   - 经 Tauri Rust 原生 HTTPS (`native-tls`) 免 CORS 通道直连，限时优惠 `0.39 元/小时`（滤除静音后 1 小时会议实付仅约 **0.25 元**）。
+3. **会前/会中无状态资料与截图 OCR（`/v1/tools/ocr`）**
+   - 在会中工作台点击 **「📄 资料 OCR」** 即可导入议程 PDF、PPT 或投屏截图；文件采用无状态接口解析后仅保存在本机内存/SQLite 作为背景锚点，**不在云端留存文件**，大幅提升专有名词与架构术语识别准确度。
+4. **受控外部联网查证（Opt-in Web Search & Read URL）**
+   - 严格恪守 `Zero-Content` 隐私红线，联网搜索**默认关闭**；仅当你在会中或会后 Copilot 主动点亮 **「🌐 联网查证」** 开关时，才按需挂载 `deepseek_web_search` 与 `deepseek_read_url` 核查外部概念或解读网页链接。
+5. **会后纪要语音朗读（`/v1/tools/tts`）与本地精准人民币账单**
+   - 在会议总结页点击 **「🔊 朗读纪要」**，支持 `Stella`（清亮女声）与 `Tide`（沉稳男声）自然播报综述、决策与待办；
+   - 内置北京时间工作日峰谷电价、缓存命中率及 ASR/OCR/TTS/Search 工具计费引擎，单机模式下也可在「AI 成本明细」查看精确到 `￥0.0001` 的真实人民币账单。
 
 ---
 
@@ -193,12 +205,12 @@ npm run tauri build
   - [x] 双栏工作台、微型悬浮胶囊窗、人工保护机制
   - [x] Local-First SQLite 存储与 FTS5 全文检索
   - [x] 单机化 BYOK (Bring Your Own Key) 支持与 GitHub 全球开源
-- [x] **v0.3.0**
-  - [x] 本地离线 ASR 双轨演进（直连 Faster-Whisper HTTP / Sherpa-ONNX WS）
+- [x] **v0.3.0 ~ v0.3.7**
+  - [x] 本地离线 ASR 双轨演进（直连 Faster-Whisper HTTP / Sherpa-ONNX WS）与智能 VAD 自然断句
   - [x] SenseVoice-Small 本地轻量模型沙箱目录与状态探测
   - [x] 彻底单机免登录体验，移除云端控制面强依赖
   - [x] 实时洞察算力降费控频机制（手动按需 / 定时自动 / 完全关闭）
-  - [x] 会中工作台 ASR 离线感知与端点异常一键引导配置
+  - [x] **DeepSeek 全家桶 One-Key 全栈集成**（`deepseek-flash`/`v4-pro` 快慢分级 `thinking` 推理、双轨独立 VAD `/v1/tools/asr`、无状态 `/v1/tools/ocr` 资料注入、受控联网查证、`/v1/tools/tts` 纪要播报与本地峰谷人民币账单）
 - [ ] **v0.4.0（计划中）**
   - [ ] 导出更多格式（PDF、Markdown 批量导出、Notion / 飞书文档一键同步）
   - [ ] 跨平台音频降噪（基于 RNNoise 端侧降噪插件）

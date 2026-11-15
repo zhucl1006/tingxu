@@ -37,12 +37,21 @@ export interface CopilotChatRequest {
   transcripts: CopilotChatSegment[];
   currentSummary?: any;
   asOfTextVersion?: number;
+  enableWebSearch?: boolean;
+  referenceContext?: string;
 }
 
 export interface CopilotChatResponse {
   answer: string;
   citations: any[];
   proposals?: any[];
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+    prompt_cache_hit_tokens?: number;
+    prompt_cache_miss_tokens?: number;
+  };
 }
 
 export interface GatewayHealthResult {

@@ -313,4 +313,52 @@ describe('MeetingPipelineService - 全局常驻会议流与洞察管道服务 (T
     expect(res.availableMics).toEqual([]);
     expect(res.autoDetectedAuxId).toBeUndefined();
   });
+
+  it('当 byokSettings.asrProvider 为 deepseek 且配置了共享密钥时，自动挂载 deepseek_http LocalAsrClient 并计入本地 ASR 账单与双轨角色 (Plan 029 T03)', async () => {
+    useMeetingStore.getState().updateByokSettings({
+      llmProvider: 'deepseek',
+      llmApiKey: 'mock-shared-ds-key',
+      asrProvider: 'deepseek',
+      asrApiKey: '',
+      shareDeepSeekKey: true,
+      asrEndpoint: 'https://api.deepseek.com/v1/tools/asr',
+    });
+
+    service.attach();
+    useMeetingStore.getState().startMeeting('DeepSeek 全家桶双轨 ASR 会议');
+
+    await vi.waitFor(() => {
+      expect(LocalAsrClient).toHaveBeenCalled();
+      expect(RealStreamingAsrClient).not.toHaveBeenCalled();
+    });
+
+    const localAsrCallOptions = (LocalAsrClient as any).mock.calls[0][0];
+    expect(localAsrCallOptions.protocol).toBe('deepseek_http');
+    expect(localAsrCallOptions.endpoint).toBe('https://api.deepseek.com/v1/tools/asr');
+    expect(localAsrCallOptions.apiKey).toBe('mock-shared-ds-key');
+
+    // 模拟 DeepSeek ASR 用量回调 36 秒 (36000ms) -> 0.39 * (36 / 3600) = 0.0039 元
+    localAsrCallOptions.onAsrUsage({ durationMs: 36000, source: 'system' });
+    const cost = useMeetingStore.getState().aiCost;
+    expect(cost).toBeDefined();
+    expect(cost!.breakdown.asrAudioSeconds).toBe(36);
+    expect(cost!.breakdown.asrCostYuan).toBeCloseTo(0.0039, 5);
+
+    // 模拟收到 system 轨道转写事件，应保留 channel='system' 并标记远端参会者
+    localAsrCallOptions.onTranscriptEvent({
+      taskId: 'ds_task_1',
+      utteranceId: 'utt_sys_1',
+      revision: 1,
+      source: 'system',
+      type: 'FINAL',
+      text: '对方参会者正在共享产品路线图',
+      beginTimeMs: 0,
+      endTimeMs: 3000,
+    });
+
+    const segs = useMeetingStore.getState().transcripts;
+    expect(segs).toHaveLength(1);
+    expect(segs[0].channel).toBe('system');
+    expect(segs[0].speaker).toBe('远端参会者');
+  });
 });

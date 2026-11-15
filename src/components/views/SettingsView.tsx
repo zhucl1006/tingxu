@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useMeetingStore } from '../../store/useMeetingStore';
 import { getByokLlmClient } from '../../api/byokLlmClient';
 import { LocalAsrClient } from '../../audio/localAsrClient';
+import { resolveEffectiveDeepSeekKey } from '../../api/deepseekSuiteClient';
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes <= 0) return '0 B';
@@ -74,17 +75,35 @@ export const SettingsView: React.FC = () => {
     setTestingAsr(true);
     setAsrTestStatus(null);
     try {
-      if (byokSettings.asrProvider === 'dashscope') {
+      if (byokSettings.asrProvider === 'deepseek') {
+        const effectiveKey = resolveEffectiveDeepSeekKey(byokSettings);
+        if (!effectiveKey) {
+          setAsrTestStatus('× 请先在上方填写 DeepSeek API Key（自动共享），或单独填写 ASR 密钥');
+        } else {
+          const res = await LocalAsrClient.testConnection({
+            protocol: 'deepseek_http',
+            endpoint: byokSettings.asrEndpoint || 'https://api.deepseek.com/v1/tools/asr',
+            apiKey: effectiveKey,
+          });
+          if (res.success) {
+            setAsrTestStatus(`✓ DeepSeek 云端 ASR ${res.message}`);
+          } else {
+            setAsrTestStatus(`× ${res.message}`);
+          }
+        }
+      } else if (byokSettings.asrProvider === 'dashscope') {
         if (!byokSettings.asrApiKey.trim()) {
           setAsrTestStatus('× 请先填写阿里云百炼 API Key');
         } else {
           setAsrTestStatus('✓ 阿里云百炼 ASR 凭据格式有效，全双工通道就绪');
         }
       } else if (byokSettings.asrProvider === 'local_endpoint') {
+        const ep = byokSettings.asrEndpoint || 'http://127.0.0.1:8000/v1/audio/transcriptions';
+        const isDsToolsEndpoint = ep.toLowerCase().includes('/tools/asr');
         const res = await LocalAsrClient.testConnection({
-          protocol: byokSettings.localAsrProtocol || 'openai_http',
-          endpoint: byokSettings.asrEndpoint || 'http://127.0.0.1:8000/v1/audio/transcriptions',
-          apiKey: byokSettings.asrApiKey,
+          protocol: isDsToolsEndpoint ? 'deepseek_http' : byokSettings.localAsrProtocol || 'openai_http',
+          endpoint: ep,
+          apiKey: byokSettings.asrApiKey || (isDsToolsEndpoint ? resolveEffectiveDeepSeekKey(byokSettings) : ''),
           model: byokSettings.localAsrModel,
         });
         if (res.success) {
@@ -252,7 +271,12 @@ export const SettingsView: React.FC = () => {
                   updateByokSettings({
                     llmProvider: 'deepseek',
                     llmBaseUrl: 'https://api.deepseek.com/v1',
-                    llmModel: 'deepseek-chat',
+                    llmModel: 'deepseek-flash',
+                    summaryModel: 'deepseek-flash',
+                    enableSummaryThinking: true,
+                    asrProvider: 'deepseek',
+                    asrEndpoint: 'https://api.deepseek.com/v1/tools/asr',
+                    shareDeepSeekKey: true,
                   })
                 }
                 className={`px-2 py-1 rounded text-[11px] border ${
@@ -261,7 +285,7 @@ export const SettingsView: React.FC = () => {
                     : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
                 }`}
               >
-                DeepSeek
+                DeepSeek 全家桶
               </button>
               <button
                 type="button"
@@ -340,19 +364,79 @@ export const SettingsView: React.FC = () => {
             </div>
 
             <div>
-              <label className="block text-[11px] text-text-secondary mb-1">
-                模型名称 (Model)
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-[11px] text-text-secondary">
+                  模型名称 (Model)
+                </label>
+                {byokSettings.llmProvider === 'deepseek' && (
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      data-testid="settings-byok-btn-model-flash"
+                      onClick={() => updateByokSettings({ llmModel: 'deepseek-flash', summaryModel: 'deepseek-flash' })}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                        byokSettings.llmModel === 'deepseek-flash'
+                          ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                          : 'bg-subtle border-border-subtle text-text-tertiary hover:text-text-primary'
+                      }`}
+                    >
+                      deepseek-flash (1M)
+                    </button>
+                    <button
+                      type="button"
+                      data-testid="settings-byok-btn-model-pro"
+                      onClick={() => updateByokSettings({ summaryModel: 'deepseek-v4-pro' })}
+                      className={`px-1.5 py-0.5 rounded text-[10px] font-mono border ${
+                        byokSettings.summaryModel === 'deepseek-v4-pro'
+                          ? 'bg-brand-blue/10 border-brand-blue text-brand-blue'
+                          : 'bg-subtle border-border-subtle text-text-tertiary hover:text-text-primary'
+                      }`}
+                      title="会中保持 Flash 极速响应，会后纪要切换 V4-Pro 旗舰推理"
+                    >
+                      纪要用 v4-pro
+                    </button>
+                  </div>
+                )}
+              </div>
               <input
                 type="text"
                 data-testid="settings-byok-input-llm-model"
                 value={byokSettings.llmModel}
                 onChange={(e) => updateByokSettings({ llmModel: e.target.value })}
-                placeholder="如 deepseek-chat, qwen-plus"
+                placeholder="如 deepseek-flash, deepseek-v4-pro, qwen-plus"
                 className="w-full px-3 py-2 rounded-lg bg-subtle border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
               />
             </div>
           </div>
+
+          {byokSettings.llmProvider === 'deepseek' && (
+            <div className="p-3 rounded-lg bg-subtle/60 border border-border-subtle flex items-center justify-between flex-wrap gap-3">
+              <label className="flex items-center gap-2 cursor-pointer text-xs text-text-primary">
+                <input
+                  type="checkbox"
+                  data-testid="settings-byok-checkbox-summary-thinking"
+                  checked={byokSettings.enableSummaryThinking !== false}
+                  onChange={(e) => updateByokSettings({ enableSummaryThinking: e.target.checked })}
+                  className="rounded border-border-subtle text-brand-blue focus:ring-brand-blue"
+                />
+                <span>会后全局纪要开启深度思考 (Thinking 模式)</span>
+                <span className="text-[10px] text-text-tertiary">会中洞察保持极速 Flash</span>
+              </label>
+
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-[11px] text-text-secondary">纪要播报音色 (TTS):</span>
+                <select
+                  data-testid="settings-byok-select-tts-voice"
+                  value={byokSettings.ttsVoiceId || 'stella'}
+                  onChange={(e) => updateByokSettings({ ttsVoiceId: e.target.value as 'stella' | 'tide' })}
+                  className="px-2.5 py-1 rounded bg-panel border border-border-subtle text-xs text-text-primary focus:outline-none focus:border-brand-blue"
+                >
+                  <option value="stella">Stella（清亮自然女声）</option>
+                  <option value="tide">Tide（沉稳磁性男声）</option>
+                </select>
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-[11px] text-text-secondary mb-1">
@@ -400,7 +484,26 @@ export const SettingsView: React.FC = () => {
             </label>
 
             {/* Provider 选择模式选项卡 */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <button
+                type="button"
+                data-testid="settings-byok-btn-asr-provider-deepseek"
+                onClick={() =>
+                  updateByokSettings({
+                    asrProvider: 'deepseek',
+                    asrEndpoint: 'https://api.deepseek.com/v1/tools/asr',
+                    shareDeepSeekKey: true,
+                  })
+                }
+                className={`px-2.5 py-1 rounded text-[11px] border transition-colors ${
+                  byokSettings.asrProvider === 'deepseek'
+                    ? 'bg-brand-blue/10 border-brand-blue text-brand-blue font-medium'
+                    : 'bg-subtle border-border-subtle text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                🚀 DeepSeek 全家桶 ASR
+              </button>
+
               <button
                 type="button"
                 data-testid="settings-byok-btn-asr-provider-local-endpoint"
@@ -458,6 +561,104 @@ export const SettingsView: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* 0. DeepSeek 全家桶云端 ASR 配置 (One-Key 共享密钥) */}
+          {byokSettings.asrProvider === 'deepseek' && (
+            <div
+              data-testid="settings-byok-card-deepseek-asr"
+              className="space-y-3 p-3.5 rounded-lg bg-subtle/50 border border-border-subtle"
+            >
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-xs font-semibold text-text-primary">
+                    DeepSeek 官方语音识别 (/v1/tools/asr)
+                  </span>
+                  <span className="px-1.5 py-0.2 rounded text-[10px] bg-status-success/15 text-status-success font-mono border border-status-success/30 tabular-nums">
+                    ￥0.39/小时 · 双轨智能 VAD
+                  </span>
+                </div>
+
+                <label className="flex items-center gap-1.5 text-[11px] text-text-secondary cursor-pointer">
+                  <input
+                    type="checkbox"
+                    data-testid="settings-byok-checkbox-share-deepseek-key"
+                    checked={byokSettings.shareDeepSeekKey !== false}
+                    onChange={(e) => updateByokSettings({ shareDeepSeekKey: e.target.checked })}
+                    className="rounded border-border-subtle text-brand-blue focus:ring-brand-blue"
+                  />
+                  <span>直接复用上方 DeepSeek API Key（免二次配钥）</span>
+                </label>
+              </div>
+
+              {byokSettings.shareDeepSeekKey === false && (
+                <div>
+                  <label className="block text-[11px] text-text-secondary mb-1">
+                    独立 DeepSeek ASR API Key
+                  </label>
+                  <input
+                    type="password"
+                    data-testid="settings-byok-input-asr-key"
+                    value={byokSettings.asrApiKey}
+                    onChange={(e) => updateByokSettings({ asrApiKey: e.target.value })}
+                    placeholder="输入独立的 DeepSeek API Key"
+                    className="w-full px-3 py-2 rounded-lg bg-panel border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                  />
+                </div>
+              )}
+
+              <div className="flex gap-2 items-end">
+                <div className="flex-1">
+                  <label className="block text-[11px] text-text-secondary mb-1">
+                    DeepSeek ASR 接口地址
+                  </label>
+                  <input
+                    type="text"
+                    data-testid="settings-byok-input-asr-endpoint"
+                    value={byokSettings.asrEndpoint || 'https://api.deepseek.com/v1/tools/asr'}
+                    onChange={(e) => updateByokSettings({ asrEndpoint: e.target.value })}
+                    className="w-full px-3 py-2 rounded-lg bg-panel border border-border-subtle text-xs text-text-primary font-mono focus:outline-none focus:border-brand-blue"
+                  />
+                </div>
+                <button
+                  type="button"
+                  data-testid="settings-byok-btn-test-asr"
+                  onClick={handleTestAsr}
+                  disabled={testingAsr}
+                  className="px-4 py-2 rounded-lg bg-brand-blue text-white text-xs font-semibold hover:bg-brand-blue-hover transition-colors shadow-2xs disabled:opacity-50"
+                >
+                  {testingAsr ? '⚡ 测试中...' : '⚡ 测试 DeepSeek ASR'}
+                </button>
+              </div>
+
+              {asrTestStatus && (
+                <div
+                  data-testid="settings-byok-text-asr-status"
+                  className={`text-xs mt-1 p-2 rounded ${
+                    asrTestStatus.startsWith('✓')
+                      ? 'bg-status-success-bg text-status-success'
+                      : 'bg-status-danger/10 text-status-danger'
+                  }`}
+                >
+                  {asrTestStatus}
+                </div>
+              )}
+
+              <div
+                data-testid="settings-byok-div-deepseek-suite-guide"
+                className="p-2.5 rounded-lg bg-panel border border-border-subtle text-[11px] text-text-secondary space-y-1 leading-relaxed"
+              >
+                <div className="font-medium text-text-primary">
+                  💡 DeepSeek 全家桶（一钥通全栈）使用说明：
+                </div>
+                <div>
+                  1. <strong className="text-text-primary">单 Key 一键打通</strong>：前往 DeepSeek 开放平台申请 1 个 API Key 填入上方「API Key 密钥」，无需额外配置百炼或部署本地容器，即可同步驱动实时纠偏/洞察（<code className="font-mono">deepseek-flash</code>）、会后深度思考纪要、云端语音识别（<code className="font-mono">/v1/tools/asr</code>）、会中「📄 资料 OCR」解析与会后「🔊 朗读纪要」（<code className="font-mono">/v1/tools/tts</code>）。
+                </div>
+                <div>
+                  2. <strong className="text-text-primary">双轨 VAD 省流与隐私保护</strong>：麦克风（我）与系统扬声器（远端参会者）物理分轨并经本地 VAD 自动剔除静音片段，1 小时会议 ASR 实付仅约 <span className="font-mono tabular-nums">￥0.25</span>；导入的议程文档采用无状态 OCR 解析即焚，Copilot「🌐 联网查证」默认关闭，确保会议内容不外泄。
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* 1. 本地独立端点配置 */}
           {byokSettings.asrProvider === 'local_endpoint' && (

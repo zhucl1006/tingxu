@@ -22,6 +22,12 @@ import { SlidingWindowAccumulator, WindowPayload } from '../engine/slidingWindow
 import { useMeetingStore } from '../store/useMeetingStore';
 import { TranscriptSegment } from '../types/meeting';
 import { formatSeconds } from '../utils/formatTime';
+import {
+  resolveEffectiveAsrApiKey,
+  calculateDeepSeekToolCostYuan,
+  calculateDeepSeekTokenCostYuan,
+} from '../api/deepseekSuiteClient';
+import { getByokLlmClient, formatReferenceDocsContext } from '../api/byokLlmClient';
 
 export class MeetingPipelineService {
   private activeMeetingId: string | null = null;
@@ -136,11 +142,18 @@ export class MeetingPipelineService {
         }
 
         const isVoiceprintEnabled = useMeetingStore.getState().voiceprintSettings.enabled;
+        const defaultSpeakerLabel = isVoiceprintEnabled
+          ? '识别中'
+          : event.source === 'system'
+            ? '远端参会者'
+            : useMeetingStore.getState().isSystemAudioActive
+              ? '我'
+              : '参会发言';
 
         const newSeg: TranscriptSegment = {
           id: event.id,
           channel: event.source,
-          speaker: isVoiceprintEnabled ? '识别中' : '参会发言',
+          speaker: defaultSpeakerLabel,
           speakerStatus: isVoiceprintEnabled ? 'pending' : 'assigned',
           text: event.text,
           beginTimeMs: event.beginTimeMs ?? undefined,
@@ -292,6 +305,10 @@ export class MeetingPipelineService {
     };
 
     const byok = store.byokSettings;
+    const effectiveDeepSeekAsrKey = resolveEffectiveAsrApiKey(byok);
+    const useDualTrackHttpAsr =
+      byok.asrProvider === 'local_endpoint' ||
+      (byok.asrProvider === 'deepseek' && Boolean(effectiveDeepSeekAsrKey));
 
     let asrClient: RealStreamingAsrClient | LocalAsrClient | EmbeddedAsrClient;
     if (byok.asrProvider === 'local_embedded') {
@@ -301,6 +318,25 @@ export class MeetingPipelineService {
         endpoint: byok.asrEndpoint || undefined,
         model: byok.localAsrModel || 'small',
         apiKey: byok.asrApiKey || undefined,
+        ...asrOptions,
+      });
+    } else if (byok.asrProvider === 'deepseek' && Boolean(effectiveDeepSeekAsrKey)) {
+      asrClient = new LocalAsrClient({
+        protocol: 'deepseek_http',
+        endpoint: byok.asrEndpoint || 'https://api.deepseek.com/v1/tools/asr',
+        apiKey: effectiveDeepSeekAsrKey,
+        chunkDurationMs: 8000,
+        meetingId,
+        onAsrUsage: ({ durationMs }) => {
+          if (!isCurrent()) return;
+          const costYuan = calculateDeepSeekToolCostYuan({ type: 'asr', durationMs });
+          useMeetingStore.getState().recordLocalAiUsage({
+            meetingId,
+            category: 'asr',
+            costYuan,
+            audioSeconds: Math.round((durationMs / 1000) * 100) / 100,
+          });
+        },
         ...asrOptions,
       });
     } else if (byok.asrProvider === 'local_endpoint') {
@@ -337,6 +373,17 @@ export class MeetingPipelineService {
       onRmsLevel: (rms) => {
         useMeetingStore.getState().setRmsLevel(rms);
       },
+      onTrackAudioChunk: useDualTrackHttpAsr
+        ? (trackChunk, source) => {
+            if (!acceptingAudio || !isCurrent()) return;
+            if (asrRecordingOffsetMs === null && asrReady && asrClient.isConnected()) {
+              asrRecordingOffsetMs = local.session.samples / 16;
+            }
+            if (asrReady) {
+              (asrClient as LocalAsrClient).sendPcmChunk(trackChunk, source);
+            }
+          }
+        : undefined,
       onAudioChunk: (chunk) => {
         if (!acceptingAudio || !isCurrent()) return;
         if (asrRecordingOffsetMs === null && asrReady && asrClient.isConnected()) {
@@ -347,7 +394,7 @@ export class MeetingPipelineService {
           useMeetingStore.getState().setMicStatus('error', local.session.error);
         }
         this.sentenceBuffer.appendPcm16Chunk(chunk);
-        if (asrReady) {
+        if (asrReady && !useDualTrackHttpAsr) {
           asrClient.sendPcmChunk(chunk);
         }
       },
@@ -485,8 +532,73 @@ export class MeetingPipelineService {
   private async triggerLiveInsight(payload: WindowPayload, meetingId: string): Promise<void> {
     useMeetingStore.getState().setIsExtractingInsights(true);
     try {
-      const currentInsights = useMeetingStore.getState().insights;
+      const storeState = useMeetingStore.getState();
+      const currentInsights = storeState.insights;
       const latestTopic = currentInsights.length > 0 ? currentInsights[currentInsights.length - 1].title : undefined;
+      const byok = storeState.byokSettings;
+      const isStandaloneLlm =
+        byok.mode === 'standalone' && (Boolean(byok.llmApiKey.trim()) || byok.llmProvider === 'ollama');
+
+      if (isStandaloneLlm) {
+        const directRes = await getByokLlmClient().extractLiveInsights(
+          {
+            newStableText: payload.combinedText,
+            currentTopicSummary: latestTopic,
+            contextAnchors: payload.segments.map((s) => ({
+              segmentId: s.id,
+              quote: s.text.slice(0, 30),
+            })),
+            referenceContext: formatReferenceDocsContext(storeState.referenceDocs),
+          },
+          byok
+        );
+
+        if (directRes?.usage) {
+          const costYuan = calculateDeepSeekTokenCostYuan(byok.llmModel, directRes.usage);
+          const tokens =
+            directRes.usage.total_tokens ??
+            (directRes.usage.prompt_tokens || 0) + (directRes.usage.completion_tokens || 0);
+          useMeetingStore.getState().recordLocalAiUsage({
+            meetingId,
+            category: 'insights',
+            costYuan,
+            tokens,
+          });
+        }
+
+        if (directRes && directRes.patch) {
+          const { action, topicId, patch } = directRes;
+          const evidence = patch.evidenceRefs?.[0];
+          const cardId = topicId || `topic_${Date.now()}`;
+          const contentText =
+            patch.content ||
+            (Array.isArray(patch.decisions) && patch.decisions.length > 0 ? patch.decisions.join('；') : '');
+
+          if (action === 'UPDATE_TOPIC') {
+            useMeetingStore.getState().applyInsightPatch({
+              op: 'update',
+              targetId: cardId,
+              title: patch.title,
+              content: contentText,
+              evidenceSegmentId: evidence?.segmentId,
+            });
+          } else {
+            useMeetingStore.getState().applyInsightPatch({
+              op: 'add',
+              card: {
+                id: cardId,
+                type: patch.type || (action === 'ADD_TODO' ? 'action' : 'decision'),
+                title: patch.title || '阶段性共识与洞察',
+                content: contentText || '已达成讨论共识',
+                timestamp: formatSeconds(useMeetingStore.getState().elapsedSeconds),
+                evidenceSegmentId: evidence?.segmentId,
+              },
+            });
+          }
+          useMeetingStore.getState().setInsightError(null);
+        }
+        return;
+      }
 
       const res = await fetch(`${useMeetingStore.getState().gatewayUrl}/gateway/v1/live-insights`, {
         method: 'POST',

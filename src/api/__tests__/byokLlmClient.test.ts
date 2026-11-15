@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ByokLlmClient } from '../byokLlmClient';
+import { ByokLlmClient, formatReferenceDocsContext } from '../byokLlmClient';
 import type { ByokSettings } from '../../types/meeting';
 
 describe('ByokLlmClient - 客户端直连大模型适配器测试 (TDD Red -> Green)', () => {
@@ -200,5 +200,140 @@ describe('ByokLlmClient - 客户端直连大模型适配器测试 (TDD Red -> Gr
     expect(result?.patch.title).toBe('交付节点与分工确认');
     expect(result?.patch.type).toBe('decision');
     expect(result?.patch.decisions?.[0]).toContain('11 月 15 日');
+  });
+
+  it('generateMeetingSummary: 开启 enableSummaryThinking 时应注入 thinking={type:enabled} 并剥离 temperature，同时支持 summaryModel 与 referenceContext (Plan 029 T04)', async () => {
+    let capturedBody: any = null;
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                reasoning_content: '先梳理参考议程与现场发言的一致性...',
+                content: JSON.stringify({
+                  suggestedTitle: 'DeepSeek V4.1 全家桶评审',
+                  overview: '确认切换至单 Key 全家桶架构。',
+                  decisions: [],
+                  actions: [],
+                }),
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: 1500,
+            completion_tokens: 450,
+            total_tokens: 1950,
+            prompt_cache_hit_tokens: 1000,
+            prompt_cache_miss_tokens: 500,
+          },
+        }),
+      } as any;
+    });
+
+    const client = new ByokLlmClient();
+    const summary = await client.generateMeetingSummary(
+      {
+        meetingId: 'mtg_ds_think',
+        transcripts: [{ segmentId: 'seg_1', speaker: '我', text: '我们采用 DeepSeek 全家桶。' }],
+        referenceContext: '【议程 PDF】：1. 评估 V4.1-Flash 1M 上下文；2. 评估 /v1/tools/asr',
+      },
+      {
+        ...mockSettings,
+        llmModel: 'deepseek-flash',
+        summaryModel: 'deepseek-v4-pro',
+        enableSummaryThinking: true,
+      }
+    );
+
+    expect(capturedBody.model).toBe('deepseek-v4-pro');
+    expect(capturedBody.thinking).toEqual({ type: 'enabled' });
+    expect(capturedBody.temperature).toBeUndefined();
+    expect(capturedBody.messages[1].content).toContain('【议程 PDF】');
+    expect(summary.suggestedTitle).toBe('DeepSeek V4.1 全家桶评审');
+    expect(summary._usage?.total_tokens).toBe(1950);
+  });
+
+  it('chatCopilot: 默认严禁挂载联网工具；仅当显式开启 enableWebSearch 时注入 deepseek_web_search 与 deepseek_read_url 并回传 usage (Plan 029 T04)', async () => {
+    const bodies: any[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (_url, init: any) => {
+      bodies.push(JSON.parse(init.body));
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  answer: '经联网核查，DeepSeek ASR 限时特惠 0.39 元/小时。',
+                  evidenceRefs: [{ segmentId: 'seg_1', quote: '核对一下官网最新单价' }],
+                  proposals: [],
+                }),
+              },
+            },
+          ],
+          usage: {
+            prompt_tokens: 800,
+            completion_tokens: 120,
+            total_tokens: 920,
+          },
+        }),
+      } as any;
+    });
+
+    const client = new ByokLlmClient();
+    const flashSettings: ByokSettings = {
+      ...mockSettings,
+      llmModel: 'deepseek-flash',
+    };
+
+    // 1. 默认不传 enableWebSearch -> 严禁带 tools
+    await client.chatCopilot(
+      {
+        meetingId: 'mtg_sec_1',
+        question: '刚才说了什么？',
+        transcripts: [{ id: 'seg_1', speaker: '我', text: '核对一下官网最新单价' }],
+      },
+      flashSettings
+    );
+    expect(bodies[0].tools).toBeUndefined();
+
+    // 2. 显式开启 enableWebSearch: true + 传入 referenceContext -> 挂载双联网工具
+    const res = await client.chatCopilot(
+      {
+        meetingId: 'mtg_sec_1',
+        question: '帮我查一下官网最新 ASR 价格',
+        transcripts: [{ id: 'seg_1', speaker: '我', text: '核对一下官网最新单价' }],
+        enableWebSearch: true,
+        referenceContext: '会前成本预算上限：每小时不超过 0.5 元',
+      },
+      flashSettings
+    );
+
+    expect(bodies[1].tools).toEqual([
+      { type: 'deepseek_web_search', name: 'deepseek_web_search' },
+      { type: 'deepseek_read_url', name: 'deepseek_read_url' },
+    ]);
+    expect(bodies[1].messages[1].content).toContain('会前成本预算上限');
+    expect(res.usage?.total_tokens).toBe(920);
+  });
+
+  it('formatReferenceDocsContext: 应将 OCR 提取的参考资料格式化为结构化提示词片段 (Plan 029 T04)', () => {
+    const formatted = formatReferenceDocsContext([
+      {
+        id: 'doc_1',
+        fileName: 'Q4架构评审议程.pdf',
+        pageCount: 3,
+        extractedText: '第一部分：单机 BYOK 全家桶升级',
+        createdAt: '2026-11-14T15:00:00Z',
+      },
+    ]);
+    expect(formatted).toContain('Q4架构评审议程.pdf');
+    expect(formatted).toContain('共 3 页');
+    expect(formatted).toContain('第一部分：单机 BYOK 全家桶升级');
   });
 });

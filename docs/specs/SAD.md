@@ -3,8 +3,8 @@
 **项目名称：** 听序（Tingxu）— AI 实时会议记录与智能纪要桌面助手  
 **代码仓库名：** `tingxu`  
 **项目代号：** `tingxu-desktop`  
-**文档版本：** v0.3（开源单机 BYOK 与双模架构升级）  
-**最后更新：** 2026-11-06  
+**文档版本：** v0.4（开源单机 BYOK、DeepSeek One-Key 全家桶多模态适配与双模架构升级）  
+**最后更新：** 2026-11-14  
 **架构负责人：** 听序核心研发架构团队  
 
 ---
@@ -39,8 +39,8 @@
 │ 桌面端框架        │ Tauri 2.0 (Rust + React)      │ 内存仅 30-50MB     │
 │ Windows 音频采集  │ WASAPI Loopback (原生)        │ 零驱动无感捕获     │
 │ macOS 音频采集    │ ScreenCaptureKit (macOS 13+)  │ 苹果官方免驱通道   │
-│ 流式 ASR 引擎     │ 阿里百炼 / 讯飞 ASR WebSocket │ 中文识别精度行业最高│
-│ 大模型纪要引擎    │ DeepSeek-V3 + Qwen-2.5-72B    │ 极高性价比、双互备 │
+│ 流式/VAD ASR 引擎 │ DeepSeek `/v1/tools/asr` / 百炼 / 本地离线│ 单 Key 复用 0.39元/时或离线0费│
+│ 大模型纪要引擎    │ DeepSeek-V4.1-Flash / Pro + Qwen  │ 1M 上下文快慢分级推理、双互备 │
 │ 客户端本地数据库  │ SQLite 3 (Rusqlite + FTS5)    │ 本地全文检索、可靠 │
 │ 云端控制面后端    │ Node.js (NestJS) + PostgreSQL │ 强事务 ACID 保障交易│
 └───────────────────┴───────────────────────────────┴────────────────────┘
@@ -227,6 +227,13 @@ classDiagram
 ### ADR-004：系统密钥库与本地数据库加密
 - **背景**：本地 SQLite 包含会议明文和纪要，需防范其他本地程序非法窥视。
 - **决策**：在 Windows 上利用 DPAPI（Data Protection API），在 macOS 上利用 Keychain（系统钥匙串）安全保存本地加密密钥。SQLite 推荐结合 SQLCipher 拓展提供透明加密。
+
+### ADR-005：DeepSeek One-Key 全家桶快慢分级与隐私保护架构
+- **背景**：DeepSeek 全家桶应用 API 提供 `deepseek-flash`（1M 多模态）、`deepseek-v4-pro` 及五大独立工具（`/v1/tools/asr`、`ocr`、`tts`、`search`、`fetch`），可将单机 BYOK 从“双平台双 Key”收敛为“单 Key 一站闭环”，但联网搜索与云端文件托管存在潜在会议内容外泄风险。
+- **决策**：
+  1. **高内聚客户端与免 CORS 原生代理**：由 `DeepSeekSuiteClient` 统一封装五大独立工具协议与北京时间（UTC+8）峰谷/缓存/工具精准计费；Rust `local_model.rs` 与 `LocalAsrClient` 为 `/v1/tools/asr` 提供纯净单 `file` 表单免 CORS 通道，并为 `mic`/`system` 维护物理双轨独立 `SmartVadBuffer`；
+  2. **快慢双模分级推理**：会中高频纠偏与增量洞察固定采用极速非思考 `deepseek-flash`；会后全局总结按需开启 `thinking: { type: "enabled" }`（自动剥离无效 `temperature`）或路由至 `deepseek-v4-pro`；
+  3. **严守 Zero-Content 隐私红线**：`deepseek_web_search` 与 `deepseek_read_url` 默认强制关闭，仅在用户于 Copilot 显式开启「联网查证」时注入；会前/会中参考文档采用无状态 `/v1/tools/ocr` 解析后仅存于本地内存/SQLite，不持久化托管于 `/v1/files`。
 
 ---
 
