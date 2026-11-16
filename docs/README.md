@@ -43,7 +43,8 @@ docs/
 │   ├── insight-engine.md              # 模块三：会中实时洞察与本场问答流水线
 │   ├── local-store.md                 # 模块四：Local-First 存储与全文检索（SQLite + FTS5）
 │   ├── ai-gateway.md                  # 模块五：自建 AI Gateway 网关与模型熔断容灾
-│   └── admin-backend.md               # 模块六：商业化控制面与运营管理后台（NestJS + 微信支付）
+│   ├── admin-backend.md               # 模块六：商业化控制面与运营管理后台（NestJS + 微信支付）
+│   └── multi-template-summary.md      # 模块七：多角色多场景智能会议纪要模板引擎（10大经典模板）
 ├── database/                          # 数据库设计文档
 │   ├── SCHEMA.md                      # 客户端 SQLite 与服务端 PostgreSQL 完整数据字典
 │   └── MIGRATIONS.md                  # 数据库版本迁移与容灾恢复规范
@@ -80,6 +81,7 @@ docs/
 | [local-store.md](./modules/local-store.md) | 本地优先嵌入式存储与秒级全文检索 | SQLite, Rusqlite, SQLCipher, SQLite FTS5 |
 | [ai-gateway.md](./modules/ai-gateway.md) | 商业 Prompt 代理、多模型智能熔断 | DeepSeek-V3, Qwen-2.5-72B, 熔断限流, 零日志留存 |
 | [admin-backend.md](./modules/admin-backend.md) | 用户鉴权、时长权益账、微信支付与审批后台 | Node.js (NestJS), PostgreSQL, 微信商户 Native 支付 |
+| [multi-template-summary.md](./modules/multi-template-summary.md) | 10 大多角色会议模板萃取、多态卡片与专属 Markdown 导出 | Prompt 编排, 强类型 Schema, DRI矩阵, 康奈尔, GRAI |
 
 ---
 

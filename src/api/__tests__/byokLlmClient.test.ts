@@ -158,6 +158,80 @@ describe('ByokLlmClient - 客户端直连大模型适配器测试 (TDD Red -> Gr
     expect(summary.actions).toHaveLength(1);
   });
 
+  it('generateMeetingSummary: 传入指定 templateId (如 grai / cornell / client_visit) 时应注入对应模板系统提示词并解析 templatePayload (Plan 030 T02)', async () => {
+    let capturedBody: any = null;
+    const graiAiOutput = {
+      suggestedTitle: 'Q3 敏捷发布项目复盘',
+      overview: '本次复盘深入对照了 Q3 交付目标与实际落差，明确了技术债根因。',
+      templateId: 'grai',
+      templatePayload: {
+        goalReview: {
+          originalGoals: ['完成 10 大会议模板交付'],
+          targetMetrics: ['单测通过率 100%'],
+        },
+        resultEvaluation: {
+          actualOutcomes: ['按期交付并跑通门禁'],
+          highlights: ['全本地运行零泄漏'],
+          gaps: ['部分边缘模板提示词待持续精进'],
+        },
+        causeAnalysis: [
+          {
+            issue: '前期需求调研时间略长',
+            rootCause: '模板涉及 7 种工种，需多方交叉验证',
+            category: '主观流程',
+            evidenceSegmentId: 'seg_1',
+          },
+        ],
+        insightAndAction: {
+          principles: ['模板元数据必须具备强类型 Schema 约束'],
+          actionItems: [
+            {
+              action: '将 GRAI 视图上线到纪要看板',
+              owner: '前端研发',
+              deadline: '今日下班前',
+              evidenceSegmentId: 'seg_1',
+            },
+          ],
+        },
+      },
+    };
+
+    vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (_url, init: any) => {
+      capturedBody = JSON.parse(init.body);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify(graiAiOutput),
+              },
+            },
+          ],
+        }),
+      } as any;
+    });
+
+    const client = new ByokLlmClient();
+    const summary = await client.generateMeetingSummary(
+      {
+        meetingId: 'mtg_grai_01',
+        templateId: 'grai',
+        transcripts: [
+          { segmentId: 'seg_1', speaker: 'PM', text: '大家开始进行 Q3 复盘，先看目标达成。' },
+        ],
+      },
+      mockSettings
+    );
+
+    expect(capturedBody.messages[0].content).toContain('【GRAI 闭环复盘模式】');
+    expect(summary.templateId).toBe('grai');
+    expect(summary.templatePayload).toBeDefined();
+    expect(summary.templatePayload.goalReview.originalGoals[0]).toBe('完成 10 大会议模板交付');
+    expect(summary.templatePayload.insightAndAction.actionItems[0].owner).toBe('前端研发');
+  });
+
   it('extractLiveInsights: 应能从最新发言中提取决策或待办洞察卡片 (Plan 026 TDD)', async () => {
     const mockInsightPatch = {
       action: 'UPDATE_TOPIC',

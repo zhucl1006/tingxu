@@ -34,6 +34,7 @@ import {
   DEFAULT_BYOK_SETTINGS,
   LiveInsightSettings,
   DEFAULT_LIVE_INSIGHT_SETTINGS,
+  MeetingTemplateId,
 } from '../types/meeting';
 import { InsightPatchApplier, InsightPatch } from '../engine/patchApplier';
 import { getMeetingRepository } from '../storage/meetingRepository';
@@ -1294,6 +1295,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       decisionsCount: finalInsights.filter((i) => i.type === 'decision').length,
       tasksCount: finalInsights.filter((i) => i.type === 'action').length,
       speakers: derivedSpeakers.length ? derivedSpeakers : ['本人麦克风'],
+      templateId: structuredSummary?.templateId || 'drucker',
       structuredSummary,
       insights: finalInsights,
       transcripts: [...transcripts],
@@ -2153,5 +2155,117 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     }
 
     return null;
+  },
+
+  regenerateSummaryWithTemplate: async (meetingId: string, templateId: MeetingTemplateId): Promise<boolean> => {
+    const meeting = get().historyMeetings.find((m) => m.id === meetingId) || get().activeSummaryMeeting;
+    if (!meeting || !meeting.transcripts || meeting.transcripts.length === 0) {
+      return false;
+    }
+
+    try {
+      const { byokSettings } = get();
+      const isStandaloneConfigured =
+        byokSettings.mode === 'standalone' &&
+        (Boolean(byokSettings.llmApiKey.trim()) || byokSettings.llmProvider === 'ollama');
+
+      let newStructuredSummary: any = null;
+
+      if (isStandaloneConfigured) {
+        newStructuredSummary = await getByokLlmClient().generateMeetingSummary(
+          {
+            meetingId,
+            templateId,
+            transcripts: meeting.transcripts.map((t) => ({
+              segmentId: t.id,
+              speaker: t.speaker,
+              text: t.text,
+            })),
+            referenceContext: formatReferenceDocsContext(meeting.referenceDocs || get().referenceDocs),
+          },
+          byokSettings
+        );
+
+        if (newStructuredSummary?._usage) {
+          const summaryModel = byokSettings.summaryModel || byokSettings.llmModel;
+          const costYuan = calculateDeepSeekTokenCostYuan(summaryModel, newStructuredSummary._usage);
+          const tokens =
+            newStructuredSummary._usage.total_tokens ??
+            (newStructuredSummary._usage.prompt_tokens || 0) + (newStructuredSummary._usage.completion_tokens || 0);
+          get().recordLocalAiUsage({
+            meetingId,
+            category: 'summary',
+            costYuan,
+            tokens,
+          });
+        }
+      }
+
+      if (!newStructuredSummary) {
+        return false;
+      }
+
+      newStructuredSummary.templateId = templateId;
+
+      // 铁律 3：不可覆盖的人工编辑保护（保留原先已被用户确认的 decisions / actions）
+      const prevDecisions = meeting.structuredSummary?.decisions || [];
+      const confirmedDecisions = prevDecisions.filter((d) => d.isConfirmed);
+      if (confirmedDecisions.length > 0 && Array.isArray(newStructuredSummary.decisions)) {
+        const existingTitles = new Set(newStructuredSummary.decisions.map((d: any) => d.title));
+        confirmedDecisions.forEach((cd) => {
+          if (!existingTitles.has(cd.title)) {
+            newStructuredSummary.decisions.unshift(cd);
+          }
+        });
+      }
+
+      const prevActions = meeting.structuredSummary?.actions || [];
+      const confirmedActions = prevActions.filter((a) => a.isConfirmed);
+      if (confirmedActions.length > 0 && Array.isArray(newStructuredSummary.actions)) {
+        const existingActionTitles = new Set(newStructuredSummary.actions.map((a: any) => a.title));
+        confirmedActions.forEach((ca) => {
+          if (!existingActionTitles.has(ca.title)) {
+            newStructuredSummary.actions.unshift(ca);
+          }
+        });
+      }
+
+      const history = get().historyMeetings.map((m) => {
+        if (m.id === meetingId) {
+          return {
+            ...m,
+            templateId,
+            structuredSummary: newStructuredSummary,
+            summary: newStructuredSummary.overview || m.summary,
+            decisionsCount: newStructuredSummary.decisions?.length || m.decisionsCount,
+            tasksCount: newStructuredSummary.actions?.length || m.tasksCount,
+          };
+        }
+        return m;
+      });
+
+      const nextActive =
+        get().activeSummaryMeeting?.id === meetingId
+          ? {
+              ...get().activeSummaryMeeting!,
+              templateId,
+              structuredSummary: newStructuredSummary,
+              summary: newStructuredSummary.overview || get().activeSummaryMeeting!.summary,
+              decisionsCount: newStructuredSummary.decisions?.length || get().activeSummaryMeeting!.decisionsCount,
+              tasksCount: newStructuredSummary.actions?.length || get().activeSummaryMeeting!.tasksCount,
+            }
+          : get().activeSummaryMeeting;
+
+      saveStoredHistoryMeetings(history);
+      set({
+        historyMeetings: history,
+        activeSummaryMeeting: nextActive,
+      });
+
+      return true;
+    } catch (err) {
+      console.error('[regenerateSummaryWithTemplate] 模板重新总结失败:', err);
+      return false;
+    }
   },
 }));

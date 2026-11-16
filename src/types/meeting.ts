@@ -98,11 +98,15 @@ export interface TaskItem {
   evidenceSegmentId?: string;
 }
 
+import { MeetingTemplateId, AnyMeetingTemplatePayload } from './template';
+export type { MeetingTemplateId, AnyMeetingTemplatePayload };
+
 export interface SummaryDecisionItem {
   title: string;
   content: string;
   evidenceQuote?: string;
   evidenceSegmentId?: string;
+  isConfirmed?: boolean;
 }
 
 export interface SummaryActionItem {
@@ -136,6 +140,9 @@ export interface MeetingStructuredSummary {
   actions: SummaryActionItem[];
   risks: SummaryRiskItem[];
   facts: SummaryFactItem[];
+  // 10 大多角色会议模板扩展
+  templateId?: MeetingTemplateId;
+  templatePayload?: AnyMeetingTemplatePayload;
 }
 
 export interface RecordingReference {
@@ -218,6 +225,7 @@ export interface HistoryMeeting {
   decisionsCount: number;
   tasksCount: number;
   speakers?: string[];
+  templateId?: MeetingTemplateId;
   // 完整纪要与四维总结资产
   structuredSummary?: MeetingStructuredSummary;
   insights?: InsightCard[];
@@ -562,4 +570,7 @@ export interface MeetingState {
   // 会议标题自主编辑与 AI 重新提炼 (023)
   updateHistoryMeetingTitle: (meetingId: string, newTitle: string) => void;
   regenerateMeetingTitle: (meetingId: string) => Promise<string | null>;
+
+  // 10 大多角色会议模板切换与重生成 (030)
+  regenerateSummaryWithTemplate: (meetingId: string, templateId: MeetingTemplateId) => Promise<boolean>;
 }

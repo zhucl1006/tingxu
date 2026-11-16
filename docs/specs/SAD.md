@@ -235,6 +235,13 @@ classDiagram
   2. **快慢双模分级推理**：会中高频纠偏与增量洞察固定采用极速非思考 `deepseek-flash`；会后全局总结按需开启 `thinking: { type: "enabled" }`（自动剥离无效 `temperature`）或路由至 `deepseek-v4-pro`；
   3. **严守 Zero-Content 隐私红线**：`deepseek_web_search` 与 `deepseek_read_url` 默认强制关闭，仅在用户于 Copilot 显式开启「联网查证」时注入；会前/会中参考文档采用无状态 `/v1/tools/ocr` 解析后仅存于本地内存/SQLite，不持久化托管于 `/v1/files`。
 
+### ADR-006：10 大多角色会议模板契约与多态渲染架构
+- **背景**：不同职业角色（管理层、学生、商务销售、记者、招聘者、PM、秘书）的会议逻辑与思考范式截然不同，粗放的流水账摘要无法满足深度专业诉求。
+- **决策**：
+  1. **模板元数据引擎（MeetingTemplateRegistry）**：集中注册 10 大经典模板元数据（高校、德鲁克、康奈尔、拜访、采访、麦克菲、面试、GRAI、精简版、角色总结），为每套模板配置专属 Prompt 与强类型 Schema 抽取契约；
+  2. **多态 Payload 存储与向后兼容**：在 `MeetingStructuredSummary` 中扩展 `templateId` 与 `templatePayload`，并在切换模板重生成时自动保留用户已确认项（铁律 3 人工编辑保护）；
+  3. **多态组件交互与专属 Markdown 导出**：前端通过 `MeetingTemplateSectionRenderer` 渲染各模板专属 UI（如康奈尔左右双栏、德鲁克 DRI 责任矩阵、GRAI 四阶卡片等），并通过 `templateMarkdownFormatter` 导出规范的 GitHub Flavored Markdown 文本。
+
 ---
 
 ## 6. 安全架构与隐私边界规范

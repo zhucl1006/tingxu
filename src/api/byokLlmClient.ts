@@ -11,6 +11,8 @@
 import type { ByokSettings, MeetingReferenceDoc } from '../types/meeting';
 import type { CopilotChatRequest, CopilotChatResponse } from './tingxuClient';
 import type { DeepSeekTokenUsage } from './deepseekSuiteClient';
+import { getMeetingTemplateById } from '../engine/templateRegistry';
+import type { MeetingTemplateId } from '../types/template';
 
 export interface TestConnectionResult {
   ok: boolean;
@@ -49,6 +51,7 @@ export interface GenerateSummaryRequest {
   meetingId: string;
   transcripts: SummaryTranscriptInput[];
   referenceContext?: string;
+  templateId?: MeetingTemplateId;
 }
 
 /**
@@ -282,7 +285,11 @@ ${groundingRule}
     const model = (settings.summaryModel || settings.llmModel || 'deepseek-flash').trim();
     const enableThinking = settings.llmProvider === 'deepseek' && Boolean(settings.enableSummaryThinking);
 
-    const systemPrompt = `你是一款专为会议场景打造的极简无感 AI 助理「听序（Tingxu）」。
+    // 针对 10 大会议模板进行针对性 Prompt 编排
+    const targetTemplateId = req.templateId;
+    const templateDef = targetTemplateId ? getMeetingTemplateById(targetTemplateId) : null;
+
+    let systemPrompt = `你是一款专为会议场景打造的极简无感 AI 助理「听序（Tingxu）」。
 请对会议全文逐字稿进行结构化整理，输出标准 JSON 格式，严格包含：
 {
   "suggestedTitle": "简练的主题标题（如：架构单机化改造评审）",
@@ -294,6 +301,23 @@ ${groundingRule}
     { "title": "待办事项", "assignee": "负责人或待确认", "dueDate": "截止时间或待确认", "evidenceSegmentId": "seg_xx" }
   ]
 }`;
+
+    if (templateDef) {
+      systemPrompt = `你是一款专为会议场景打造的极简无感 AI 助理「听序（Tingxu）」。
+当前用户指定了会议纪要模式：【${templateDef.name}】（面向角色：${templateDef.targetRole}）。
+${templateDef.description}
+
+${templateDef.systemPromptInstruction}
+
+【通用强约束】：
+1. 严禁凭空捏造事实，尽量在各关键节点挂载原逐字稿的 segmentId（如 "evidenceSegmentId": "seg_xx"）；
+2. 顶层必须输出：
+   - "suggestedTitle": 切题简练的会议标题
+   - "overview": 核心概要综述
+   - "templateId": "${templateDef.id}"
+   - "templatePayload": 符合上述模式定义的多态结构对象
+3. 必须输出纯粹合法的 JSON 格式，不得包含任何 Markdown 代码块外的闲聊文字。`;
+    }
 
     const transcriptContext = (req.transcripts || [])
       .map((t) => `[${t.segmentId}] ${t.speaker}: ${t.text}`)
@@ -341,6 +365,18 @@ ${groundingRule}
     const parsed = extractJson(content);
     if (!parsed) {
       throw new Error('大模型未能输出合规的结构化 JSON 纪要');
+    }
+
+    if (targetTemplateId && !parsed.templateId) {
+      parsed.templateId = targetTemplateId;
+    }
+
+    // 基础 decisions/actions 兼容性垫平（若模型仅输出了 templatePayload）
+    if (!Array.isArray(parsed.decisions)) {
+      parsed.decisions = [];
+    }
+    if (!Array.isArray(parsed.actions)) {
+      parsed.actions = [];
     }
 
     if (data.usage) {

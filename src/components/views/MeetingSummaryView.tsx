@@ -12,6 +12,10 @@ import {
   calculateDeepSeekTokenCostYuan,
   calculateDeepSeekToolCostYuan,
 } from '../../api/deepseekSuiteClient';
+import { ALL_MEETING_TEMPLATES, getMeetingTemplateById } from '../../engine/templateRegistry';
+import { formatTemplateMarkdown } from '../../utils/templateMarkdownFormatter';
+import { MeetingTemplateSectionRenderer } from './MeetingTemplateSectionRenderer';
+import type { MeetingTemplateId } from '../../types/template';
 
 export const MeetingSummaryView: React.FC = () => {
   const {
@@ -40,6 +44,7 @@ export const MeetingSummaryView: React.FC = () => {
     tasks,
     updateHistoryMeetingTitle,
     regenerateMeetingTitle,
+    regenerateSummaryWithTemplate,
     fetchMeetingAiCost,
     recordLocalAiUsage,
     byokSettings,
@@ -67,6 +72,18 @@ export const MeetingSummaryView: React.FC = () => {
 
   // 会后 Copilot 消息与提案一键复制反馈状态 (023)
   const [copiedCopilotId, setCopiedCopilotId] = useState<string | null>(null);
+
+  // 10 大会议模板切换与多态状态 (030)
+  const currentMeetingTemplateId = (activeSummaryMeeting?.templateId as MeetingTemplateId) || 'drucker';
+  const [selectedTemplateId, setSelectedTemplateId] = useState<MeetingTemplateId>(currentMeetingTemplateId);
+  const [isSwitchingTemplate, setIsSwitchingTemplate] = useState(false);
+  const [templateNotice, setTemplateNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    if (activeSummaryMeeting?.templateId) {
+      setSelectedTemplateId(activeSummaryMeeting.templateId);
+    }
+  }, [activeSummaryMeeting?.templateId]);
 
   const handleCopyText = (text: string, id: string) => {
     if (!text) return;
@@ -253,56 +270,12 @@ export const MeetingSummaryView: React.FC = () => {
 
   const overviewText = summary?.overview || meeting.summary;
 
-  // 生成 Markdown 文本
+  // 生成 Markdown 文本 (支持 10 大会议模板专属排版 - Plan 030)
   const generateMarkdown = () => {
-    let md = `# 听序会议纪要 — ${meeting.title}\n\n`;
-    md += `- **开会时间**：${meeting.date}\n`;
-    md += `- **会议时长**：${formatSeconds(meeting.durationSeconds)}\n`;
-    md += `- **参会人员**：${speakers.join('、') || '全员'}\n`;
-    md += `- **数据存储**：本地优先（Local-First SQLite 沙箱，Zero-Content 云端零留存）\n\n`;
-
-    md += `## 📋 全局主旨综述\n${overviewText}\n\n`;
-
-    md += `## 💡 关键结论与决策 (${decisions.length})\n`;
-    if (decisions.length === 0) {
-      md += `*暂无提炼结论*\n\n`;
-    } else {
-      decisions.forEach((d, idx) => {
-        md += `${idx + 1}. **${d.title}**：${d.content}${d.evidenceQuote ? ` *(依据: ${d.evidenceQuote})*` : ''}\n`;
-      });
-      md += `\n`;
-    }
-
-    md += `## ☑️ 待办事项与跟进 (${actions.length})\n`;
-    if (actions.length === 0) {
-      md += `*暂无行动待办*\n\n`;
-    } else {
-      actions.forEach((a, idx) => {
-        const assignee = a.assignee ? ` [负责人: ${a.assignee}]` : '';
-        const due = a.dueDate ? ` [期限: ${a.dueDate}]` : '';
-        md += `${idx + 1}. **${a.title}**${assignee}${due}\n`;
-      });
-      md += `\n`;
-    }
-
-    if (risks.length > 0) {
-      md += `## ⚠️ 风险预警与分歧争议 (${risks.length})\n`;
-      risks.forEach((r, idx) => {
-        md += `${idx + 1}. **${r.title}**：${r.content}\n`;
-      });
-      md += `\n`;
-    }
-
-    if (facts.length > 0) {
-      md += `## 📌 核心事实与数据背景 (${facts.length})\n`;
-      facts.forEach((f, idx) => {
-        md += `${idx + 1}. **${f.title}**：${f.content}\n`;
-      });
-      md += `\n`;
-    }
+    let md = formatTemplateMarkdown(meeting);
 
     if (transcripts.length > 0) {
-      md += `## 🎙️ 完整逐字稿附录 (${transcripts.length} 段)\n`;
+      md += `\n## 🎙️ 完整逐字稿附录 (${transcripts.length} 段)\n`;
       transcripts.forEach((t) => {
         md += `- **[${t.timestamp || '00:00'}] ${t.speaker}**：${t.text}\n`;
       });
@@ -413,6 +386,47 @@ export const MeetingSummaryView: React.FC = () => {
       setTimeout(() => setTitleNotice(null), 5000);
     } finally {
       setIsRegeneratingTitle(false);
+    }
+  };
+
+  // 10 大会议模板切换与重新生成 (030)
+  const handleLocateSegment = (segmentId?: string) => {
+    if (!segmentId) return;
+    const cleanId = segmentId.replace('seg-', '').replace('seg_', '');
+    const matched = transcripts.find((t) => t.id === segmentId || t.id === cleanId || t.id.endsWith(cleanId));
+    if (matched) {
+      setSelectedSegmentId(matched.id);
+    } else {
+      setSelectedSegmentId(segmentId);
+    }
+    setRightPanelTab('transcripts');
+  };
+
+  const handleSwitchTemplate = async () => {
+    if (!meeting || isSwitchingTemplate) return;
+    setIsSwitchingTemplate(true);
+    setTemplateNotice(null);
+    try {
+      const ok = await regenerateSummaryWithTemplate(meeting.id, selectedTemplateId);
+      if (ok) {
+        setTemplateNotice({
+          type: 'success',
+          text: `✓ 已成功切换为【${getMeetingTemplateById(selectedTemplateId).name}】并重新整理纪要！`,
+        });
+      } else {
+        setTemplateNotice({
+          type: 'error',
+          text: '重塑失败，请检查网络或大模型配置。',
+        });
+      }
+    } catch (err: any) {
+      setTemplateNotice({
+        type: 'error',
+        text: err?.message || '模板重新总结失败',
+      });
+    } finally {
+      setIsSwitchingTemplate(false);
+      setTimeout(() => setTemplateNotice(null), 3500);
     }
   };
 
@@ -952,6 +966,59 @@ export const MeetingSummaryView: React.FC = () => {
               </>
             )}
           </div>
+
+          {/* 第 3 行：10 大会议模板切换工具栏 (Plan 030) */}
+          <div className="flex items-center justify-between gap-3 pt-1 border-t border-border-subtle/40 flex-wrap text-xs">
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-semibold text-text-secondary flex items-center gap-1">
+                <span>📐</span>
+                <span>纪要模板:</span>
+              </span>
+
+              <select
+                data-testid="summary-page-template-selector"
+                value={selectedTemplateId}
+                onChange={(e) => setSelectedTemplateId(e.target.value as MeetingTemplateId)}
+                className="px-2.5 py-1 text-xs rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue text-text-primary outline-hidden shadow-2xs font-medium cursor-pointer"
+                title="选择对应的角色与会议模板"
+              >
+                {ALL_MEETING_TEMPLATES.map((tmpl) => (
+                  <option key={tmpl.id} value={tmpl.id}>
+                    {tmpl.icon} {tmpl.name} ({tmpl.targetRole})
+                  </option>
+                ))}
+              </select>
+
+              <button
+                type="button"
+                data-testid="summary-page-btn-switch-template"
+                disabled={isSwitchingTemplate}
+                onClick={handleSwitchTemplate}
+                className="px-3 py-1 rounded-lg text-xs font-semibold bg-brand-blue text-white hover:bg-brand-blue-hover transition-colors shadow-2xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
+                title="根据全场逐字稿，按当前选中的模板重新萃取结构化纪要"
+              >
+                <span>{isSwitchingTemplate ? '⏳' : '🔄'}</span>
+                <span>{isSwitchingTemplate ? '正在重塑...' : '重新按此模板总结'}</span>
+              </button>
+
+              <span className="text-[11px] text-text-tertiary hidden lg:inline-block">
+                {getMeetingTemplateById(selectedTemplateId).description}
+              </span>
+            </div>
+
+            {templateNotice && (
+              <div
+                data-testid="summary-page-banner-template-feedback"
+                className={`text-xs font-medium px-3 py-0.5 rounded-lg flex items-center gap-1 animate-fadeIn shrink-0 shadow-2xs ${
+                  templateNotice.type === 'success'
+                    ? 'bg-status-success-bg text-status-success border border-status-success/30'
+                    : 'bg-status-danger-bg text-status-danger border border-status-danger/30'
+                }`}
+              >
+                <span>{templateNotice.text}</span>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -1311,6 +1378,15 @@ export const MeetingSummaryView: React.FC = () => {
                   data-testid="summary-page-topic-cards-container"
                   className="space-y-6"
                 >
+                  {/* 10 大多角色会议模板多态渲染视图 (Plan 030) */}
+                  {summary?.templatePayload && (
+                    <MeetingTemplateSectionRenderer
+                      templateId={meeting.templateId || summary.templateId || 'drucker'}
+                      payload={summary.templatePayload}
+                      onLocateSegment={handleLocateSegment}
+                    />
+                  )}
+
                   {/* 章节 1：关键结论与决策 (绿色系) */}
                   <div
                     data-testid="summary-page-section-decisions"
