@@ -1,19 +1,19 @@
 {
-  "version": "0.3.7",
-  "notes": "听序 v0.3.7：优化离线 ASR 自然断句切片与纠偏流水线稳定性，升级版本发布体系。",
-  "pub_date": "2026-11-07T05:20:00Z",
+  "version": "0.4.0",
+  "notes": "听序 v0.4.0：全面接入 DeepSeek 全家桶应用 API（一钥通全栈多模态与双轨 VAD ASR），新增 10 大多角色智能会议纪要模板与多态渲染导出。",
+  "pub_date": "2026-11-25T02:45:00Z",
   "platforms": {
     "darwin-aarch64": {
       "signature": "mock_signature_for_aarch64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.7/tingxu_0.3.7_aarch64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.4.0/tingxu_0.4.0_aarch64.dmg"
     },
     "darwin-x86_64": {
       "signature": "mock_signature_for_x86_64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.7/tingxu_0.3.7_x64.dmg"
+      "url": "https://release.tingxu.cn/desktop/v0.4.0/tingxu_0.4.0_x64.dmg"
     },
     "windows-x86_64": {
       "signature": "mock_signature_for_win64",
-      "url": "https://release.tingxu.cn/desktop/v0.3.7/tingxu_0.3.7_x64_en-US.msi"
+      "url": "https://release.tingxu.cn/desktop/v0.4.0/tingxu_0.4.0_x64_en-US.msi"
     }
   }
 }
