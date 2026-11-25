@@ -31,7 +31,7 @@ export const HomeView: React.FC = () => {
   };
 
   return (
-    <div data-testid="home-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-6">
+    <div data-testid="home-page-container" className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
       {/* 顶部欢迎区 */}
       <div className="flex items-center justify-between">
         <div>

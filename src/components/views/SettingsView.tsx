@@ -199,7 +199,7 @@ export const SettingsView: React.FC = () => {
   };
 
   return (
-    <div data-testid="settings-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-6">
+    <div data-testid="settings-page-container" className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
       <div>
         <h1 className="text-xl font-bold text-text-primary tracking-tight">系统设置</h1>
         <p className="text-xs text-text-secondary mt-1">

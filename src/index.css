@@ -10,6 +10,11 @@
   --tingxu-density-gap: 0.75rem;
   --tingxu-density-py: 0.625rem;
 
+  /* 壳层物理尺寸令牌（固定 px，不随 html 根字号缩放膨胀） */
+  --tingxu-sidebar-width: 220px;
+  --tingxu-sidebar-collapsed-width: 60px;
+  --tingxu-header-min-height: 48px;
+
   /* 基础表面 */
   --bg-canvas: #ffffff;
   --bg-subtle: #f8f9fb;

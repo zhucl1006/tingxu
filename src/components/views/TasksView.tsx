@@ -198,7 +198,7 @@ export const TasksView: React.FC = () => {
   };
 
   return (
-    <div data-testid="tasks-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-5 bg-canvas select-none">
+    <div data-testid="tasks-page-container" className="flex-1 min-h-0 overflow-y-auto p-6 space-y-5 bg-canvas select-none">
       {/* 顶部标题与仪表盘 */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
