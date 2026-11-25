@@ -112,8 +112,9 @@ export const MeetingSummaryView: React.FC = () => {
     });
   };
 
-  // 右栏切换：逐字稿录音 vs 会后 Copilot 智能助手
+  // 右栏切换：逐字稿录音 vs 会后 Copilot 智能助手，以及右栏折叠开关
   const [rightPanelTab, setRightPanelTab] = useState<'transcripts' | 'copilot'>('transcripts');
+  const [isRightPanelCollapsed, setIsRightPanelCollapsed] = useState(false);
 
   // Copilot 问答与指令修订状态
   const [copilotInput, setCopilotInput] = useState('');
@@ -152,6 +153,7 @@ export const MeetingSummaryView: React.FC = () => {
     setCompletedActions(new Set());
     setCopiedSection(null);
     setNavigatedFromCopilot(false);
+    setIsRightPanelCollapsed(false);
     if (activeSummaryMeeting?.id && !activeSummaryMeeting.aiCost) {
       void fetchMeetingAiCost(activeSummaryMeeting.id);
     }
@@ -201,7 +203,7 @@ export const MeetingSummaryView: React.FC = () => {
     return (
       <div
         data-testid="summary-page-empty-container"
-        className="flex-1 h-screen flex flex-col items-center justify-center space-y-3 text-text-tertiary"
+        className="flex-1 min-h-0 flex flex-col items-center justify-center space-y-3 text-text-tertiary"
       >
         <span className="text-3xl">📋</span>
         <p className="text-xs">暂无选中的会议纪要</p>
@@ -704,6 +706,7 @@ export const MeetingSummaryView: React.FC = () => {
       }) : undefined;
     if (segment) setSelectedSegmentId(segment.id);
     setActiveTab('summary');
+    setIsRightPanelCollapsed(false);
     setRightPanelTab('transcripts');
     if (fromCopilot) {
       setNavigatedFromCopilot(true);
@@ -721,17 +724,20 @@ export const MeetingSummaryView: React.FC = () => {
   return (
     <div
       data-testid="summary-page-container"
-      className="flex-1 h-screen overflow-hidden flex flex-col bg-canvas text-text-primary select-none animate-fadeIn"
+      className="flex-1 min-h-0 overflow-hidden flex flex-col bg-canvas text-text-primary select-none animate-fadeIn"
     >
-      {/* 沉浸式顶部标题与导航栏 (两段式架构重构 - Plan 026) */}
+      {/* 沉浸式顶部标题与导航栏 (方案 A 紧凑自适应重构) */}
       <header
         data-testid="summary-page-header"
         className="border-b border-border-subtle bg-subtle shrink-0"
       >
-        {/* 第一段：全局导航与主操作工具栏 (固定高度 48px，坚决不发生折行) */}
-        <div className="h-12 px-6 flex items-center justify-between border-b border-border-subtle/60">
-          {/* 左侧：返回导航与面包屑 */}
-          <div className="flex items-center gap-3 min-w-0">
+        {/* 第一段：全局导航与主操作工具栏 (自适应防重叠，杜绝固定高度溢出与单字竖排) */}
+        <div
+          data-testid="summary-page-header-topbar"
+          className="min-h-[48px] px-4 py-1.5 flex flex-wrap items-center justify-between gap-2 border-b border-border-subtle/60"
+        >
+          {/* 左侧：返回导航与精简归档微标 */}
+          <div className="flex items-center gap-2 min-w-0 shrink-0">
             <button
               type="button"
               data-testid="summary-page-btn-back"
@@ -739,43 +745,32 @@ export const MeetingSummaryView: React.FC = () => {
                 setActiveSummaryMeeting(null);
                 setCurrentRoute('home');
               }}
-              className="px-2.5 py-1 text-xs rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-secondary hover:text-text-primary flex items-center gap-1.5 font-medium transition-colors shrink-0 shadow-2xs"
+              className="px-2.5 py-1 text-xs rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-secondary hover:text-text-primary flex items-center gap-1.5 font-medium transition-colors whitespace-nowrap shrink-0 shadow-2xs"
             >
               <span>←</span>
               <span>返回工作台</span>
             </button>
 
-            <span className="text-border-subtle">|</span>
-
-            <div className="flex items-center gap-2 text-xs text-text-tertiary">
-              <span className="font-medium text-text-secondary">会议工作台</span>
-              <span>/</span>
-              <span className="px-2 py-0.5 rounded text-[11px] font-semibold bg-brand-blue-subtle text-brand-blue shrink-0">
-                会议总结报告
-              </span>
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-status-success/10 text-status-success border border-status-success/20 font-mono hidden sm:inline-block">
-                本地免登录归档
-              </span>
-            </div>
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-status-success/10 text-status-success border border-status-success/20 font-mono whitespace-nowrap shrink-0 hidden lg:inline-flex">
+              本地免登录归档
+            </span>
           </div>
 
           {/* 右侧：全局操作工具组 */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 flex-wrap justify-end min-w-0">
             {/* AI 算力成本徽章 */}
             <button
               type="button"
               data-testid="summary-page-header-badge-ai-cost"
               onClick={() => setIsCostModalOpen(true)}
-              className="px-2.5 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1.5 cursor-pointer transition-colors shadow-2xs"
+              className="px-2 py-1 rounded-lg text-xs font-medium bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30 flex items-center gap-1 cursor-pointer transition-colors shadow-2xs whitespace-nowrap shrink-0"
               title="点击查看本场会议 AI 实际调用费用明细"
             >
               <span>💰</span>
               <span className="tabular-nums font-mono">
-                AI 成本 ￥{(meeting.aiCost?.totalCostYuan ?? 0).toFixed(2)}
+                ￥{(meeting.aiCost?.totalCostYuan ?? 0).toFixed(2)}
               </span>
             </button>
-
-            <span className="text-border-subtle/80">|</span>
 
             <button
               type="button"
@@ -783,14 +778,14 @@ export const MeetingSummaryView: React.FC = () => {
               disabled={isSynthesizingTts}
               onClick={handleToggleTtsPlay}
               title="使用 DeepSeek 全家桶 TTS 自然人声播报本场纪要"
-              className={`px-3 py-1 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors shadow-2xs disabled:opacity-50 ${
+              className={`px-2.5 py-1 rounded-lg border text-xs font-medium flex items-center gap-1 transition-colors shadow-2xs whitespace-nowrap shrink-0 disabled:opacity-50 ${
                 isPlayingTts
                   ? 'bg-status-warning-bg border-status-warning-border text-status-warning'
                   : 'bg-panel border-border-subtle hover:bg-hover text-text-primary'
               }`}
             >
               <span>{isSynthesizingTts ? '⏳' : isPlayingTts ? '⏹' : '🔊'}</span>
-              <span>{isSynthesizingTts ? '合成语音...' : isPlayingTts ? '停止朗读' : '朗读纪要'}</span>
+              <span>{isSynthesizingTts ? '合成中...' : isPlayingTts ? '停止朗读' : '朗读纪要'}</span>
             </button>
 
             <button
@@ -798,40 +793,59 @@ export const MeetingSummaryView: React.FC = () => {
               data-testid="summary-page-btn-call-copilot"
               onClick={() => {
                 setActiveTab('summary');
-                setRightPanelTab((prev) => (prev === 'copilot' ? 'transcripts' : 'copilot'));
+                if (isRightPanelCollapsed) {
+                  setIsRightPanelCollapsed(false);
+                  setRightPanelTab('copilot');
+                } else {
+                  setRightPanelTab((prev) => (prev === 'copilot' ? 'transcripts' : 'copilot'));
+                }
               }}
-              className={`px-3 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
-                rightPanelTab === 'copilot'
+              className={`px-2.5 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
+                !isRightPanelCollapsed && rightPanelTab === 'copilot'
                   ? 'bg-brand-blue text-white border-brand-blue shadow-xs'
                   : 'bg-panel border-border-subtle hover:bg-hover text-brand-blue'
               }`}
             >
               <span>🤖</span>
-              <span>{rightPanelTab === 'copilot' ? 'Copilot 对话中' : '会后 Copilot 助手'}</span>
+              <span>{!isRightPanelCollapsed && rightPanelTab === 'copilot' ? 'Copilot 对话中' : '会后 Copilot 助手'}</span>
             </button>
 
             <button
               type="button"
               data-testid="summary-page-btn-copy"
               onClick={handleCopySummary}
-              className="px-3 py-1 rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors shadow-2xs"
+              className="px-2.5 py-1 rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-primary text-xs font-medium transition-colors shadow-2xs whitespace-nowrap shrink-0"
+              title="复制全文纪要"
             >
-              {copied ? '✓ 已复制纪要' : '📋 复制全文'}
+              {copied ? '✓ 已复制' : '📋 复制全文'}
             </button>
 
             <button
               type="button"
               data-testid="summary-page-btn-export-markdown"
               onClick={handleExportMarkdown}
-              className="px-3 py-1 rounded-lg bg-brand-blue text-white hover:bg-brand-blue-hover text-xs font-semibold shadow-xs transition-colors flex items-center gap-1.5"
+              className="px-2.5 py-1 rounded-lg bg-brand-blue text-white hover:bg-brand-blue-hover text-xs font-semibold shadow-xs transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
+              title="导出为 Markdown 文件"
             >
               <span>⬇ 导出 Markdown</span>
             </button>
+
+            {activeTab === 'summary' && (
+              <button
+                type="button"
+                data-testid="summary-page-btn-toggle-right-panel"
+                onClick={() => setIsRightPanelCollapsed((prev) => !prev)}
+                className="px-2 py-1 rounded-lg bg-panel border border-border-subtle hover:bg-hover text-text-secondary hover:text-text-primary text-xs font-medium transition-colors whitespace-nowrap shrink-0"
+                title={isRightPanelCollapsed ? '展开右侧录音与逐字稿栏' : '收起右栏专注阅读纪要'}
+              >
+                {isRightPanelCollapsed ? '◨ 展开右栏' : '◧ 收起右栏'}
+              </button>
+            )}
           </div>
         </div>
 
-        {/* 第二段：会议主题与结构化元数据看板 */}
-        <div className="px-6 py-3 bg-panel/60 space-y-2">
+        {/* 第二段：会议主题与结构化元数据看板（紧凑纵向留白，释放正文阅读区） */}
+        <div className="px-4 py-2 bg-panel/60 space-y-1.5">
           {/* 第 1 行：主题与智能重提炼 */}
           <div className="flex items-center justify-between gap-4">
             {isEditingTitle ? (
@@ -952,11 +966,12 @@ export const MeetingSummaryView: React.FC = () => {
                     <button
                       key={idx}
                       type="button"
+                      data-testid={`summary-page-header-btn-speaker-${idx}`}
                       onClick={() => {
                         setEditingSpeaker(sp);
                         setNewSpeakerName(sp);
                       }}
-                      className="px-2 py-0.5 rounded-md bg-canvas hover:bg-hover border border-border-subtle hover:border-brand-blue cursor-pointer transition-colors text-text-primary text-[11px] font-medium"
+                      className="px-2 py-0.5 rounded-md bg-canvas hover:bg-hover border border-border-subtle hover:border-brand-blue cursor-pointer transition-colors text-text-primary text-[11px] font-medium whitespace-nowrap"
                       title="点击重命名该参会人"
                     >
                       {sp}
@@ -979,8 +994,8 @@ export const MeetingSummaryView: React.FC = () => {
                 data-testid="summary-page-template-selector"
                 value={selectedTemplateId}
                 onChange={(e) => setSelectedTemplateId(e.target.value as MeetingTemplateId)}
-                className="px-2.5 py-1 text-xs rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue text-text-primary outline-hidden shadow-2xs font-medium cursor-pointer"
-                title="选择对应的角色与会议模板"
+                className="px-2.5 py-1 text-xs rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue text-text-primary outline-hidden shadow-2xs font-medium cursor-pointer max-w-[240px]"
+                title={getMeetingTemplateById(selectedTemplateId).description}
               >
                 {ALL_MEETING_TEMPLATES.map((tmpl) => (
                   <option key={tmpl.id} value={tmpl.id}>
@@ -994,14 +1009,14 @@ export const MeetingSummaryView: React.FC = () => {
                 data-testid="summary-page-btn-switch-template"
                 disabled={isSwitchingTemplate}
                 onClick={handleSwitchTemplate}
-                className="px-3 py-1 rounded-lg text-xs font-semibold bg-brand-blue text-white hover:bg-brand-blue-hover transition-colors shadow-2xs flex items-center gap-1 cursor-pointer disabled:opacity-50"
-                title="根据全场逐字稿，按当前选中的模板重新萃取结构化纪要"
+                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-brand-blue text-white hover:bg-brand-blue-hover transition-colors shadow-2xs flex items-center gap-1 whitespace-nowrap shrink-0 cursor-pointer disabled:opacity-50"
+                title={`根据全场逐字稿，按当前选中的模板重新萃取结构化纪要（${getMeetingTemplateById(selectedTemplateId).description}）`}
               >
                 <span>{isSwitchingTemplate ? '⏳' : '🔄'}</span>
                 <span>{isSwitchingTemplate ? '正在重塑...' : '重新按此模板总结'}</span>
               </button>
 
-              <span className="text-[11px] text-text-tertiary hidden lg:inline-block">
+              <span className="text-[11px] text-text-tertiary hidden 2xl:inline-block truncate max-w-md">
                 {getMeetingTemplateById(selectedTemplateId).description}
               </span>
             </div>
@@ -1068,14 +1083,14 @@ export const MeetingSummaryView: React.FC = () => {
       {/* 一级选项卡切换 */}
       <div
         data-testid="summary-page-tabs"
-        className="px-6 border-b border-border-subtle bg-canvas flex items-center justify-between shrink-0 text-xs"
+        className="px-4 border-b border-border-subtle bg-canvas flex flex-wrap items-center justify-between gap-2 shrink-0 text-xs"
       >
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 flex-wrap">
           <button
             type="button"
             data-testid="summary-page-tab-summary"
             onClick={() => setActiveTab('summary')}
-            className={`py-3 border-b-2 font-medium transition-colors ${
+            className={`py-2.5 border-b-2 font-medium transition-colors whitespace-nowrap ${
               activeTab === 'summary'
                 ? 'border-brand-blue text-brand-blue font-semibold'
                 : 'border-transparent text-text-secondary hover:text-text-primary'
@@ -1087,7 +1102,7 @@ export const MeetingSummaryView: React.FC = () => {
             type="button"
             data-testid="summary-page-tab-mindmap"
             onClick={() => setActiveTab('mindmap')}
-            className={`py-3 border-b-2 font-medium transition-colors flex items-center gap-1.5 ${
+            className={`py-2.5 border-b-2 font-medium transition-colors flex items-center gap-1.5 whitespace-nowrap ${
               activeTab === 'mindmap'
                 ? 'border-brand-blue text-brand-blue font-semibold'
                 : 'border-transparent text-text-secondary hover:text-text-primary'
@@ -1100,7 +1115,7 @@ export const MeetingSummaryView: React.FC = () => {
             type="button"
             data-testid="summary-page-tab-transcripts"
             onClick={() => setActiveTab('transcripts')}
-            className={`py-3 border-b-2 font-medium transition-colors ${
+            className={`py-2.5 border-b-2 font-medium transition-colors whitespace-nowrap ${
               activeTab === 'transcripts'
                 ? 'border-brand-blue text-brand-blue font-semibold'
                 : 'border-transparent text-text-secondary hover:text-text-primary'
@@ -1112,12 +1127,12 @@ export const MeetingSummaryView: React.FC = () => {
 
         {/* 纪要子模式切换 (卡片看板 vs 结构化大纲) */}
         {activeTab === 'summary' && (
-          <div className="flex items-center gap-1 bg-subtle p-0.5 rounded-lg border border-border-subtle my-2">
+          <div className="flex items-center gap-1 bg-subtle p-0.5 rounded-lg border border-border-subtle my-1.5 shrink-0">
             <button
               type="button"
               data-testid="summary-page-btn-mode-cards"
               onClick={() => setSummaryMode('cards')}
-              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
                 summaryMode === 'cards'
                   ? 'bg-canvas text-brand-blue font-semibold shadow-xs'
                   : 'text-text-secondary hover:text-text-primary'
@@ -1129,7 +1144,7 @@ export const MeetingSummaryView: React.FC = () => {
               type="button"
               data-testid="summary-page-btn-mode-outline"
               onClick={() => setSummaryMode('outline')}
-              className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+              className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
                 summaryMode === 'outline'
                   ? 'bg-canvas text-brand-blue font-semibold shadow-xs'
                   : 'text-text-secondary hover:text-text-primary'
@@ -1239,16 +1254,18 @@ export const MeetingSummaryView: React.FC = () => {
           </div>
         ) : (
           /* 双栏联动工作台 (左侧卡片/大纲 + 右侧逐字稿与原声播放器) */
-          <div className="flex-1 overflow-hidden flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-border-subtle">
-            {/* 左栏：智能纪要占桌面宽度的三分之二 */}
+          <div className="flex-1 min-h-0 overflow-hidden flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-border-subtle">
+            {/* 左栏：智能纪要（展开右栏占 2/3，收起右栏占满全宽） */}
             <div
               data-testid="summary-page-panel-left"
-              className="flex-1 min-w-0 md:flex-none md:w-2/3 overflow-y-auto p-6 space-y-6"
+              className={`flex-1 min-w-0 ${
+                isRightPanelCollapsed ? 'w-full' : 'md:flex-none md:w-2/3'
+              } overflow-y-auto p-4 lg:p-6 space-y-5`}
             >
               {/* 会议产出关键指标横幅 (Executive Metrics Bar) */}
               <div
                 data-testid="summary-page-metrics-bar"
-                className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 p-3 rounded-xl bg-subtle/70 border border-border-subtle"
+                className="grid grid-cols-2 lg:grid-cols-4 gap-2.5 p-3 rounded-xl bg-subtle/70 border border-border-subtle"
               >
                 <div
                   data-testid="summary-page-metric-decisions"
@@ -2103,39 +2120,42 @@ export const MeetingSummaryView: React.FC = () => {
             </div>
 
             {/* 右栏：录音逐字稿 / 会后 Copilot 助手 */}
+            {!isRightPanelCollapsed && (
             <div
               data-testid="summary-page-panel-right"
-              className="flex-1 min-w-0 md:flex-none md:w-1/3 flex flex-col bg-subtle/40 overflow-hidden"
+              className="flex-1 min-w-0 md:flex-none md:w-1/3 lg:min-w-[300px] flex flex-col bg-subtle/40 overflow-hidden"
             >
               {/* 右栏顶部标签条 */}
-              <div className="px-4 py-2 bg-canvas border-b border-border-subtle flex flex-wrap gap-1 items-center justify-between text-xs shrink-0">
-                <div className="flex items-center gap-1 bg-subtle p-0.5 rounded-lg border border-border-subtle">
+              <div className="px-2.5 py-1.5 bg-canvas border-b border-border-subtle flex items-center justify-between gap-1 text-xs shrink-0">
+                <div className="flex items-center gap-1 bg-subtle p-0.5 rounded-lg border border-border-subtle w-full min-w-0">
                   <button
                     type="button"
                     data-testid="summary-page-btn-tab-right-transcripts"
                     onClick={() => setRightPanelTab('transcripts')}
-                    className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors ${
+                    title="录音与逐字稿"
+                    className={`flex-1 min-w-0 px-1.5 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap truncate ${
                       rightPanelTab === 'transcripts'
                         ? 'bg-canvas text-brand-blue font-semibold shadow-xs'
                         : 'text-text-secondary hover:text-text-primary'
                     }`}
                   >
-                    🎙️ 录音与逐字稿 ({transcripts.length})
+                    🎙️ 逐字稿 ({transcripts.length})
                   </button>
                   <button
                     type="button"
                     data-testid="summary-page-btn-tab-right-copilot"
                     onClick={() => setRightPanelTab('copilot')}
-                    className={`px-2.5 py-1 rounded text-[11px] font-medium transition-colors flex items-center gap-1.5 ${
+                    title="会后 Copilot 助手"
+                    className={`flex-1 min-w-0 px-1.5 py-1 rounded text-[11px] font-medium transition-colors flex items-center justify-center gap-1 whitespace-nowrap truncate ${
                       rightPanelTab === 'copilot'
                         ? 'bg-canvas text-brand-blue font-semibold shadow-xs'
                         : 'text-text-secondary hover:text-text-primary'
                     }`}
                   >
                     <span>🤖</span>
-                    <span>会后 Copilot 助手</span>
+                    <span>Copilot</span>
                     {meeting.chatHistory && meeting.chatHistory.length > 0 && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-brand-blue" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-brand-blue shrink-0" />
                     )}
                   </button>
                 </div>
@@ -2554,6 +2574,7 @@ export const MeetingSummaryView: React.FC = () => {
                 </div>
               )}
             </div>
+            )}
           </div>
         )}
       </div>

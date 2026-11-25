@@ -100,7 +100,7 @@ export const SearchView: React.FC = () => {
   };
 
   return (
-    <div data-testid="search-page-container" className="flex-1 h-screen overflow-y-auto p-6 space-y-6">
+    <div data-testid="search-page-container" className="flex-1 min-h-0 overflow-y-auto p-6 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-xl font-bold text-text-primary tracking-tight">历史会议与全文检索</h1>

@@ -522,6 +522,12 @@ export const InMeetingWorkbench: React.FC = () => {
     large: '舒适 16px (+2px)',
     xlarge: '醒目 18px (+4px)',
   };
+  const FONT_SIZE_COMPACT_LABELS: Record<string, string> = {
+    small: '12px',
+    medium: '14px',
+    large: '16px',
+    xlarge: '18px',
+  };
 
   const handleIncreaseFontSize = () => {
     const currentIndex = FONT_SIZES.indexOf(appearanceSettings.fontSize);
@@ -865,25 +871,26 @@ export const InMeetingWorkbench: React.FC = () => {
   return (
     <div
       data-testid="workbench-page-container"
-      className="flex flex-col h-full w-full flex-1 bg-canvas text-text-primary overflow-hidden select-none"
+      className="flex flex-col flex-1 min-h-0 w-full bg-canvas text-text-primary overflow-hidden select-none"
     >
-      {/* 顶部状态与工具栏 */}
+      {/* 顶部状态与工具栏（方案 A 减负自适应重构） */}
       <header
         data-testid="workbench-page-header-container"
-        className="h-13 px-5 py-3 border-b border-border-subtle bg-subtle flex items-center justify-between shrink-0"
+        className="min-h-[48px] px-4 py-2 border-b border-border-subtle bg-subtle flex flex-wrap items-center justify-between gap-2 shrink-0"
       >
-        <div className="flex items-center gap-3 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap flex-1">
           <button
             type="button"
             data-testid="workbench-page-header-btn-back"
             onClick={() => setCurrentRoute('home')}
-            className="px-2.5 py-1 text-xs rounded bg-panel border border-border-subtle hover:bg-hover text-text-secondary flex items-center gap-1 font-medium transition-colors whitespace-nowrap shrink-0"
+            title="返回工作台"
+            className="px-2 py-1 text-xs rounded bg-panel border border-border-subtle hover:bg-hover text-text-secondary flex items-center gap-1 font-medium transition-colors whitespace-nowrap shrink-0"
           >
-            ← 返回工作台
+            ← 返回
           </button>
           <span
             data-testid="workbench-page-header-badge-status"
-            className={`w-3 h-3 rounded-full shrink-0 ${
+            className={`w-2.5 h-2.5 rounded-full shrink-0 ${
               status === 'RECORDING'
                 ? 'bg-status-danger animate-pulse'
                 : 'bg-text-tertiary'
@@ -906,7 +913,7 @@ export const InMeetingWorkbench: React.FC = () => {
                   }
                 }}
                 autoFocus
-                className="px-2 py-0.5 text-xs bg-canvas border border-brand-blue rounded text-text-primary outline-hidden max-w-[160px] xl:max-w-xs shadow-2xs"
+                className="px-2 py-0.5 text-xs bg-canvas border border-brand-blue rounded text-text-primary outline-hidden max-w-[220px] xl:max-w-xs shadow-2xs"
                 placeholder="修改会议主题..."
               />
               <button
@@ -922,14 +929,14 @@ export const InMeetingWorkbench: React.FC = () => {
               </button>
             </div>
           ) : (
-            <div className="flex items-center gap-1 min-w-0 max-w-[180px] xl:max-w-xs shrink group">
+            <div className="flex items-center gap-1 min-w-[120px] max-w-[320px] shrink group">
               <h1
                 data-testid="workbench-page-header-text-title"
                 onClick={() => {
                   setTitleDraft(title);
                   setIsEditingTitle(true);
                 }}
-                className="text-base font-semibold truncate cursor-pointer hover:text-brand-blue transition-colors"
+                className="text-sm font-semibold truncate cursor-pointer hover:text-brand-blue transition-colors"
                 title={`${title} (点击修改主题)`}
               >
                 {title}
@@ -950,10 +957,10 @@ export const InMeetingWorkbench: React.FC = () => {
           )}
           <HeaderTimer />
 
-          {/* 会中参会人员信息识别展示（支持直接点击胶囊重命名对应声纹说话人） */}
+          {/* 会中参会人员信息识别展示（全宽段可见，支持点击重命名对应声纹说话人） */}
           <div
             data-testid="workbench-page-header-badge-speakers"
-            className="hidden xl:flex items-center gap-1.5 text-xs bg-panel px-2.5 py-1 rounded-md border border-border-subtle whitespace-nowrap overflow-x-auto max-w-sm"
+            className="flex items-center gap-1.5 text-xs bg-panel px-2 py-0.5 rounded-md border border-border-subtle whitespace-nowrap overflow-x-auto max-w-[260px] xl:max-w-sm"
             title="本场端侧声纹识别参会人名单，点击姓名可修改全部同声纹发言"
           >
             <span className="text-text-tertiary whitespace-nowrap shrink-0">👥 参会人:</span>
@@ -977,7 +984,7 @@ export const InMeetingWorkbench: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0 whitespace-nowrap">
+        <div className="flex items-center gap-1.5 flex-wrap shrink-0 whitespace-nowrap">
           {audioDeviceStop && !isDrainingAsr && <span data-testid="workbench-page-header-text-audio-stopping" className="text-xs text-text-secondary">等待音频设备释放…</span>}
           {isDrainingAsr && <span data-testid="workbench-page-header-text-asr-draining" className="text-xs text-text-secondary">正在完成最后一句…</span>}
           {status !== 'RECORDING' ? (
@@ -986,7 +993,7 @@ export const InMeetingWorkbench: React.FC = () => {
               data-testid="workbench-page-header-btn-start-record"
               disabled={isDrainingAsr || isGeneratingSummary || Boolean(audioDeviceStop)}
               onClick={() => (status === 'PAUSED' ? resumeMeeting() : startMeeting(title))}
-              className="px-3 py-1.5 text-xs bg-status-success text-white hover:opacity-90 rounded-md font-medium transition-opacity flex items-center gap-1.5"
+              className="px-2.5 py-1 text-xs bg-status-success text-white hover:opacity-90 rounded-md font-medium transition-opacity flex items-center gap-1 whitespace-nowrap"
             >
               <span>▶</span>
               <span>{status === 'PAUSED' ? '继续录制' : '开始录制'}</span>
@@ -996,14 +1003,17 @@ export const InMeetingWorkbench: React.FC = () => {
               type="button"
               data-testid="workbench-page-header-btn-pause-record"
               onClick={pauseMeeting}
-              className="px-3 py-1.5 text-xs bg-panel border border-border-subtle text-text-primary hover:bg-hover rounded-md font-medium transition-colors"
+              className="px-2.5 py-1 text-xs bg-panel border border-border-subtle text-text-primary hover:bg-hover rounded-md font-medium transition-colors whitespace-nowrap"
             >
               ⏸ 暂停
             </button>
           )}
 
-          {/* 快捷字号缩放胶囊 */}
-          <div className="flex items-center bg-panel border border-border-subtle rounded-md px-1 py-0.5 text-xs">
+          {/* 快捷字号缩放胶囊（精简展示，悬停看完整档位说明） */}
+          <div
+            className="flex items-center bg-panel border border-border-subtle rounded-md px-1 py-0.5 text-xs shrink-0"
+            title={`当前字号：${FONT_SIZE_LABELS[appearanceSettings.fontSize] || '标准 14px'}（快捷键 Cmd/Ctrl + / - / 0）`}
+          >
             <button
               type="button"
               data-testid="workbench-page-header-btn-font-decrease"
@@ -1016,9 +1026,9 @@ export const InMeetingWorkbench: React.FC = () => {
             </button>
             <span
               data-testid="workbench-page-header-badge-font-size"
-              className="px-1.5 text-[11px] text-text-tertiary select-none font-mono"
+              className="px-1 text-[11px] text-text-tertiary select-none font-mono tabular-nums"
             >
-              {FONT_SIZE_LABELS[appearanceSettings.fontSize] || '标准 14px'}
+              {FONT_SIZE_COMPACT_LABELS[appearanceSettings.fontSize] || '14px'}
             </span>
             <button
               type="button"
@@ -1036,21 +1046,22 @@ export const InMeetingWorkbench: React.FC = () => {
             type="button"
             data-testid="workbench-page-header-btn-minimize-to-pill"
             onClick={handleMinimizeToPill}
-            className="px-3 py-1.5 text-xs bg-panel hover:bg-border-subtle text-text-secondary rounded-md transition-colors"
+            title="最小化至桌面极简悬浮条"
+            className="px-2 py-1 text-xs bg-panel border border-border-subtle hover:bg-border-subtle text-text-secondary rounded-md transition-colors whitespace-nowrap"
           >
-            最小化至悬浮条
+            💊 悬浮条
           </button>
           <button
             type="button"
             data-testid="workbench-page-header-btn-end-meeting"
             disabled={isGeneratingSummary || isDrainingAsr}
             onClick={endMeeting}
-            className="px-3 py-1.5 text-xs bg-status-danger text-white hover:opacity-90 rounded-md font-medium transition-opacity disabled:opacity-60 flex items-center gap-1.5"
+            className="px-2.5 py-1 text-xs bg-status-danger text-white hover:opacity-90 rounded-md font-medium transition-opacity disabled:opacity-60 flex items-center gap-1 whitespace-nowrap"
           >
             {isGeneratingSummary ? (
               <>
                 <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                <span>提炼全场总结中...</span>
+                <span>提炼总结中...</span>
               </>
             ) : (
               <span>结束会议</span>
@@ -1204,11 +1215,11 @@ export const InMeetingWorkbench: React.FC = () => {
       )}
 
       {/* 主体工作区：左 54% 洞察看板 + 右 46% 逐字稿 */}
-      <main className="flex flex-1 overflow-hidden">
+      <main className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
         {/* 左侧看板：实时洞察、结论与问答 (54%) */}
         <section
           data-testid="workbench-page-insights-panel-container"
-          className="w-[54%] border-r border-border-subtle flex flex-col bg-canvas overflow-hidden"
+          className="w-[54%] min-w-0 border-r border-border-subtle flex flex-col bg-canvas overflow-hidden"
         >
           {/* 洞察类型筛选 Tab */}
           <div
@@ -1251,16 +1262,16 @@ export const InMeetingWorkbench: React.FC = () => {
           {/* 实时洞察控频与手动提炼工具栏 (Plan 026 算力降费) */}
           <div
             data-testid="workbench-page-insights-panel-toolbar-control"
-            className="px-3 py-1.5 border-b border-border-subtle bg-panel/40 flex items-center justify-between gap-2 shrink-0 text-xs"
+            className="px-3 py-1.5 border-b border-border-subtle bg-panel/40 flex flex-wrap items-center justify-between gap-1.5 shrink-0 text-xs"
           >
             {/* 模式切换小胶囊 */}
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-text-tertiary">模式:</span>
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px] text-text-tertiary whitespace-nowrap">模式:</span>
               <button
                 type="button"
                 data-testid="workbench-page-insights-panel-btn-mode-manual"
                 onClick={() => updateLiveInsightSettings({ mode: 'manual' })}
-                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
                   liveInsightSettings.mode === 'manual'
                     ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/30 font-semibold'
                     : 'text-text-tertiary hover:text-text-secondary'
@@ -1273,7 +1284,7 @@ export const InMeetingWorkbench: React.FC = () => {
                 type="button"
                 data-testid="workbench-page-insights-panel-btn-mode-periodic"
                 onClick={() => updateLiveInsightSettings({ mode: 'periodic' })}
-                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
                   liveInsightSettings.mode === 'periodic'
                     ? 'bg-brand-blue/15 text-brand-blue border border-brand-blue/30 font-semibold'
                     : 'text-text-tertiary hover:text-text-secondary'
@@ -1286,7 +1297,7 @@ export const InMeetingWorkbench: React.FC = () => {
                 type="button"
                 data-testid="workbench-page-insights-panel-btn-mode-disabled"
                 onClick={() => updateLiveInsightSettings({ mode: 'disabled' })}
-                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
+                className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors whitespace-nowrap ${
                   liveInsightSettings.mode === 'disabled'
                     ? 'bg-status-danger/15 text-status-danger border border-status-danger/30 font-semibold'
                     : 'text-text-tertiary hover:text-text-secondary'
@@ -1303,7 +1314,7 @@ export const InMeetingWorkbench: React.FC = () => {
               data-testid="workbench-page-insights-panel-btn-trigger-manual"
               disabled={isExtractingInsights || transcripts.length === 0}
               onClick={() => void triggerManualInsight()}
-              className="px-2.5 py-0.5 rounded bg-brand-blue text-white hover:bg-brand-blue-hover text-[11px] font-medium flex items-center gap-1 shadow-2xs transition-all disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+              className="px-2.5 py-0.5 rounded bg-brand-blue text-white hover:bg-brand-blue-hover text-[11px] font-medium flex items-center gap-1 shadow-2xs transition-all disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap shrink-0"
               title="立即提取当前未整理的发言结论与待办"
             >
               <span>{isExtractingInsights ? '⏳' : '⚡'}</span>
@@ -1416,11 +1427,11 @@ export const InMeetingWorkbench: React.FC = () => {
             </div>
           )}
 
-          {/* 底部提问输入框（集成无状态 OCR 资料注入与受控显式联网开关） */}
+          {/* 底部提问输入框（双行紧凑卡片：全宽输入行 + 资料/联网/提问操作行） */}
           <form
             onSubmit={handleAskQuestion}
             data-testid="workbench-page-insights-panel-form-ask"
-            className="p-3 border-t border-border-subtle bg-subtle flex items-center gap-2 shrink-0"
+            className="p-2.5 border-t border-border-subtle bg-subtle flex flex-col gap-2 shrink-0"
           >
             <input
               ref={ocrFileInputRef}
@@ -1430,29 +1441,6 @@ export const InMeetingWorkbench: React.FC = () => {
               onChange={handleOcrFileUpload}
               className="hidden"
             />
-            <button
-              type="button"
-              disabled={isUploadingOcr}
-              onClick={() => ocrFileInputRef.current?.click()}
-              data-testid="workbench-page-insights-panel-btn-upload-ocr"
-              title="导入议程 PDF 或投屏截图（采用 DeepSeek 无状态 OCR 提取文本，云端零留存）"
-              className="px-2.5 py-2 text-xs rounded-md bg-canvas border border-border-subtle hover:border-brand-blue text-text-secondary hover:text-brand-blue transition-colors shrink-0 disabled:opacity-50"
-            >
-              {isUploadingOcr ? '⏳ 解析中' : '📄 资料'}
-            </button>
-            <button
-              type="button"
-              onClick={() => setEnableWebSearch((v) => !v)}
-              data-testid="workbench-page-insights-panel-btn-toggle-web-search"
-              title="显式开启后，本次提问允许调用 DeepSeek 联网核查与网页精读（默认关闭以严守隐私铁律）"
-              className={`px-2.5 py-2 text-xs rounded-md border transition-colors shrink-0 ${
-                enableWebSearch
-                  ? 'bg-brand-blue/15 border-brand-blue text-brand-blue font-semibold'
-                  : 'bg-canvas border-border-subtle text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              🌐 联网{enableWebSearch ? '开' : '关'}
-            </button>
             <input
               type="text"
               value={questionText}
@@ -1460,27 +1448,54 @@ export const InMeetingWorkbench: React.FC = () => {
               onChange={(e) => setQuestionText(e.target.value)}
               placeholder={isAsking ? '正在生成回答...' : '向听序提问本场会议（如：大家就排期达成一致了吗？）'}
               data-testid="workbench-page-insights-panel-input-ask-question"
-              className="flex-1 px-3 py-2 text-xs bg-canvas border border-border-subtle rounded-md focus:outline-none focus:border-brand-blue text-text-primary placeholder:text-text-tertiary disabled:opacity-60"
+              className="w-full px-3 py-2 text-xs bg-canvas border border-border-subtle rounded-md focus:outline-none focus:border-brand-blue text-text-primary placeholder:text-text-tertiary disabled:opacity-60"
             />
-            <button
-              type="submit"
-              disabled={isAsking || !questionText.trim()}
-              data-testid="workbench-page-insights-panel-btn-send-question"
-              className="px-3.5 py-2 text-xs bg-brand-blue text-white rounded-md hover:bg-brand-blue-hover transition-colors font-medium shrink-0 disabled:opacity-50"
-            >
-              {isAsking ? '思考中...' : '提问'}
-            </button>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <button
+                  type="button"
+                  disabled={isUploadingOcr}
+                  onClick={() => ocrFileInputRef.current?.click()}
+                  data-testid="workbench-page-insights-panel-btn-upload-ocr"
+                  title="导入议程 PDF 或投屏截图（采用 DeepSeek 无状态 OCR 提取文本，云端零留存）"
+                  className="px-2 py-1 text-[11px] rounded-md bg-canvas border border-border-subtle hover:border-brand-blue text-text-secondary hover:text-brand-blue transition-colors whitespace-nowrap shrink-0 disabled:opacity-50"
+                >
+                  {isUploadingOcr ? '⏳ 解析中' : '📄 资料'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEnableWebSearch((v) => !v)}
+                  data-testid="workbench-page-insights-panel-btn-toggle-web-search"
+                  title="显式开启后，本次提问允许调用 DeepSeek 联网核查与网页精读（默认关闭以严守隐私铁律）"
+                  className={`px-2 py-1 text-[11px] rounded-md border transition-colors whitespace-nowrap shrink-0 ${
+                    enableWebSearch
+                      ? 'bg-brand-blue/15 border-brand-blue text-brand-blue font-semibold'
+                      : 'bg-canvas border-border-subtle text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  🌐 联网{enableWebSearch ? '开' : '关'}
+                </button>
+              </div>
+              <button
+                type="submit"
+                disabled={isAsking || !questionText.trim()}
+                data-testid="workbench-page-insights-panel-btn-send-question"
+                className="px-3.5 py-1 text-xs bg-brand-blue text-white rounded-md hover:bg-brand-blue-hover transition-colors font-medium whitespace-nowrap shrink-0 disabled:opacity-50"
+              >
+                {isAsking ? '思考中...' : '提问'}
+              </button>
+            </div>
           </form>
         </section>
 
         {/* 右侧逐字稿：双轨实时转写流 (46%) */}
         <section
           data-testid="workbench-page-transcript-panel-container"
-          className="w-[46%] flex flex-col bg-subtle overflow-hidden relative"
+          className="w-[46%] min-w-0 flex flex-col bg-subtle overflow-hidden relative"
         >
-          {/* 逐字稿顶部主栏：状态与场景模式即时切换 */}
-          <div className="px-3.5 py-2 border-b border-border-subtle bg-canvas flex items-center justify-between gap-2 shrink-0 min-w-0">
-            <div className="flex items-center gap-2 shrink-0">
+          {/* 逐字稿顶部主栏：实时状态 + 过滤搜索框（彻底移除静默横向裁切） */}
+          <div className="px-3 py-2 border-b border-border-subtle bg-canvas flex items-center justify-between gap-2 shrink-0 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 shrink-0">
               <span
                 data-testid="workbench-page-transcript-panel-text-status"
                 className="text-xs font-semibold text-text-primary whitespace-nowrap"
@@ -1537,7 +1552,7 @@ export const InMeetingWorkbench: React.FC = () => {
               {status === 'RECORDING' && micStatus === 'recording' && (
                 <div
                   title="实时麦克风音量能量"
-                  className="w-10 h-1.5 rounded-full bg-subtle overflow-hidden flex items-center border border-border-subtle shrink-0"
+                  className="w-8 h-1.5 rounded-full bg-subtle overflow-hidden flex items-center border border-border-subtle shrink-0"
                 >
                   <div
                     className="h-full bg-emerald-500 transition-all duration-75"
@@ -1547,130 +1562,129 @@ export const InMeetingWorkbench: React.FC = () => {
               )}
             </div>
 
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5">
-              {/* 会议场景模式即时切换胶囊组 */}
-              <div
-                data-testid="workbench-page-transcript-panel-group-modes"
-                className="flex items-center rounded-md border border-border-subtle bg-subtle p-0.5 text-[11px] shrink-0"
-                title="根据当前会议场景即时动态调整说话人分离策略，会中随时生效"
-              >
-                <button
-                  type="button"
-                  data-testid="workbench-page-transcript-panel-btn-mode-single"
-                  onClick={() => setMeetingSpeakerMode('single')}
-                  className={`px-2 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-1 ${
-                    !voiceprintSettings.enabled
-                      ? 'bg-panel text-brand-blue font-semibold shadow-xs'
-                      : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                  title="单人模式：不区分发言人，纯净文字记录，杜绝一人被切分为多位发言人"
-                >
-                  <span>🎙️ 单人模式</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="workbench-page-transcript-panel-btn-mode-balanced"
-                  onClick={() => setMeetingSpeakerMode('balanced')}
-                  className={`px-2 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-1 ${
-                    voiceprintSettings.enabled && voiceprintSettings.presetMode === 'balanced'
-                      ? 'bg-panel text-brand-blue font-semibold shadow-xs'
-                      : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                  title="标准多人模式：开启说话人分离，平衡相似度与连续性，适用于 2~6 人例会"
-                >
-                  <span>👥 标准多人</span>
-                </button>
-                <button
-                  type="button"
-                  data-testid="workbench-page-transcript-panel-btn-mode-sensitive"
-                  onClick={() => setMeetingSpeakerMode('sensitive')}
-                  className={`px-2 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-1 ${
-                    voiceprintSettings.enabled && voiceprintSettings.presetMode === 'sensitive'
-                      ? 'bg-panel text-brand-blue font-semibold shadow-xs'
-                      : 'text-text-secondary hover:text-text-primary'
-                  }`}
-                  title="多人激辩模式：高灵敏度声纹切分，快速捕捉频繁抢话与多方快速交替"
-                >
-                  <span>⚡ 多人激辩</span>
-                </button>
-              </div>
-
-              <input
-                type="text"
-                value={filterKeyword}
-                onChange={(e) => setFilterKeyword(e.target.value)}
-                placeholder="过滤..."
-                data-testid="workbench-page-transcript-panel-input-filter"
-                className="px-2 py-0.5 text-[11px] bg-subtle border border-border-subtle rounded focus:outline-none focus:border-brand-blue text-text-primary w-20 focus:w-28 transition-all shrink-0"
-              />
-            </div>
+            <input
+              type="text"
+              value={filterKeyword}
+              onChange={(e) => setFilterKeyword(e.target.value)}
+              placeholder="过滤逐字稿..."
+              data-testid="workbench-page-transcript-panel-input-filter"
+              className="px-2 py-0.5 text-[11px] bg-subtle border border-border-subtle rounded focus:outline-none focus:border-brand-blue text-text-primary min-w-[80px] max-w-[140px] flex-1 transition-all"
+            />
           </div>
 
-          {/* 逐字稿次级工具条：音频设备拾音与系统内录配置 */}
-          <div className="px-3.5 py-1.5 border-b border-border-subtle bg-subtle/50 flex items-center justify-between gap-2 text-xs shrink-0 min-w-0">
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-0.5 min-w-0">
-              {/* 麦克风输入设备切换下拉框 */}
-              <select
-                data-testid="workbench-page-transcript-panel-select-mic-device"
-                value={selectedMicId}
-                onChange={(e) => handleSwitchMicrophone(e.target.value)}
-                className="text-[11px] px-2 py-0.5 rounded bg-panel border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[130px] truncate shrink-0"
-                title="选择拾音麦克风（支持蓝牙耳机/系统内置麦克风平滑切换）"
-              >
-                <option value="">默认麦克风</option>
-                {availableMics.map((mic) => (
-                  <option key={mic.deviceId} value={mic.deviceId}>
-                    {mic.label}
-                  </option>
-                ))}
-              </select>
-
-              {/* 拾音模式选择：外放开会全员收音 vs 仅个人麦克风 */}
-              <select
-                data-testid="workbench-page-transcript-panel-select-capture-mode"
-                value={captureMode}
-                onChange={(e) => handleSwitchCaptureMode(e.target.value as CaptureMode)}
-                className="text-[11px] px-2 py-0.5 rounded bg-panel border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue max-w-[140px] truncate shrink-0"
-                title="开会时推荐使用【扬声器外放开会】，麦克风将同时拾取扬声器播放的他人声音"
-              >
-                <option value="speaker_meeting">🔊 扬声器外放 (全员收音)</option>
-                <option value="mic_only">🎤 仅个人麦克风</option>
-              </select>
-
-              {/* 戴耳机免驱系统声音内录开关 */}
+          {/* 逐字稿次级工具条：说话人模式 + 音频设备与系统内录（flex-wrap 零截断） */}
+          <div
+            data-testid="workbench-page-transcript-panel-toolbar-audio"
+            className="px-3 py-1.5 border-b border-border-subtle bg-subtle/50 flex flex-wrap items-center gap-1.5 text-xs shrink-0 min-w-0"
+          >
+            {/* 会议场景模式即时切换胶囊组 */}
+            <div
+              data-testid="workbench-page-transcript-panel-group-modes"
+              className="flex items-center rounded-md border border-border-subtle bg-canvas p-0.5 text-[11px] shrink-0"
+              title="根据当前会议场景即时动态调整说话人分离策略，会中随时生效"
+            >
               <button
                 type="button"
-                data-testid="workbench-page-transcript-panel-btn-toggle-system-audio"
-                onClick={handleToggleSystemAudio}
-                className={`text-[11px] px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 ${
-                  isSystemAudioActive
-                    ? 'bg-status-success/15 border-status-success/40 text-status-success font-medium'
-                    : 'bg-panel border-border-subtle text-text-secondary hover:text-text-primary'
+                data-testid="workbench-page-transcript-panel-btn-mode-single"
+                onClick={() => setMeetingSpeakerMode('single')}
+                className={`px-1.5 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-0.5 ${
+                  !voiceprintSettings.enabled
+                    ? 'bg-panel text-brand-blue font-semibold shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
                 }`}
-                title="戴耳机开会时，实时捕获 Teams/腾讯会议中远端同事声音并转文字（录音保存在本机）"
+                title="单人模式：不区分发言人，纯净文字记录，杜绝一人被切分为多位发言人"
               >
-                {isSystemAudioActive ? '🎧 远端声音收录中' : '🎧 开启系统内录'}
+                <span>🎙️ 单人</span>
               </button>
-
-              {/* 自动检测到的 Teams / 会议内录混音通道徽章 */}
-              {auxDeviceId && (
-                <span
-                  data-testid="workbench-page-transcript-panel-badge-aux-audio"
-                  className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 font-medium flex items-center gap-1 shrink-0 whitespace-nowrap"
-                  title="检测到会议虚拟音频设备，已开启双轨本地混音"
-                >
-                  <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
-                  已混音: {availableMics.find((d) => d.deviceId === auxDeviceId)?.label || 'Teams音频'}
-                </span>
-              )}
+              <button
+                type="button"
+                data-testid="workbench-page-transcript-panel-btn-mode-balanced"
+                onClick={() => setMeetingSpeakerMode('balanced')}
+                className={`px-1.5 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-0.5 ${
+                  voiceprintSettings.enabled && voiceprintSettings.presetMode === 'balanced'
+                    ? 'bg-panel text-brand-blue font-semibold shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                title="标准多人模式：开启说话人分离，平衡相似度与连续性，适用于 2~6 人例会"
+              >
+                <span>👥 多人</span>
+              </button>
+              <button
+                type="button"
+                data-testid="workbench-page-transcript-panel-btn-mode-sensitive"
+                onClick={() => setMeetingSpeakerMode('sensitive')}
+                className={`px-1.5 py-0.5 rounded transition-colors whitespace-nowrap flex items-center gap-0.5 ${
+                  voiceprintSettings.enabled && voiceprintSettings.presetMode === 'sensitive'
+                    ? 'bg-panel text-brand-blue font-semibold shadow-xs'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                title="多人激辩模式：高灵敏度声纹切分，快速捕捉频繁抢话与多方快速交替"
+              >
+                <span>⚡ 激辩</span>
+              </button>
             </div>
+
+            {/* 麦克风输入设备切换下拉框 */}
+            <select
+              data-testid="workbench-page-transcript-panel-select-mic-device"
+              value={selectedMicId}
+              onChange={(e) => handleSwitchMicrophone(e.target.value)}
+              className="text-[11px] px-1.5 py-0.5 rounded bg-panel border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue min-w-[96px] max-w-[136px] truncate shrink-0"
+              title="选择拾音麦克风（支持蓝牙耳机/系统内置麦克风平滑切换）"
+            >
+              <option value="">默认麦克风</option>
+              {availableMics.map((mic) => (
+                <option key={mic.deviceId} value={mic.deviceId}>
+                  {mic.label}
+                </option>
+              ))}
+            </select>
+
+            {/* 拾音模式选择：外放开会全员收音 vs 仅个人麦克风 */}
+            <select
+              data-testid="workbench-page-transcript-panel-select-capture-mode"
+              value={captureMode}
+              onChange={(e) => handleSwitchCaptureMode(e.target.value as CaptureMode)}
+              className="text-[11px] px-1.5 py-0.5 rounded bg-panel border border-border-subtle text-text-secondary focus:outline-none focus:border-brand-blue min-w-[106px] max-w-[146px] truncate shrink-0"
+              title="开会时推荐使用【扬声器外放开会】，麦克风将同时拾取扬声器播放的他人声音"
+            >
+              <option value="speaker_meeting">🔊 扬声器外放 (全员收音)</option>
+              <option value="mic_only">🎤 仅个人麦克风</option>
+            </select>
+
+            {/* 戴耳机免驱系统声音内录开关 */}
+            <button
+              type="button"
+              data-testid="workbench-page-transcript-panel-btn-toggle-system-audio"
+              onClick={handleToggleSystemAudio}
+              className={`text-[11px] px-2 py-0.5 rounded border transition-colors whitespace-nowrap shrink-0 flex items-center gap-1 ${
+                isSystemAudioActive
+                  ? 'bg-status-success/15 border-status-success/40 text-status-success font-medium'
+                  : 'bg-panel border-border-subtle text-text-secondary hover:text-text-primary'
+              }`}
+              title="戴耳机开会时，实时捕获 Teams/腾讯会议中远端同事声音并转文字（录音保存在本机）"
+            >
+              {isSystemAudioActive ? '🎧 远端声音收录中' : '🎧 开启系统内录'}
+            </button>
+
+            {/* 自动检测到的 Teams / 会议内录混音通道徽章 */}
+            {auxDeviceId && (
+              <span
+                data-testid="workbench-page-transcript-panel-badge-aux-audio"
+                className="text-[10px] px-1.5 py-0.5 rounded bg-brand-blue-subtle text-brand-blue border border-brand-blue/30 font-medium flex items-center gap-1 shrink-0 whitespace-nowrap"
+                title="检测到会议虚拟音频设备，已开启双轨本地混音"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-brand-blue animate-pulse" />
+                已混音: {availableMics.find((d) => d.deviceId === auxDeviceId)?.label || 'Teams音频'}
+              </span>
+            )}
 
             {/* 音频收音排查指南小图标 */}
             <button
               type="button"
               data-testid="workbench-page-transcript-panel-btn-audio-troubleshoot"
               onClick={() => setShowAudioHelpModal(true)}
-              className="text-text-tertiary hover:text-brand-blue text-[11px] px-1 py-0.5 rounded transition-colors shrink-0"
+              className="ml-auto text-text-tertiary hover:text-brand-blue text-[11px] px-1 py-0.5 rounded transition-colors shrink-0"
               title="音频收音排查指南"
             >
               <span>(?)</span>

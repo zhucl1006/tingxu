@@ -48,12 +48,12 @@ export const AppLayout: React.FC = () => {
       <Sidebar />
 
       {/* 右侧主业务工作区 */}
-      <main data-testid="app-layout-main-viewport" className="flex-1 h-screen overflow-hidden flex flex-col">
-        {/* 顶部通栏无感原生拖拽区：与左侧窗口控制条对齐，提供原生标题栏级别拖拽体验 */}
+      <main data-testid="app-layout-main-viewport" className="flex-1 min-w-0 h-full min-h-0 overflow-hidden flex flex-col">
+        {/* 顶部通栏无感原生拖拽区：固定 24px 物理高度，不随字号膨胀 */}
         <div
           data-tauri-drag-region
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
-          className="h-6 w-full shrink-0 select-none cursor-move"
+          className="h-[24px] w-full shrink-0 select-none cursor-move"
         />
 
         {/* 第三方会议软件启动检测横幅 */}

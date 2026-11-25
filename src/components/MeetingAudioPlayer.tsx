@@ -67,29 +67,35 @@ export const MeetingAudioPlayer = forwardRef<MeetingAudioHandle, Props>(({ meeti
    <input data-testid="summary-page-audio-player-input-seek" aria-label="录音播放位置" type="range" min="0" max={duration || 1} step="0.1" value={seconds} disabled={disabled} onChange={e => seek(Number(e.target.value))} className="min-w-0 flex-1 accent-brand-blue" />
    <span data-testid="summary-page-audio-player-text-duration">{formatSeconds(Math.floor(duration))}</span>
   </div>
-  <div data-testid="summary-page-audio-player-div-controls" className="flex items-center gap-2 flex-wrap">
-   <button data-testid="summary-page-btn-audio-play" disabled={disabled} type="button" className="px-3 py-1 rounded-md bg-brand-blue text-white text-xs disabled:opacity-40" onClick={() => {
-    const audio = audioRef.current; if (!audio) return;
-    if (playing) audio.pause(); else { setError(null); void audio.play().catch(() => { setPlaying(false); setError('播放失败，请重试'); }); }
-   }}>{playing ? '⏸ 暂停' : '▶ 播放'}</button>
-   <button data-testid="summary-page-audio-player-btn-back" type="button" disabled={disabled} aria-label="后退15秒" onClick={() => seek(Math.max(0, seconds - 15))} className="text-xs text-text-secondary disabled:opacity-40">−15s</button>
-   <button data-testid="summary-page-audio-player-btn-forward" type="button" disabled={disabled} aria-label="前进15秒" onClick={() => seek(seconds + 15)} className="text-xs text-text-secondary disabled:opacity-40">+15s</button>
-   {[1, 1.25, 1.5, 2].map(value => <button key={value} data-testid={`summary-page-audio-player-btn-rate-${value}`} type="button" aria-label={`${value}倍速`} aria-pressed={rate === value} disabled={disabled} onClick={() => { if (audioRef.current) audioRef.current.playbackRate = value; setRate(value); }} className={`text-[11px] px-1 py-0.5 rounded disabled:opacity-40 ${rate === value ? 'bg-brand-blue text-white' : 'text-text-tertiary'}`}>{value}x</button>)}
-   {recording && onDeleteRecording && (
-    <button
-      data-testid="summary-page-audio-player-btn-delete-recording"
-      type="button"
-      title="释放本场录音文件（文字纪要将完整保留）"
-      onClick={() => {
-        if (window.confirm('确定要清理本场录音文件吗？此操作将释放本场录音的磁盘空间，文字逐字稿与纪要将完整保留。')) {
-          onDeleteRecording();
-        }
-      }}
-      className="ml-auto text-[11px] text-text-tertiary hover:text-status-danger px-1.5 py-0.5 rounded transition-colors"
-    >
-      🗑 释放音频
-    </button>
-   )}
+  <div data-testid="summary-page-audio-player-div-controls" className="flex items-center justify-between gap-1.5 flex-wrap">
+   <div data-testid="summary-page-audio-player-group-playback" className="flex items-center gap-1.5 shrink-0">
+    <button data-testid="summary-page-btn-audio-play" disabled={disabled} type="button" className="px-2.5 py-1 rounded-md bg-brand-blue text-white text-xs whitespace-nowrap disabled:opacity-40" onClick={() => {
+     const audio = audioRef.current; if (!audio) return;
+     if (playing) audio.pause(); else { setError(null); void audio.play().catch(() => { setPlaying(false); setError('播放失败，请重试'); }); }
+    }}>{playing ? '⏸ 暂停' : '▶ 播放'}</button>
+    <button data-testid="summary-page-audio-player-btn-back" type="button" disabled={disabled} aria-label="后退15秒" onClick={() => seek(Math.max(0, seconds - 15))} className="text-xs text-text-secondary hover:text-text-primary whitespace-nowrap disabled:opacity-40">−15s</button>
+    <button data-testid="summary-page-audio-player-btn-forward" type="button" disabled={disabled} aria-label="前进15秒" onClick={() => seek(seconds + 15)} className="text-xs text-text-secondary hover:text-text-primary whitespace-nowrap disabled:opacity-40">+15s</button>
+   </div>
+   <div className="flex items-center gap-1.5 shrink-0 ml-auto">
+    <div data-testid="summary-page-audio-player-group-rates" className="flex items-center gap-0.5 shrink-0 bg-subtle px-1 py-0.5 rounded border border-border-subtle">
+     {[1, 1.25, 1.5, 2].map(value => <button key={value} data-testid={`summary-page-audio-player-btn-rate-${value}`} type="button" aria-label={`${value}倍速`} aria-pressed={rate === value} disabled={disabled} onClick={() => { if (audioRef.current) audioRef.current.playbackRate = value; setRate(value); }} className={`text-[11px] px-1 py-0.5 rounded whitespace-nowrap tabular-nums disabled:opacity-40 ${rate === value ? 'bg-brand-blue text-white' : 'text-text-tertiary hover:text-text-primary'}`}>{value}x</button>)}
+    </div>
+    {recording && onDeleteRecording && (
+     <button
+       data-testid="summary-page-audio-player-btn-delete-recording"
+       type="button"
+       title="释放本场录音文件（文字纪要将完整保留）"
+       onClick={() => {
+         if (window.confirm('确定要清理本场录音文件吗？此操作将释放本场录音的磁盘空间，文字逐字稿与纪要将完整保留。')) {
+           onDeleteRecording();
+         }
+       }}
+       className="text-[11px] text-text-tertiary hover:text-status-danger px-1.5 py-0.5 rounded transition-colors whitespace-nowrap shrink-0"
+     >
+       🗑 释放音频
+     </button>
+    )}
+   </div>
   </div>
  </div>;
 });
