@@ -44,6 +44,7 @@ describe('GatewayConnectionGuard 前端强探活阻断守卫测试 (T08)', () =>
 
     await waitFor(() => {
       expect(screen.getByTestId('app-layout-gateway-guard-modal-blocked')).toBeInTheDocument();
+      expect(screen.getByTestId('app-layout-gateway-guard-btn-retry')).toBeEnabled();
     });
 
     expect(screen.getByTestId('gateway-guard-text-warning')).toHaveTextContent(/无法连接至听序 AI 网关/);
@@ -72,6 +73,7 @@ describe('GatewayConnectionGuard 前端强探活阻断守卫测试 (T08)', () =>
 
     await waitFor(() => {
       expect(screen.getByTestId('app-layout-gateway-guard-modal-blocked')).toBeInTheDocument();
+      expect(screen.getByTestId('app-layout-gateway-guard-btn-retry')).toBeEnabled();
     });
 
     // 点击重试
