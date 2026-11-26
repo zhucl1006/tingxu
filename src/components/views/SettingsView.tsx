@@ -590,7 +590,20 @@ export const SettingsView: React.FC = () => {
                 </label>
               </div>
 
-              {byokSettings.shareDeepSeekKey === false && (
+              {byokSettings.shareDeepSeekKey !== false ? (
+                <div
+                  data-testid="settings-byok-text-deepseek-key-reuse-hint"
+                  className={`text-[11px] px-2.5 py-1.5 rounded border ${
+                    byokSettings.llmApiKey.trim()
+                      ? 'bg-status-success-bg/60 border-status-success/30 text-status-success'
+                      : 'bg-status-warning-bg border-status-warning-border text-status-warning'
+                  }`}
+                >
+                  {byokSettings.llmApiKey.trim()
+                    ? '✓ 当前已直接复用上方 LLM API Key（已忽略独立 ASR 密钥）'
+                    : '⚠️ 上方 LLM API Key 尚未填写，请先在上方填写或取消勾选以独立配置'}
+                </div>
+              ) : (
                 <div>
                   <label className="block text-[11px] text-text-secondary mb-1">
                     独立 DeepSeek ASR API Key

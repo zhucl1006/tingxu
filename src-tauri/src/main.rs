@@ -66,6 +66,20 @@ fn minimize_window(app: AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
+// 原生窗口最大化/还原切换命令（供无边框窗口双击标题栏调用）
+#[tauri::command]
+fn toggle_maximize_window(app: AppHandle) -> Result<(), AppError> {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let is_maximized = main_window.is_maximized().unwrap_or(false);
+        if is_maximized {
+            let _ = main_window.unmaximize();
+        } else {
+            let _ = main_window.maximize();
+        }
+    }
+    Ok(())
+}
+
 // 原生窗口关闭或隐藏命令
 #[tauri::command]
 fn close_window(app: AppHandle) -> Result<(), AppError> {
@@ -285,6 +299,7 @@ fn main() {
             toggle_floating_mode,
             drag_window,
             minimize_window,
+            toggle_maximize_window,
             close_window,
             set_floating_pill_visible,
             check_running_meeting_apps,

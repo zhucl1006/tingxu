@@ -65,18 +65,20 @@ export interface DeepSeekFetchResult {
 }
 
 /**
- * 解析当前生效的 DeepSeek 全家桶 API Key（仅当 ASR 选用 deepseek 时优先使用独立工具 Key，开启共享时自动回退至 DeepSeek LLM Key）
+ * 解析当前生效的 DeepSeek 全家桶 API Key：
+ * - 开启 shareDeepSeekKey（默认 true）时，明确优先复用上方 DeepSeek LLM Key，忽略隐藏的残留 asrApiKey；
+ * - 显式关闭 shareDeepSeekKey (false) 且 ASR 选用 deepseek 时，使用独立的 asrApiKey。
  */
 export function resolveEffectiveDeepSeekKey(settings: ByokSettings): string {
-  if (settings.asrProvider === 'deepseek') {
-    const dedicatedKey = (settings.asrApiKey || '').trim();
-    if (dedicatedKey) {
-      return dedicatedKey;
-    }
-  }
   const allowShare = settings.shareDeepSeekKey !== false;
-  if (allowShare && (settings.llmProvider === 'deepseek' || settings.asrProvider === 'deepseek')) {
-    return (settings.llmApiKey || '').trim();
+  if (allowShare) {
+    if (settings.llmProvider === 'deepseek' || settings.asrProvider === 'deepseek') {
+      return (settings.llmApiKey || '').trim();
+    }
+    return '';
+  }
+  if (settings.asrProvider === 'deepseek') {
+    return (settings.asrApiKey || '').trim();
   }
   return '';
 }
