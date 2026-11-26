@@ -24,13 +24,23 @@ describe('DeepSeek 全家桶凭据共享与精准峰谷计费引擎 (Plan 029 T0
     ttsVoiceId: 'stella',
   };
 
-  it('resolveEffectiveDeepSeekKey: 开启 shareDeepSeekKey 且未单独填 asrApiKey 时应自动复用 llmApiKey', () => {
+  it('resolveEffectiveDeepSeekKey: 开启 shareDeepSeekKey 时必须优先复用 llmApiKey（忽略历史残留 asrApiKey），关闭共享时才使用独立 asrApiKey', () => {
     expect(resolveEffectiveDeepSeekKey(baseSettings)).toBe('mock-deepseek-master-key-001');
 
-    // 若单独指定了专用工具 Key 则优先使用专用 Key
+    // Issue #5 核心回归：勾选复用上方 DeepSeek API Key 时，即使残留旧 asrApiKey 也必须优先复用 llmApiKey
     expect(
       resolveEffectiveDeepSeekKey({
         ...baseSettings,
+        shareDeepSeekKey: true,
+        asrApiKey: 'mock-stale-legacy-asr-key',
+      })
+    ).toBe('mock-deepseek-master-key-001');
+
+    // 取消勾选复用（shareDeepSeekKey: false）时，必须使用独立填写的 asrApiKey
+    expect(
+      resolveEffectiveDeepSeekKey({
+        ...baseSettings,
+        shareDeepSeekKey: false,
         asrApiKey: 'mock-dedicated-asr-key-002',
       })
     ).toBe('mock-dedicated-asr-key-002');

@@ -1,4 +1,6 @@
-import React from 'react';
+import React, { useEffect, useCallback } from 'react';
+import { invoke } from '@tauri-apps/api/core';
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow';
 import { useMeetingStore } from '../store/useMeetingStore';
 import { Sidebar } from './Sidebar';
 import { HomeView } from './views/HomeView';
@@ -17,6 +19,39 @@ export const AppLayout: React.FC = () => {
     quickStartDetectedMeeting,
     dismissDetectedMeetingApp,
   } = useMeetingStore();
+
+  const handleToggleMaximize = useCallback(() => {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      invoke('toggle_maximize_window').catch(() => {
+        getCurrentWebviewWindow().toggleMaximize().catch(() => {});
+      });
+    }
+  }, []);
+
+  const handleCloseWindow = useCallback(() => {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      invoke('close_window').catch(() => {
+        getCurrentWebviewWindow().close().catch(() => {});
+      });
+    }
+  }, []);
+
+  // 无边框窗口支持 Cmd+W (macOS) / Ctrl+W (Windows/Linux) 关闭快捷键
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        (event.metaKey || event.ctrlKey) &&
+        !event.altKey &&
+        !event.shiftKey &&
+        event.key.toLowerCase() === 'w'
+      ) {
+        event.preventDefault();
+        handleCloseWindow();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [handleCloseWindow]);
 
   const renderActiveView = () => {
     switch (currentRoute) {
@@ -49,9 +84,11 @@ export const AppLayout: React.FC = () => {
 
       {/* 右侧主业务工作区 */}
       <main data-testid="app-layout-main-viewport" className="flex-1 min-w-0 h-full min-h-0 overflow-hidden flex flex-col">
-        {/* 顶部通栏无感原生拖拽区：固定 24px 物理高度，不随字号膨胀 */}
+        {/* 顶部通栏无感原生拖拽区：固定 24px 物理高度，支持双击最大化/还原 */}
         <div
+          data-testid="app-layout-header-drag-region"
           data-tauri-drag-region
+          onDoubleClick={handleToggleMaximize}
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
           className="h-[24px] w-full shrink-0 select-none cursor-move"
         />

@@ -231,4 +231,35 @@ describe('SettingsView BYOK 设置卡片测试 (Plan 025 TDD)', () => {
     expect(suiteGuide).toBeInTheDocument();
     expect(suiteGuide.textContent).toContain('一钥通全栈');
   });
+
+  it('Issue #5 回归：勾选复用上方 DeepSeek API Key 时应忽略隐藏的残留 asrApiKey', async () => {
+    const spyAsr = vi.spyOn(LocalAsrClient, 'testConnection').mockResolvedValueOnce({
+      success: true,
+      latencyMs: 55,
+      message: '连接成功 (延迟: 55ms)',
+    });
+
+    useMeetingStore.getState().updateByokSettings({
+      llmProvider: 'deepseek',
+      llmApiKey: 'mock-fresh-llm-key',
+      asrProvider: 'deepseek',
+      asrApiKey: 'mock-stale-hidden-asr-key',
+      asrEndpoint: 'https://api.deepseek.com/v1/tools/asr',
+      shareDeepSeekKey: true,
+    });
+
+    render(<SettingsView />);
+
+    expect(screen.getByTestId('settings-byok-text-deepseek-key-reuse-hint')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('settings-byok-btn-test-asr'));
+
+    await waitFor(() => {
+      expect(spyAsr).toHaveBeenCalledWith(
+        expect.objectContaining({
+          protocol: 'deepseek_http',
+          apiKey: 'mock-fresh-llm-key',
+        })
+      );
+    });
+  });
 });
