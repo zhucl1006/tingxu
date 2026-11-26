@@ -11,9 +11,29 @@
 [![React](https://img.shields.io/badge/React-18-blue.svg)](https://react.dev/)
 [![Rust](https://img.shields.io/badge/Rust-Edition%202021-red.svg)](https://www.rust-lang.org/)
 
-[功能特性](#-核心特性) • [架构设计](#-双模架构设计) • [快速开始](#-快速上手byok-单机模式) • [配置指南](#-模型与-asr-配置指南) • [开发构建](#-本地开发与构建) • [路线图](#-开发路线图)
+[产品短片](#-45-秒产品说明短片) • [功能特性](#-核心特性) • [架构设计](#-极简单机闭环架构-local-first-architecture) • [快速开始](#-快速上手byok-单机模式) • [配置指南](#-模型与-asr-配置指南) • [开发构建](#-本地开发与构建) • [路线图](#-开发路线图)
 
 </div>
+
+---
+
+## 🎬 45 秒产品说明短片
+
+> 点击下方预览图观看或下载完整 1080p 产品演示短片（含定制音效，45 秒全景了解听序核心能力）：
+
+<div align="center">
+
+[![听序 Tingxu 45 秒产品说明短片（点击播放 MP4）](docs/assets/tingxu-intro-poster.png)](docs/assets/tingxu-intro.mp4)
+
+**[▶ 播放 / 下载完整 1080p 短片 (`docs/assets/tingxu-intro.mp4`)](docs/assets/tingxu-intro.mp4)**
+
+</div>
+
+- `00:00–00:06` **告别第三方会议机器人**：不入会、不打扰，原生静默记录；
+- `00:06–00:15` **物理双轨免驱内录**：macOS `ScreenCaptureKit` / Windows `WASAPI Loopback`，硬区隔「我」与「远端」；
+- `00:15–00:28` **会中双栏工作台（证据溯源 + 人工保护）**：一键定位逐字稿原文，已确认结论受保护锁绝不被 AI 擅自覆盖；
+- `00:28–00:34` **42px 极简悬浮胶囊**：一键贴边置顶，不遮挡共享屏幕与会议软件；
+- `00:34–00:45` **Local-First & BYOK 一钥通**：100% 本地 SQLite 零上云，支持 DeepSeek 全家桶一钥驱动及 100% 离线方案。
 
 ---
 

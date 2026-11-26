@@ -4,5 +4,20 @@ dist/
 src-tauri/target/
 data/
 src-tauri/resources/models/*.onnx
+
+# Local environment & secret files
 *.local
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.p8
+*.jks
+*.sqlite
+*.sqlite3
+*.db
+
+# Local showreel rendering workspace (final video/poster live in docs/assets/)
+tingxu-showreel/

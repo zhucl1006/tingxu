@@ -53,12 +53,12 @@
 ## 2. 实施产出清单
 
 1. **ASR 核心引擎与多厂商协议适配**：
-   - [`src-tauri/src/asr/engine.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/asr/engine.rs)：`AsrFrame` (100ms 切片封装)、`TranscriptEvent` (分层转写事件) 与 `AsrEngine` 异步抽象 Trait。
-   - [`src-tauri/src/asr/dashscope.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/asr/dashscope.rs)：阿里云百炼流式 ASR 协议解析器。
-   - [`src-tauri/src/asr/iflytek.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/asr/iflytek.rs)：科大讯飞流式 ASR 协议解析器。
-   - [`src-tauri/src/asr/lease.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/asr/lease.rs)：时长租约生命周期管理器、心跳与指数退避重连算法。
+   - [`src-tauri/src/asr/engine.rs`](../../src-tauri/src/asr/engine.rs)：`AsrFrame` (100ms 切片封装)、`TranscriptEvent` (分层转写事件) 与 `AsrEngine` 异步抽象 Trait。
+   - [`src-tauri/src/asr/dashscope.rs`](../../src-tauri/src/asr/dashscope.rs)：阿里云百炼流式 ASR 协议解析器。
+   - [`src-tauri/src/asr/iflytek.rs`](../../src-tauri/src/asr/iflytek.rs)：科大讯飞流式 ASR 协议解析器。
+   - [`src-tauri/src/asr/lease.rs`](../../src-tauri/src/asr/lease.rs)：时长租约生命周期管理器、心跳与指数退避重连算法。
 2. **测试验证**：
-   - [`src-tauri/tests/asr_pipeline_test.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/tests/asr_pipeline_test.rs)：5 大集成测试全部通过。
+   - [`src-tauri/tests/asr_pipeline_test.rs`](../../src-tauri/tests/asr_pipeline_test.rs)：5 大集成测试全部通过。
 
 ---
 

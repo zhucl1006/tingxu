@@ -53,15 +53,15 @@
 ## 2. 实施产出清单
 
 1. **核心媒体捕获与音频处理模块**：
-   - [`src-tauri/src/error.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/error.rs)：严禁裸调 unwrap，统一定义领域错误 `TingxuError`。
-   - [`src-tauri/src/media/ring_buffer.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/media/ring_buffer.rs)：高频回调零堆分配、溢出受控的 `AudioRingBuffer`。
-   - [`src-tauri/src/media/resampler.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/media/resampler.rs)：从任意采样率与多声道到标准 16kHz 16-bit 单声道线性 PCM 重采样器。
-   - [`src-tauri/src/media/atomic_disk.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/media/atomic_disk.rs)：2 秒原子刷盘器（.tmp 原子 rename）、SHA-256 完整性哈希校验、崩溃断电自愈恢复扫描。
-   - [`src-tauri/src/media/device.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/media/device.rs)：物理双轨 TrackType（Mic / System）与热插拔自适应管理器。
+   - [`src-tauri/src/error.rs`](../../src-tauri/src/error.rs)：严禁裸调 unwrap，统一定义领域错误 `TingxuError`。
+   - [`src-tauri/src/media/ring_buffer.rs`](../../src-tauri/src/media/ring_buffer.rs)：高频回调零堆分配、溢出受控的 `AudioRingBuffer`。
+   - [`src-tauri/src/media/resampler.rs`](../../src-tauri/src/media/resampler.rs)：从任意采样率与多声道到标准 16kHz 16-bit 单声道线性 PCM 重采样器。
+   - [`src-tauri/src/media/atomic_disk.rs`](../../src-tauri/src/media/atomic_disk.rs)：2 秒原子刷盘器（.tmp 原子 rename）、SHA-256 完整性哈希校验、崩溃断电自愈恢复扫描。
+   - [`src-tauri/src/media/device.rs`](../../src-tauri/src/media/device.rs)：物理双轨 TrackType（Mic / System）与热插拔自适应管理器。
 2. **测试验证**：
-   - [`src-tauri/tests/audio_capture_test.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/tests/audio_capture_test.rs)：涵盖环形缓冲、重采样、原子落盘、SHA256、崩溃自愈、热插拔 5 大集成测试。
+   - [`src-tauri/tests/audio_capture_test.rs`](../../src-tauri/tests/audio_capture_test.rs)：涵盖环形缓冲、重采样、原子落盘、SHA256、崩溃自愈、热插拔 5 大集成测试。
 3. **门禁脚本升级**：
-   - [`scripts/verify-gates.sh`](file:///Users/zhuchunlei/work/02_mycode/tingxu/scripts/verify-gates.sh)：Gate 4 同步集成 Rust `cargo test --manifest-path src-tauri/Cargo.toml`。
+   - [`scripts/verify-gates.sh`](../../scripts/verify-gates.sh)：Gate 4 同步集成 Rust `cargo test --manifest-path src-tauri/Cargo.toml`。
 
 ---
 

@@ -142,7 +142,7 @@
 
 | 项目 | 结果 | 证据/命令 |
 |---|---|---|
-| 仓库根目录 | `/Users/zhuchunlei/work/02_mycode/tingxu` | `git rev-parse --show-toplevel` |
+| 仓库根目录 | `<repo-root>` | `git rev-parse --show-toplevel` |
 | CLI 状态 | 编译依赖由于 macOS SDK 架构兼容异常暂不可用 | `uvx code-review-graph repos` (watchdog 依赖构建报错) |
 | 降级说明 | 按规范记录限制，全面降级为 `rg` 调用点、TypeScript 类型系统与测试交叉验证 | 严格执行源码与测试验证 |
 

@@ -53,11 +53,11 @@
 ## 2. 实施产出清单
 
 1. **核心洞察与问答调度引擎**：
-   - [`src/engine/slidingWindow.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/engine/slidingWindow.ts)：滑动窗口累加器（按字符与静默时延分片）。
-   - [`src/engine/patchApplier.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/engine/patchApplier.ts)：增量补丁解析器（执行 Human Protection 保护）。
-   - [`src/engine/qaEngine.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/engine/qaEngine.ts)：会中问答上下文装配与证据检索引擎。
+   - [`src/engine/slidingWindow.ts`](../../src/engine/slidingWindow.ts)：滑动窗口累加器（按字符与静默时延分片）。
+   - [`src/engine/patchApplier.ts`](../../src/engine/patchApplier.ts)：增量补丁解析器（执行 Human Protection 保护）。
+   - [`src/engine/qaEngine.ts`](../../src/engine/qaEngine.ts)：会中问答上下文装配与证据检索引擎。
 2. **测试验证**：
-   - [`src/engine/__tests__/insightEngine.test.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/engine/__tests__/insightEngine.test.ts)：7 个单元测试，覆盖滑动窗口、补丁更新、保护锁与问答防臆造。
+   - [`src/engine/__tests__/insightEngine.test.ts`](../../src/engine/__tests__/insightEngine.test.ts)：7 个单元测试，覆盖滑动窗口、补丁更新、保护锁与问答防臆造。
 
 ---
 

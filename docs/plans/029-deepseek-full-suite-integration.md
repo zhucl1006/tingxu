@@ -115,7 +115,7 @@
 
 | 项目 | 结果 | 证据/命令 |
 |---|---|---|
-| 仓库根目录 | `/Users/zhuchunlei/work/02_mycode/tingxu` | `git rev-parse --show-toplevel` |
+| 仓库根目录 | `<repo-root>` | `git rev-parse --show-toplevel` |
 | CLI 状态 | 不可用（编译受阻） | `uvx code-review-graph repos` 因本机 CommandLineTools SDK `arm64e.x1-macos` 导致 `watchdog` C 扩展链接失败 |
 | 注册状态 | 未知（CLI 受阻未静默注册） | 同上 |
 | 图谱新鲜度 | 未知 | 降级源码分析 |

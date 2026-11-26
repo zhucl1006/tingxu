@@ -136,7 +136,7 @@
 
 ### 1.4 影响分析
 
-**仓库：** `/Users/zhuchunlei/work/02_mycode/tingxu`（`git rev-parse --show-toplevel` 已核实）。
+**仓库：** `<repo-root>`（`git rev-parse --show-toplevel` 已核实）。
 
 **图谱状态：** `uvx code-review-graph repos` 启动失败；依赖 watchdog 在本机 SDK 链接阶段报 tapi / unknown architecture，未获得注册或新鲜度结果。MCP impact/flow 工具未暴露；不据此判断仓库未注册，不静默注册、不修改系统 SDK。降级使用 `rg`、源码、类型、测试、package scripts 和 harness。本轮未对源码做修改，因此无修改后图谱检查；正式实施前重查可用性，仍失败则记录一次并继续源码分析。
 

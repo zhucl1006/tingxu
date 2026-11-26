@@ -53,11 +53,11 @@
 ## 2. 实施产出清单
 
 1. **本地存储与全文检索核心引擎**：
-   - [`src-tauri/src/store/db.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/store/db.rs)：SQLite WAL 模式连接、FTS5 表结构初始化、参数化强隔离查询、跳播偏移计算与级联物理删除。
-   - [`src-tauri/src/store/fts.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/store/fts.rs)：`SearchResult` 与 `AudioSyncInfo` 契约定义。
-   - [`src-tauri/src/store/mod.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/store/mod.rs)：存储子模块定义。
+   - [`src-tauri/src/store/db.rs`](../../src-tauri/src/store/db.rs)：SQLite WAL 模式连接、FTS5 表结构初始化、参数化强隔离查询、跳播偏移计算与级联物理删除。
+   - [`src-tauri/src/store/fts.rs`](../../src-tauri/src/store/fts.rs)：`SearchResult` 与 `AudioSyncInfo` 契约定义。
+   - [`src-tauri/src/store/mod.rs`](../../src-tauri/src/store/mod.rs)：存储子模块定义。
 2. **测试验证**：
-   - [`src-tauri/tests/local_store_test.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/tests/local_store_test.rs)：5 个集成测试全部绿灯通过。
+   - [`src-tauri/tests/local_store_test.rs`](../../src-tauri/tests/local_store_test.rs)：5 个集成测试全部绿灯通过。
 
 ---
 

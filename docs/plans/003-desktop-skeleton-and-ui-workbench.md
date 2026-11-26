@@ -54,20 +54,20 @@
 ## 2. 实施产出清单
 
 1. **工程配置与架构**：
-   - [`package.json`](file:///Users/zhuchunlei/work/02_mycode/tingxu/package.json)：Vite 5, React 18, Zustand, Vitest, TailwindCSS, Tauri 2 CLI.
-   - [`tailwind.config.js`](file:///Users/zhuchunlei/work/02_mycode/tingxu/tailwind.config.js) & [`src/index.css`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/index.css)：完整落地 UIUX-DESIGN-SPEC 语义设计令牌（含深浅色变量、等宽数字、透明边框与毛玻璃背景）。
-   - [`src-tauri/Cargo.toml`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/Cargo.toml) & [`src-tauri/tauri.conf.json`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/tauri.conf.json) & [`src-tauri/src/main.rs`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src-tauri/src/main.rs)：Tauri 2 多窗口与动态尺寸变形机制。
+   - [`package.json`](../../package.json)：Vite 5, React 18, Zustand, Vitest, TailwindCSS, Tauri 2 CLI.
+   - [`tailwind.config.js`](../../tailwind.config.js) & [`src/index.css`](../../src/index.css)：完整落地 UIUX-DESIGN-SPEC 语义设计令牌（含深浅色变量、等宽数字、透明边框与毛玻璃背景）。
+   - [`src-tauri/Cargo.toml`](../../src-tauri/Cargo.toml) & [`src-tauri/tauri.conf.json`](../../src-tauri/tauri.conf.json) & [`src-tauri/src/main.rs`](../../src-tauri/src/main.rs)：Tauri 2 多窗口与动态尺寸变形机制。
 2. **状态管理与领域模型**：
-   - [`src/types/meeting.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/types/meeting.ts)：严格 TypeScript 领域类型（会议状态、洞察卡片、逐字稿流、修订提议）。
-   - [`src/store/useMeetingStore.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/store/useMeetingStore.ts)：Zustand 会议状态机与不可覆盖的人工编辑保护（Human Protection）机制。
+   - [`src/types/meeting.ts`](../../src/types/meeting.ts)：严格 TypeScript 领域类型（会议状态、洞察卡片、逐字稿流、修订提议）。
+   - [`src/store/useMeetingStore.ts`](../../src/store/useMeetingStore.ts)：Zustand 会议状态机与不可覆盖的人工编辑保护（Human Protection）机制。
 3. **UI 核心组件**：
-   - [`src/components/InMeetingWorkbench.tsx`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/components/InMeetingWorkbench.tsx)：C-04 会中双栏工作台（左侧 54% 看板 + 右侧 46% 逐字稿，支持 React.memo 性能优化与证据联动滚动）。
-   - [`src/components/FloatingPill.tsx`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/components/FloatingPill.tsx)：C-05 微型置顶悬浮药丸（42px、呼吸红点、等宽秒表、原生可拖拽）。
-   - [`src/App.tsx`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/App.tsx)：主入口多窗口路由与秒级时钟调度。
+   - [`src/components/InMeetingWorkbench.tsx`](../../src/components/InMeetingWorkbench.tsx)：C-04 会中双栏工作台（左侧 54% 看板 + 右侧 46% 逐字稿，支持 React.memo 性能优化与证据联动滚动）。
+   - [`src/components/FloatingPill.tsx`](../../src/components/FloatingPill.tsx)：C-05 微型置顶悬浮药丸（42px、呼吸红点、等宽秒表、原生可拖拽）。
+   - [`src/App.tsx`](../../src/App.tsx)：主入口多窗口路由与秒级时钟调度。
 4. **自动化单元测试与门禁验证**：
-   - [`src/store/__tests__/useMeetingStore.test.ts`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/store/__tests__/useMeetingStore.test.ts)：6 个状态流转与铁律保护测试。
-   - [`src/components/__tests__/InMeetingWorkbench.test.tsx`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/components/__tests__/InMeetingWorkbench.test.tsx)：4 个双栏工作台与交互定位测试。
-   - [`src/components/__tests__/FloatingPill.test.tsx`](file:///Users/zhuchunlei/work/02_mycode/tingxu/src/components/__tests__/FloatingPill.test.tsx)：2 个悬浮胶囊窗测试。
+   - [`src/store/__tests__/useMeetingStore.test.ts`](../../src/store/__tests__/useMeetingStore.test.ts)：6 个状态流转与铁律保护测试。
+   - [`src/components/__tests__/InMeetingWorkbench.test.tsx`](../../src/components/__tests__/InMeetingWorkbench.test.tsx)：4 个双栏工作台与交互定位测试。
+   - [`src/components/__tests__/FloatingPill.test.tsx`](../../src/components/__tests__/FloatingPill.test.tsx)：2 个悬浮胶囊窗测试。
 
 ---
 

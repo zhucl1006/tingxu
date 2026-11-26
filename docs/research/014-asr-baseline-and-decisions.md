@@ -4,7 +4,7 @@
 
 ## T01 基线与样本
 
-- 仓库根目录已核实为 `/Users/zhuchunlei/work/02_mycode/tingxu`，HEAD `c6c08cb`。实施前关键源码副本留在 `/tmp/tingxu014-baseline/`，用于分辨本轮修改与用户既有修改。
+- 仓库根目录已核实为 `<repo-root>`，HEAD `c6c08cb`。实施前关键源码副本留在 `/tmp/tingxu014-baseline/`，用于分辨本轮修改与用户既有修改。
 - 既有未提交内容：图标、原生ScreenCaptureKit、Tauri配置/依赖、音频采集、工作台及相关测试。保留，不重置、不提交。
 - 实际链路：单一混合PCM、Gateway Paraformer、临时字符串、final先清草稿再异步声纹插入；真实声纹模型尚未运行。
 - 没有用户授权的真实会议音频/说话人标注清单；不能执行真实CER/DER/资源验收或向云供应商上传本地内容。合成事件只验证确定性行为。

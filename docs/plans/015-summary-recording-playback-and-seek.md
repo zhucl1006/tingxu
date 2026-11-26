@@ -85,7 +85,7 @@
 
 ## 2. 影响分析与门禁
 
-准确仓库：`/Users/zhuchunlei/work/02_mycode/tingxu`。图谱CLI前轮因watchdog/macOS SDK失败，MCP未暴露；本轮使用定向rg、源码、schema与测试降级，不复用陈旧图谱结论，实施前按project-workflow再核对。
+准确仓库：`<repo-root>`。图谱CLI前轮因watchdog/macOS SDK失败，MCP未暴露；本轮使用定向rg、源码、schema与测试降级，不复用陈旧图谱结论，实施前按project-workflow再核对。
 
 | 模块 | 变更/风险 |
 |---|---|

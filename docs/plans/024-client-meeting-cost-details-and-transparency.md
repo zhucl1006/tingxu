@@ -106,7 +106,7 @@
 
 ### 1.4 Code Review Graph 影响分析
 
-- **仓库根目录**：`/Users/zhuchunlei/work/02_mycode/tingxu`
+- **仓库根目录**：`<repo-root>`
 - **CLI/MCP 状态**：降级为源码、测试与 harness 分析
 - **受影响模块**：
   - `gateway/src/billing/aiUsageStore.ts`：增加按 meetingId 聚合逻辑；

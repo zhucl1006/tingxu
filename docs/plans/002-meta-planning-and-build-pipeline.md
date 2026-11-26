@@ -76,18 +76,18 @@
 
 ## 2. 实施产出清单
 
-1. [`docs/plans/003-desktop-skeleton-and-ui-workbench.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/003-desktop-skeleton-and-ui-workbench.md)
-2. [`docs/plans/004-dual-track-audio-capture.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/004-dual-track-audio-capture.md)
-3. [`docs/plans/005-streaming-asr-pipeline.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/005-streaming-asr-pipeline.md)
-4. [`docs/plans/006-in-meeting-insight-engine.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/006-in-meeting-insight-engine.md)
-5. [`docs/plans/007-local-first-storage-and-fts.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/007-local-first-storage-and-fts.md)
-6. [`docs/plans/008-ai-gateway-and-circuit-breaker.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/008-ai-gateway-and-circuit-breaker.md)
-7. [`docs/plans/009-control-plane-and-billing.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/009-control-plane-and-billing.md)
-8. [`docs/plans/010-release-packaging-and-e2e.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docs/plans/010-release-packaging-and-e2e.md)
-9. [`scripts/build-and-deploy.sh`](file:///Users/zhuchunlei/work/02_mycode/tingxu/scripts/build-and-deploy.sh)
-10. [`docker-compose.yml`](file:///Users/zhuchunlei/work/02_mycode/tingxu/docker-compose.yml)
-11. [`server/Dockerfile`](file:///Users/zhuchunlei/work/02_mycode/tingxu/server/Dockerfile)
-12. [`gateway/Dockerfile`](file:///Users/zhuchunlei/work/02_mycode/tingxu/gateway/Dockerfile)
+1. [`docs/plans/003-desktop-skeleton-and-ui-workbench.md`](../../docs/plans/003-desktop-skeleton-and-ui-workbench.md)
+2. [`docs/plans/004-dual-track-audio-capture.md`](../../docs/plans/004-dual-track-audio-capture.md)
+3. [`docs/plans/005-streaming-asr-pipeline.md`](../../docs/plans/005-streaming-asr-pipeline.md)
+4. [`docs/plans/006-in-meeting-insight-engine.md`](../../docs/plans/006-in-meeting-insight-engine.md)
+5. [`docs/plans/007-local-first-storage-and-fts.md`](../../docs/plans/007-local-first-storage-and-fts.md)
+6. [`docs/plans/008-ai-gateway-and-circuit-breaker.md`](../../docs/plans/008-ai-gateway-and-circuit-breaker.md)
+7. [`docs/plans/009-control-plane-and-billing.md`](../../docs/plans/009-control-plane-and-billing.md)
+8. [`docs/plans/010-release-packaging-and-e2e.md`](../../docs/plans/010-release-packaging-and-e2e.md)
+9. [`scripts/build-and-deploy.sh`](../../scripts/build-and-deploy.sh)
+10. [`docker-compose.yml`](../../docker-compose.yml)
+11. [`server/Dockerfile`](../../server/Dockerfile)
+12. [`gateway/Dockerfile`](../../gateway/Dockerfile)
 
 ---
 

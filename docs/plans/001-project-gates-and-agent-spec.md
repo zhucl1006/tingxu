@@ -69,9 +69,9 @@
 
 ## 2. 实施产出清单
 
-1. [`AGENTS.md`](file:///Users/zhuchunlei/work/02_mycode/tingxu/AGENTS.md)：根目录规范约束手册。
-2. [`scripts/verify-gates.sh`](file:///Users/zhuchunlei/work/02_mycode/tingxu/scripts/verify-gates.sh)：跨平台 5 大工程质量门禁自动化验证脚本。
-3. [`scripts/install-hooks.sh`](file:///Users/zhuchunlei/work/02_mycode/tingxu/scripts/install-hooks.sh)：Git pre-commit 钩子一键挂载脚本。
+1. [`AGENTS.md`](../../AGENTS.md)：根目录规范约束手册。
+2. [`scripts/verify-gates.sh`](../../scripts/verify-gates.sh)：跨平台 5 大工程质量门禁自动化验证脚本。
+3. [`scripts/install-hooks.sh`](../../scripts/install-hooks.sh)：Git pre-commit 钩子一键挂载脚本。
 
 ---
 
