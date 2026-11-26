@@ -230,6 +230,28 @@ fn is_system_audio_active(
     Ok(capture.is_running())
 }
 
+// 查询 macOS 屏幕与系统音频录制权限状态（不触发系统弹窗）
+#[tauri::command]
+fn check_system_audio_permission(
+    state: tauri::State<'_, AudioCaptureState>,
+) -> Result<tingxu_desktop::media::system_audio::SystemAudioPermissionStatus, AppError> {
+    let capture = state.0.lock().map_err(|e| AppError {
+        code: "LOCK_ERROR".into(),
+        message: format!("获取音频锁失败: {e}"),
+    })?;
+
+    Ok(capture.check_permission())
+}
+
+// 一键跳转到 macOS「屏幕与系统音频录制」系统设置面板
+#[tauri::command]
+fn open_system_audio_permission_settings() -> Result<(), AppError> {
+    tingxu_desktop::media::system_audio::open_system_audio_settings().map_err(|e| AppError {
+        code: format!("{:?}", e.code),
+        message: e.message,
+    })
+}
+
 fn main() {
     let audio_state = AudioCaptureState(Arc::new(Mutex::new(SystemAudioCapture::new())));
 
@@ -311,7 +333,9 @@ fn main() {
             start_system_audio_capture,
             stop_system_audio_capture,
             is_system_audio_active,
-            bind_recording_identity, clear_recording_identity, start_local_recording,
+            check_system_audio_permission,
+            open_system_audio_permission_settings,
+            bind_recording_identity, bind_standalone_recording_identity, clear_recording_identity, start_local_recording,
             append_local_recording, checkpoint_local_recording, finish_local_recording,
             open_local_recording, release_local_recording, delete_local_recording,
             get_recording_storage_usage, prune_local_recordings

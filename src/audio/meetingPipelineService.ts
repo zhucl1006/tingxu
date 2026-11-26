@@ -29,6 +29,41 @@ import {
 } from '../api/deepseekSuiteClient';
 import { getByokLlmClient, formatReferenceDocsContext } from '../api/byokLlmClient';
 
+function extractSystemAudioErrorMessage(err: unknown): string {
+  if (!err) return '';
+  if (typeof err === 'string') return err;
+  if (err instanceof Error) return err.message;
+  if (
+    typeof err === 'object' &&
+    'message' in err &&
+    typeof (err as { message?: unknown }).message === 'string'
+  ) {
+    return (err as { message: string }).message;
+  }
+  return String(err);
+}
+
+export function classifySystemAudioError(err: unknown): {
+  status: 'denied' | 'error';
+  message: string;
+} {
+  const raw = extractSystemAudioErrorMessage(err).trim();
+  const isPermissionIssue =
+    /权限|授权|屏幕与系统音频|ScreenCapture|NotAllowed|Permission|PERMISSION_DENIED|DevicePermissionDenied/i.test(
+      raw
+    );
+  if (isPermissionIssue) {
+    const message =
+      raw ||
+      '未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中勾选听序，并完全退出（Cmd+Q）后重新打开应用。';
+    return { status: 'denied', message };
+  }
+  return {
+    status: 'error',
+    message: raw || '系统音频内录未能启动，当前仅录制本机麦克风声音',
+  };
+}
+
 export class MeetingPipelineService {
   private activeMeetingId: string | null = null;
   private isRunning: boolean = false;
@@ -82,7 +117,11 @@ export class MeetingPipelineService {
     this.drainPromise = null;
 
     const store = useMeetingStore.getState();
-    const local = getLocalRecording(meetingId, store.currentUser?.token);
+    const isStandaloneMode = (store.byokSettings?.mode ?? 'standalone') === 'standalone';
+    const local = getLocalRecording(meetingId, store.currentUser?.token, {
+      standalone: isStandaloneMode,
+    });
+    store.setSystemAudioStatus('idle', '');
     let asrRecordingOffsetMs: number | null = null;
     let asrReady = false;
     let disposed = false;
@@ -497,9 +536,14 @@ export class MeetingPipelineService {
               return;
             }
             useMeetingStore.getState().setIsSystemAudioActive(true);
+            useMeetingStore.getState().setSystemAudioStatus('active', '');
           })
           .catch((err) => {
-            console.info('[Pipeline] 系统音频捕获提示:', err);
+            if (!isCurrent()) return;
+            const { status, message } = classifySystemAudioError(err);
+            console.info('[Pipeline] 系统音频捕获未生效:', message);
+            useMeetingStore.getState().setIsSystemAudioActive(false);
+            useMeetingStore.getState().setSystemAudioStatus(status, message);
           });
       })
       .catch((err) => {
@@ -775,8 +819,15 @@ export class MeetingPipelineService {
     this.systemAudioOperation = op;
     try {
       await op;
-      useMeetingStore.getState().setIsSystemAudioActive(!isCapturing);
-      return !isCapturing;
+      const nextActive = !isCapturing;
+      useMeetingStore.getState().setIsSystemAudioActive(nextActive);
+      useMeetingStore.getState().setSystemAudioStatus(nextActive ? 'active' : 'idle', '');
+      return nextActive;
+    } catch (err) {
+      const { status, message } = classifySystemAudioError(err);
+      useMeetingStore.getState().setIsSystemAudioActive(false);
+      useMeetingStore.getState().setSystemAudioStatus(status, message);
+      return false;
     } finally {
       if (this.systemAudioOperation === op) {
         this.systemAudioOperation = null;

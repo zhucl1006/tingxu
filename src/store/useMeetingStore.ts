@@ -209,6 +209,8 @@ const initialMeetingState = {
   isExtractingInsights: false,
   insightError: null as string | null,
   isSystemAudioActive: false,
+  systemAudioStatus: 'idle' as 'idle' | 'active' | 'denied' | 'error',
+  systemAudioError: '',
   selectedMicId: '',
   auxDeviceId: '',
   captureMode: 'speaker_meeting' as 'speaker_meeting' | 'mic_only',
@@ -570,7 +572,8 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
     set({ isStorageLoading: true });
     try {
       const token = get().currentUser?.token;
-      const usage = await getRecordingStorageUsage(token);
+      const standalone = (get().byokSettings?.mode ?? 'standalone') === 'standalone';
+      const usage = await getRecordingStorageUsage(token, { standalone });
       set({ storageUsage: usage });
     } finally {
       set({ isStorageLoading: false });
@@ -588,9 +591,11 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
 
   cleanupRecordings: async (options?: { olderThanDays?: number; targetIds?: string[] }) => {
     const token = get().currentUser?.token;
+    const standalone = (get().byokSettings?.mode ?? 'standalone') === 'standalone';
     const olderThanSecs = options?.olderThanDays ? options.olderThanDays * 86400 : undefined;
     const res = await pruneLocalRecordings({
       token,
+      standalone,
       olderThanSecs,
       targetIds: options?.targetIds,
     });
@@ -1513,6 +1518,7 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   setInterimText: (text, parts = { stable: '', unstable: '' }) => set({ interimText: text, interimParts: parts }),
   setIsExtractingInsights: (extracting) => set({ isExtractingInsights: extracting }),
   setIsSystemAudioActive: (active) => set({ isSystemAudioActive: active }),
+  setSystemAudioStatus: (status, error = '') => set({ systemAudioStatus: status, systemAudioError: error }),
   setSelectedMicId: (micId) => set({ selectedMicId: micId }),
   setAuxDeviceId: (deviceId) => set({ auxDeviceId: deviceId }),
   setCaptureMode: (mode) => set({ captureMode: mode }),
@@ -1546,12 +1552,15 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
       interimParts: { stable: '', unstable: '' },
       isExtractingInsights: false,
       isSystemAudioActive: false,
+      systemAudioStatus: 'idle',
+      systemAudioError: '',
     });
   },
 
   deleteHistoryMeeting: async (id: string) => {
     const media = get().historyMeetings.find(m => m.id === id)?.recording;
-    if (media) await deleteLocalMedia(media.id, get().currentUser?.token);
+    const standalone = (get().byokSettings?.mode ?? 'standalone') === 'standalone';
+    if (media) await deleteLocalMedia(media.id, get().currentUser?.token, { standalone });
     set((state) => {
       const newHistory = state.historyMeetings.filter((m) => m.id !== id);
       const newTasks = state.tasks.filter((t) => t.meetingId !== id);
@@ -1567,8 +1576,9 @@ export const useMeetingStore = create<MeetingState>((set, get) => ({
   },
 
   clearAllHistory: async () => {
+    const standalone = (get().byokSettings?.mode ?? 'standalone') === 'standalone';
     for (const meeting of get().historyMeetings) {
-      if (meeting.recording) await deleteLocalMedia(meeting.recording.id, get().currentUser?.token);
+      if (meeting.recording) await deleteLocalMedia(meeting.recording.id, get().currentUser?.token, { standalone });
     }
     saveStoredHistoryMeetings([]);
     saveStoredTasks([]);
