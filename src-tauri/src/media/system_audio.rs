@@ -1,4 +1,5 @@
 use crate::error::TingxuError;
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -6,6 +7,62 @@ use std::sync::Arc;
 use screencapturekit::cm::CMSampleBufferDataBufferExt;
 #[cfg(target_os = "macos")]
 use screencapturekit::prelude::*;
+
+#[cfg(target_os = "macos")]
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGPreflightScreenCaptureAccess() -> bool;
+    fn CGRequestScreenCaptureAccess() -> bool;
+}
+
+#[cfg(target_os = "macos")]
+fn preflight_screen_capture_access() -> bool {
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(target_os = "macos")]
+fn request_screen_capture_access() -> bool {
+    unsafe { CGRequestScreenCaptureAccess() }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemAudioPermissionStatus {
+    pub granted: bool,
+    pub already_prompted: bool,
+    pub platform: String,
+}
+
+/// 校验屏幕与系统音频录制权限；未授权时同一会话仅主动请求一次系统弹窗，
+/// 避免每次开会重复弹出 macOS TCC 对话框，并返回可执行的重启引导提示。
+pub fn ensure_permission_once(
+    permission_requested: &AtomicBool,
+    preflight: impl FnOnce() -> bool,
+    request_access: impl FnOnce() -> bool,
+) -> Result<(), TingxuError> {
+    if preflight() {
+        return Ok(());
+    }
+    if !permission_requested.swap(true, Ordering::SeqCst) {
+        let _ = request_access();
+    }
+    Err(TingxuError::permission_denied(
+        "未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中勾选听序，并完全退出（Cmd+Q）后重新打开应用。",
+    ))
+}
+
+pub fn open_system_audio_settings() -> Result<(), TingxuError> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .spawn()
+            .map_err(|e| {
+                TingxuError::permission_denied(format!("无法自动打开 macOS 系统权限设置: {e}"))
+            })?;
+    }
+    Ok(())
+}
 
 /// 浮点 PCM 到 16-bit 线性 PCM 的标准化转换器
 /// CoreMedia ScreenCaptureKit 音频常以 32-bit Float 交付，ASR 引擎需要标准 16-bit 小端 PCM
@@ -40,6 +97,7 @@ pub fn normalize_audio_to_pcm16(raw: &[u8]) -> Vec<u8> {
 
 pub struct SystemAudioCapture {
     running: Arc<AtomicBool>,
+    permission_requested: Arc<AtomicBool>,
     #[cfg(target_os = "macos")]
     stream: Option<SCStream>,
 }
@@ -82,6 +140,7 @@ impl SystemAudioCapture {
     pub fn new() -> Self {
         Self {
             running: Arc::new(AtomicBool::new(false)),
+            permission_requested: Arc::new(AtomicBool::new(false)),
             #[cfg(target_os = "macos")]
             stream: None,
         }
@@ -89,6 +148,25 @@ impl SystemAudioCapture {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    pub fn check_permission(&self) -> SystemAudioPermissionStatus {
+        #[cfg(target_os = "macos")]
+        {
+            SystemAudioPermissionStatus {
+                granted: preflight_screen_capture_access(),
+                already_prompted: self.permission_requested.load(Ordering::SeqCst),
+                platform: "macos".to_string(),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            SystemAudioPermissionStatus {
+                granted: true,
+                already_prompted: self.permission_requested.load(Ordering::SeqCst),
+                platform: std::env::consts::OS.to_string(),
+            }
+        }
     }
 
     /// 启动 macOS 原生免驱系统音频内录
@@ -103,9 +181,15 @@ impl SystemAudioCapture {
 
         #[cfg(target_os = "macos")]
         {
+            ensure_permission_once(
+                &self.permission_requested,
+                preflight_screen_capture_access,
+                request_screen_capture_access,
+            )?;
+
             let content = SCShareableContent::get().map_err(|e| {
                 TingxuError::permission_denied(format!(
-                    "未获得屏幕与系统音频录制权限，或获取内容源异常: {e}"
+                    "未获得屏幕与系统音频录制权限，或获取内容源异常（请确认已在系统设置勾选听序并完全退出 Cmd+Q 后重启）: {e}"
                 ))
             })?;
 
@@ -201,5 +285,54 @@ mod tests {
     fn test_system_audio_capture_lifecycle() {
         let capture = SystemAudioCapture::new();
         assert!(!capture.is_running());
+    }
+
+    #[test]
+    fn test_ensure_permission_once_blocks_without_repeating_os_prompt() {
+        use std::sync::atomic::AtomicUsize;
+
+        let prompted = AtomicBool::new(false);
+        let request_calls = AtomicUsize::new(0);
+
+        let first = ensure_permission_once(
+            &prompted,
+            || false,
+            || {
+                request_calls.fetch_add(1, Ordering::SeqCst);
+                false
+            },
+        );
+        assert!(first.is_err());
+        assert_eq!(request_calls.load(Ordering::SeqCst), 1);
+        assert!(first.unwrap_err().message.contains("Cmd+Q"));
+
+        // 同一应用生命周期内再次启动会议，不得重复触发系统弹窗
+        let second = ensure_permission_once(
+            &prompted,
+            || false,
+            || {
+                request_calls.fetch_add(1, Ordering::SeqCst);
+                false
+            },
+        );
+        assert!(second.is_err());
+        assert_eq!(request_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_ensure_permission_once_passes_when_granted() {
+        let prompted = AtomicBool::new(false);
+        let mut requested = false;
+        let res = ensure_permission_once(
+            &prompted,
+            || true,
+            || {
+                requested = true;
+                true
+            },
+        );
+        assert!(res.is_ok());
+        assert!(!requested);
+        assert!(!prompted.load(Ordering::SeqCst));
     }
 }

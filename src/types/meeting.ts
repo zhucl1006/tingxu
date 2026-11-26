@@ -509,6 +509,8 @@ export interface MeetingState {
   interimParts: { stable: string; unstable: string };
   isExtractingInsights: boolean;
   isSystemAudioActive: boolean;
+  systemAudioStatus: 'idle' | 'active' | 'denied' | 'error';
+  systemAudioError: string;
   selectedMicId: string;
   auxDeviceId: string;
   captureMode: 'speaker_meeting' | 'mic_only';
@@ -520,6 +522,7 @@ export interface MeetingState {
   setInterimText: (text: string, parts?: { stable: string; unstable: string }) => void;
   setIsExtractingInsights: (extracting: boolean) => void;
   setIsSystemAudioActive: (active: boolean) => void;
+  setSystemAudioStatus: (status: 'idle' | 'active' | 'denied' | 'error', error?: string) => void;
   setSelectedMicId: (micId: string) => void;
   setAuxDeviceId: (deviceId: string) => void;
   setCaptureMode: (mode: 'speaker_meeting' | 'mic_only') => void;

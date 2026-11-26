@@ -361,4 +361,74 @@ describe('MeetingPipelineService - 全局常驻会议流与洞察管道服务 (T
     expect(segs[0].channel).toBe('system');
     expect(segs[0].speaker).toBe('远端参会者');
   });
+
+  it('系统音频内录权限被拒时，不得静默吞掉错误，应写入 systemAudioStatus=denied 且保持 micStatus=recording (Issue #6 TDD)', async () => {
+    const mockCaptureInstance = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startSystemAudioCapture: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            '未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在系统设置中勾选听序并完全退出（Cmd+Q）后重启。'
+          )
+        ),
+      stopSystemAudioCapture: vi.fn().mockResolvedValue(undefined),
+      isSystemAudioCapturing: vi.fn().mockReturnValue(false),
+      switchDevice: vi.fn().mockResolvedValue(undefined),
+      setCaptureMode: vi.fn().mockResolvedValue(undefined),
+      isCapturing: vi.fn().mockReturnValue(true),
+    };
+    (RealAudioCapture as any).mockImplementationOnce((options: any) => {
+      (mockCaptureInstance as any)._options = options;
+      return mockCaptureInstance;
+    });
+
+    service.attach();
+    useMeetingStore.getState().startMeeting('系统音频权限透传测试会');
+
+    await vi.waitFor(() => {
+      expect(useMeetingStore.getState().systemAudioStatus).toBe('denied');
+    });
+
+    expect(useMeetingStore.getState().isSystemAudioActive).toBe(false);
+    expect(useMeetingStore.getState().systemAudioError).toContain('屏幕与系统音频录制');
+    // 麦克风本身正常录制，绝不应被系统音频权限失败覆盖成 micStatus='error'
+    expect(useMeetingStore.getState().micStatus).toBe('recording');
+    expect(useMeetingStore.getState().micError).toBe('');
+  });
+
+  it('手动点击 toggleSystemAudio 失败时写入 systemAudioStatus，重试成功后清除错误 (Issue #6 TDD)', async () => {
+    const startSysMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('未获得屏幕与系统音频录制权限'))
+      .mockResolvedValueOnce(undefined);
+    const mockCaptureInstance = {
+      start: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+      startSystemAudioCapture: startSysMock,
+      stopSystemAudioCapture: vi.fn().mockResolvedValue(undefined),
+      isSystemAudioCapturing: vi.fn().mockReturnValue(false),
+      switchDevice: vi.fn().mockResolvedValue(undefined),
+      setCaptureMode: vi.fn().mockResolvedValue(undefined),
+      isCapturing: vi.fn().mockReturnValue(true),
+    };
+    (RealAudioCapture as any).mockImplementationOnce((options: any) => {
+      (mockCaptureInstance as any)._options = options;
+      return mockCaptureInstance;
+    });
+
+    service.attach();
+    useMeetingStore.getState().startMeeting('手动重试系统内录测试会');
+
+    await vi.waitFor(() => {
+      expect(useMeetingStore.getState().systemAudioStatus).toBe('denied');
+    });
+
+    const ok = await service.toggleSystemAudio();
+    expect(ok).toBe(true);
+    expect(useMeetingStore.getState().isSystemAudioActive).toBe(true);
+    expect(useMeetingStore.getState().systemAudioStatus).toBe('active');
+    expect(useMeetingStore.getState().systemAudioError).toBe('');
+  });
 });

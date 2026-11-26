@@ -42,4 +42,36 @@ describe('bounded local recording session', () => {
   expect(passedPcm).toBeInstanceOf(Uint8Array);
   expect(Array.isArray(passedPcm)).toBe(false);
  });
+ it('单机模式下直接绑定本地沙箱身份，即使存在过期云端 token 也不调用控制面校验 (Issue #6 TDD)', async () => {
+  const calls: Array<{ name: string; args?: Record<string, unknown> }> = [];
+  const invoke = vi.fn(async (name: string, args?: Record<string, unknown>) => {
+   calls.push({ name, args });
+   if (name === 'bind_standalone_recording_identity') return 7;
+   if (name === 'start_local_recording') return 'rec_standalone_1';
+   return undefined;
+  });
+  const s = new LocalRecordingSession(invoke);
+  await s.start('stale-cloud-token', { standalone: true });
+
+  expect(s.error).toBeNull();
+  expect(calls.map((c) => c.name)).toEqual([
+   'bind_standalone_recording_identity',
+   'start_local_recording',
+  ]);
+ });
+ it('区分磁盘不可写与登录态失效错误，避免笼统误报 (Issue #6 TDD)', async () => {
+  const diskSession = new LocalRecordingSession(async () => {
+   throw new Error('本机录音目录不可写，请检查磁盘空间或读写权限');
+  });
+  await diskSession.start(undefined, { standalone: true });
+  expect(diskSession.error).toContain('磁盘');
+  expect(diskSession.error).not.toContain('登录');
+
+  const authSession = new LocalRecordingSession(async () => {
+   throw new Error('录音登录态校验失败，请重新登录');
+  });
+  await authSession.start('expired-token');
+  expect(authSession.error).toContain('登录');
+  expect(authSession.error).not.toContain('磁盘');
+ });
 });

@@ -473,6 +473,9 @@ export const InMeetingWorkbench: React.FC = () => {
     interimParts,
     isExtractingInsights,
     isSystemAudioActive,
+    systemAudioStatus,
+    systemAudioError,
+    setSystemAudioStatus,
     selectedMicId,
     setSelectedMicId,
     auxDeviceId,
@@ -696,6 +699,20 @@ export const InMeetingWorkbench: React.FC = () => {
     } catch (err: any) {
       console.warn('切换系统内录失败:', err);
     }
+  }, []);
+
+  // 打开 macOS「屏幕与系统音频录制」系统权限设置面板
+  const handleOpenSystemAudioSettings = useCallback(async () => {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      try {
+        const { invoke } = await import('@tauri-apps/api/core');
+        await invoke('open_system_audio_permission_settings');
+        return;
+      } catch (err) {
+        console.warn('打开系统权限设置失败:', err);
+      }
+    }
+    setShowAudioHelpModal(true);
   }, []);
 
   // 平滑或直接吸底滚动辅助函数（兼顾 jsdom 测试环境）
@@ -1698,6 +1715,47 @@ export const InMeetingWorkbench: React.FC = () => {
               className="m-3 p-2.5 rounded bg-status-danger/10 border border-status-danger/30 text-status-danger text-xs flex items-center justify-between"
             >
               <span>⚠️ {micError}</span>
+            </div>
+          )}
+
+          {systemAudioError && !isSystemAudioActive && (
+            <div
+              data-testid="workbench-page-transcript-panel-alert-system-audio-error"
+              className="mx-3 mt-3 p-2.5 rounded bg-status-warning-bg border border-status-warning-border text-status-warning text-xs flex flex-col gap-2"
+            >
+              <div className="flex items-start gap-1.5">
+                <span className="shrink-0">🎧</span>
+                <span className="leading-snug flex-1">
+                  {systemAudioStatus === 'denied' ? '系统音频内录权限未生效：' : '系统音频内录未生效：'}
+                  {systemAudioError}
+                </span>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-open-system-audio-settings"
+                  onClick={handleOpenSystemAudioSettings}
+                  className="px-2 py-0.5 rounded bg-brand-blue text-white text-[11px] font-medium hover:bg-brand-blue-hover transition-colors whitespace-nowrap"
+                >
+                  打开系统权限设置
+                </button>
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-retry-system-audio"
+                  onClick={handleToggleSystemAudio}
+                  className="px-2 py-0.5 rounded bg-panel border border-border-subtle text-text-primary text-[11px] hover:border-brand-blue transition-colors whitespace-nowrap"
+                >
+                  重试内录
+                </button>
+                <button
+                  type="button"
+                  data-testid="workbench-page-transcript-panel-btn-dismiss-system-audio-error"
+                  onClick={() => setSystemAudioStatus('idle', '')}
+                  className="px-1.5 py-0.5 rounded text-text-tertiary hover:text-text-primary text-[11px] transition-colors whitespace-nowrap"
+                >
+                  忽略
+                </button>
+              </div>
             </div>
           )}
 

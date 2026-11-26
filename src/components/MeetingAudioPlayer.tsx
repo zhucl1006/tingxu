@@ -7,12 +7,13 @@ interface Props {
  meetingId: string;
  recording?: RecordingReference;
  token?: string;
+ standalone?: boolean;
  warning?: string;
  seekTo?: { seconds: number; revision: number };
  onTime: (seconds: number) => void;
  onDeleteRecording?: () => void;
 }
-export const MeetingAudioPlayer = forwardRef<MeetingAudioHandle, Props>(({ meetingId, recording, token, warning, seekTo, onTime, onDeleteRecording }, ref) => {
+export const MeetingAudioPlayer = forwardRef<MeetingAudioHandle, Props>(({ meetingId, recording, token, standalone, warning, seekTo, onTime, onDeleteRecording }, ref) => {
  const audioRef = useRef<HTMLAudioElement>(null);
  const pendingSeek = useRef<number | null>(null);
  const [source, setSource] = useState<string>();
@@ -27,18 +28,18 @@ export const MeetingAudioPlayer = forwardRef<MeetingAudioHandle, Props>(({ meeti
   let disposed = false; let release: (() => void) | undefined;
   const audio = audioRef.current;
   setSource(undefined); setReady(false); setPlaying(false); setSeconds(0); setDuration(0); setRate(1); setError(null); pendingSeek.current = null;
-  if (recording && token) {
-   void openLocalMedia(recording.id, token).then(media => {
+  if (recording && (standalone || token)) {
+   void openLocalMedia(recording.id, token, { standalone }).then(media => {
     if (disposed) { media.release(); return; }
     release = media.release; setSource(media.url);
-   }).catch(() => { if (!disposed) setError('本机录音不可用，请检查文件或登录状态'); });
+   }).catch(() => { if (!disposed) setError(standalone ? '本机录音不可用，请检查本地录音文件' : '本机录音不可用，请检查文件或登录状态'); });
   }
   return () => {
    disposed = true;
    if (audio?.getAttribute('src')) { audio.pause(); audio.removeAttribute('src'); audio.load(); }
    release?.();
   };
- }, [meetingId, recording?.id, token]);
+ }, [meetingId, recording?.id, token, standalone]);
  const seek = (value: number) => {
   if (!Number.isFinite(value) || value < 0) return;
   const audio = audioRef.current;
@@ -48,7 +49,7 @@ export const MeetingAudioPlayer = forwardRef<MeetingAudioHandle, Props>(({ meeti
  };
  useImperativeHandle(ref, () => ({ seek }));
  useEffect(() => { if (seekTo) seek(seekTo.seconds); }, [seekTo?.revision]);
- const status = !recording ? warning || '本场会议未保存录音' : !token ? '请登录后读取本机录音' : error || (!ready ? '正在加载本机录音' : '录音仅保存在本机');
+ const status = !recording ? warning || '本场会议未保存录音' : !standalone && !token ? '请登录后读取本机录音' : error || (!ready ? '正在加载本机录音' : '录音仅保存在本机');
  const disabled = !ready || !source;
  return <div data-testid="summary-page-audio-player" className="p-3 bg-canvas border-t border-border-subtle flex flex-col gap-2 shrink-0">
   <audio key={meetingId} ref={audioRef} src={source} preload="metadata" data-testid="summary-page-audio-player-media"

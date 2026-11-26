@@ -2291,6 +2291,7 @@ export const MeetingSummaryView: React.FC = () => {
                     meetingId={meeting.id}
                     recording={meeting.recording}
                     token={currentUser?.token}
+                    standalone={(byokSettings.mode ?? 'standalone') === 'standalone'}
                     warning={meeting.recordingWarning}
                     seekTo={seekRequest}
                     onTime={(seconds) => setPlayingSegmentId(playingSegment(transcripts, seconds))}

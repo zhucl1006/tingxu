@@ -36,14 +36,19 @@ struct CachedIdentity {
     token_hash: String,
     identity: VerifiedIdentity,
 }
+pub const STANDALONE_RECORDING_ACCOUNT: &str = "local-standalone";
+
 fn error() -> TingxuError {
-    TingxuError::permission_denied("录音身份校验失败，请重新登录或检查本机控制面")
+    TingxuError::permission_denied("录音登录态校验失败，请重新登录或切换单机模式")
+}
+fn disk_error(detail: impl std::fmt::Display) -> TingxuError {
+    TingxuError::disk_io(format!("本机录音目录不可写，请检查磁盘空间或读写权限: {detail}"))
 }
 fn root(app: &tauri::AppHandle) -> Result<PathBuf, TingxuError> {
     app.path()
         .app_data_dir()
         .map(|p| p.join("recordings-v1"))
-        .map_err(|_| error())
+        .map_err(|e| disk_error(e))
 }
 fn with_store<T>(
     state: &LocalMedia,
@@ -51,6 +56,48 @@ fn with_store<T>(
 ) -> Result<T, TingxuError> {
     let mut lock = state.store.lock().map_err(|_| error())?;
     f(lock.as_mut().ok_or_else(error)?)
+}
+
+fn bind_standalone_in_dir(state: &LocalMedia, base: PathBuf) -> Result<u64, TingxuError> {
+    let hash = digest(b"standalone:local-standalone");
+    {
+        let lock = state.store.lock().map_err(|_| error())?;
+        let active = state.token_hash.lock().map_err(|_| error())?;
+        if active.as_deref() == Some(hash.as_str())
+            && lock.as_ref().map(|s| s.is_bound()).unwrap_or(false)
+        {
+            return Ok(state.generation.load(Ordering::SeqCst));
+        }
+    }
+    fs::create_dir_all(&base).map_err(disk_error)?;
+    let mut lock = state.store.lock().map_err(|_| error())?;
+    let mut active = state.token_hash.lock().map_err(|_| error())?;
+    if active.as_deref() == Some(hash.as_str())
+        && lock.as_ref().map(|s| s.is_bound()).unwrap_or(false)
+    {
+        return Ok(state.generation.load(Ordering::SeqCst));
+    }
+    if let Some(store) = lock.as_mut() {
+        store.clear();
+    }
+    if lock.is_none() {
+        *lock = Some(RecordingStore::new(base).map_err(disk_error)?);
+    }
+    let generation = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    lock.as_mut()
+        .ok_or_else(error)?
+        .bind(STANDALONE_RECORDING_ACCOUNT.to_string(), u64::MAX);
+    *active = Some(hash);
+    Ok(generation)
+}
+
+#[tauri::command]
+pub fn bind_standalone_recording_identity(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, LocalMedia>,
+) -> Result<u64, TingxuError> {
+    let base = root(&app)?;
+    bind_standalone_in_dir(&state, base)
 }
 #[tauri::command]
 pub async fn bind_recording_identity(
@@ -299,6 +346,21 @@ mod tests {
             s.start()
         });
         assert!(result.is_err());
+        std::fs::remove_dir_all(path).expect("test cleanup");
+    }
+
+    #[test]
+    fn standalone_identity_binds_without_control_plane_and_reuses_generation() {
+        let path = std::env::temp_dir().join(format!("tx-standalone-{}", uuid::Uuid::new_v4()));
+        let state = LocalMedia::default();
+
+        let gen1 = bind_standalone_in_dir(&state, path.clone()).expect("standalone bind succeeds");
+        let gen2 = bind_standalone_in_dir(&state, path.clone()).expect("standalone rebind reuses generation");
+        assert_eq!(gen1, gen2);
+
+        let recording_id = with_store(&state, |s| s.start()).expect("can start local recording");
+        assert_eq!(recording_id.len(), 32);
+
         std::fs::remove_dir_all(path).expect("test cleanup");
     }
 }
