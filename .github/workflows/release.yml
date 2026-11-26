@@ -55,6 +55,12 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'macos-latest' && (secrets.APPLE_SIGNING_IDENTITY || '-') || '' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.event.inputs.tag || (github.ref_type == 'tag' && github.ref_name) || 'v__VERSION__' }}
           releaseName: '听序 Tingxu v__VERSION__'
@@ -67,12 +73,25 @@ jobs:
             - 🎙️ **单机 BYOK 模式**：自备 API Key（DeepSeek、阿里云百炼通义千问、本地 Ollama 等），无需云端服务中转
             - 🔒 **本地数据主权**：录音与逐字稿仅在本地 SQLite 落盘，断网环境亦可离线查阅
             - 💡 **实时洞察控频降费**：支持手动提炼、周期可调与完全关闭模式，算力成本大幅降低
-            - 📋 **四维结构化纪要**：会后自动提炼关键决策、行动待办与事实依据，支持人工编辑保护
-            - 💻 **跨平台原生桌面体验**：支持 macOS（Universal 通用二进制，同时适配 Apple Silicon 与 Intel Mac）与 Windows（MSI / EXE）
+            - 📋 **四维结构化纪要**：会后自动提炼关键决策、行动待办与事实依据，支持人工编辑保护与双层防挤压思维导图
+            - 🧭 **托盘驻留与极速开录**：关闭窗口自动最小化至系统托盘（菜单/⌘Q 退出），支持多麦会议硬件感知自动浮现胶囊、菜单栏红点计时与全局快捷键 `⌥⌘R` / `Ctrl+Alt+R` 一键开录
+            - 💻 **跨平台原生桌面体验**：支持 macOS（Universal 通用二进制 + 完整 Ad-Hoc 封签，同时适配 Apple Silicon 与 Intel Mac）与 Windows（MSI / EXE）
 
             ### 📦 安装包下载说明
             - **macOS 用户**：下载 `.dmg` 文件直接拖拽至“应用程序”即可
+              - **首次打开说明**：开源免费版采用免费 Ad-Hoc 完整封签（未接入 Apple 付费商业公证）。如首次打开提示“无法验证开发者”或“已损坏”，请在终端执行一次 `xattr -cr /Applications/tingxu.app` 后再启动。
+              - **系统音频内录权限**：升级新版本后，若“屏幕与系统音频录制”开关已开但仍提示未生效，请在系统设置中选中 `tingxu` 先点 **`-` 移除**，再点 **`+` 重新添加 `/Applications/tingxu.app`**，完全退出（`Cmd+Q`）后重新打开即可。
             - **Windows 用户**：下载 `.msi` 或 `.exe` 安装程序按向导安装
           releaseDraft: false
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Verify macOS App Bundle Signature
+        if: matrix.platform == 'macos-latest'
+        run: |
+          APP_PATH="src-tauri/target/universal-apple-darwin/release/bundle/macos/tingxu.app"
+          test -d "$APP_PATH"
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          codesign -dvvv --arch=arm64 "$APP_PATH" 2>&1 | grep -q "Identifier=com.tingxu.app"
+          codesign -dvvv --arch=x86_64 "$APP_PATH" 2>&1 | grep -q "Identifier=com.tingxu.app"
+          echo "✓ macOS Universal App Bundle 签名校验通过 (arm64 + x86_64)"

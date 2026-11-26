@@ -47,7 +47,7 @@ pub fn ensure_permission_once(
         let _ = request_access();
     }
     Err(TingxuError::permission_denied(
-        "未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中勾选听序，并完全退出（Cmd+Q）后重新打开应用。",
+        "未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中勾选听序（若升级版本后已开启但仍提示未生效，请先选中听序点「-」移除再点「+」重新添加），并完全退出（Cmd+Q）后重新打开应用。",
     ))
 }
 
@@ -304,7 +304,9 @@ mod tests {
         );
         assert!(first.is_err());
         assert_eq!(request_calls.load(Ordering::SeqCst), 1);
-        assert!(first.unwrap_err().message.contains("Cmd+Q"));
+        let err_msg = first.unwrap_err().message;
+        assert!(err_msg.contains("Cmd+Q"));
+        assert!(err_msg.contains("移除") && err_msg.contains("重新添加"));
 
         // 同一应用生命周期内再次启动会议，不得重复触发系统弹窗
         let second = ensure_permission_once(

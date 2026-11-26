@@ -2,12 +2,83 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 use tauri::{AppHandle, Manager, LogicalSize, Emitter};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use tingxu_desktop::media::system_audio::SystemAudioCapture;
 use tingxu_desktop::media::recording_commands::*;
 
+const GLOBAL_QUICK_RECORD_SHORTCUT: &str = "CommandOrControl+Alt+R";
+
+fn format_tray_status(status: &str, elapsed_label: Option<&str>) -> (String, String) {
+    match status {
+        "RECORDING" => {
+            let timer = elapsed_label.unwrap_or("00:00");
+            (
+                format!(" ● {timer}"),
+                format!("听序 — 正在录制会议 ({timer})"),
+            )
+        }
+        "PAUSED" => {
+            let timer = elapsed_label.unwrap_or("00:00");
+            (
+                format!(" ⏸ {timer}"),
+                format!("听序 — 会议录音已暂停 ({timer})"),
+            )
+        }
+        _ => (String::new(), "听序 — AI 会议助手".to_string()),
+    }
+}
+
 #[derive(Clone)]
 struct AudioCaptureState(Arc<Mutex<SystemAudioCapture>>);
+
+#[derive(Clone, Default)]
+struct AppExitState(Arc<AtomicBool>);
+
+fn should_allow_window_close(exiting: bool) -> bool {
+    exiting
+}
+
+fn apply_floating_mode(main_window: &tauri::WebviewWindow, to_floating: bool) {
+    if to_floating {
+        // 切换为桌面极简置顶悬浮胶囊：先解除 900x600 最小约束，再调整尺寸与原生置顶，并禁用系统矩形阴影防止四角透黑/透白
+        let _ = main_window.set_min_size(None::<LogicalSize<f64>>);
+        let _ = main_window.set_resizable(false);
+        let _ = main_window.set_decorations(false);
+        let _ = main_window.set_always_on_top(true);
+        let _ = main_window.set_shadow(false);
+        let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
+        let _ = main_window.set_size(LogicalSize::new(360.0, 44.0));
+    } else {
+        // 恢复主工作台：恢复最小约束、可调节尺寸、保持无边框沉浸外观（由前端自定义窗口控制接管）、居中展现与原生窗口阴影
+        let _ = main_window.set_min_size(Some(LogicalSize::new(900.0, 600.0)));
+        let _ = main_window.set_resizable(true);
+        let _ = main_window.set_decorations(false);
+        let _ = main_window.set_always_on_top(false);
+        let _ = main_window.set_shadow(true);
+        let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
+        let _ = main_window.set_size(LogicalSize::new(1200.0, 800.0));
+        let _ = main_window.center();
+    }
+}
+
+fn show_and_focus_main_window(app: &AppHandle) {
+    if let Some(main_window) = app.get_webview_window("main") {
+        let _ = main_window.show();
+        let _ = main_window.unminimize();
+        let _ = main_window.set_focus();
+    }
+}
+
+fn stop_audio_capture_gracefully(app: &AppHandle) {
+    if let Some(audio_state) = app.try_state::<AudioCaptureState>() {
+        if let Ok(mut capture) = audio_state.0.lock() {
+            let _ = capture.stop();
+        }
+    }
+}
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 pub struct AppError {
@@ -19,26 +90,8 @@ pub struct AppError {
 #[tauri::command]
 fn toggle_floating_mode(app: AppHandle, to_floating: bool) -> Result<(), AppError> {
     if let Some(main_window) = app.get_webview_window("main") {
-        if to_floating {
-            // 切换为桌面极简置顶悬浮胶囊：先解除 900x600 最小约束，再调整尺寸与原生置顶，并禁用系统矩形阴影防止四角透黑/透白
-            let _ = main_window.set_min_size(None::<LogicalSize<f64>>);
-            let _ = main_window.set_resizable(false);
-            let _ = main_window.set_decorations(false);
-            let _ = main_window.set_always_on_top(true);
-            let _ = main_window.set_shadow(false);
-            let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
-            let _ = main_window.set_size(LogicalSize::new(360.0, 44.0));
-        } else {
-            // 恢复主工作台：恢复最小约束、可调节尺寸、保持无边框沉浸外观（由前端自定义窗口控制接管）、居中展现与原生窗口阴影
-            let _ = main_window.set_min_size(Some(LogicalSize::new(900.0, 600.0)));
-            let _ = main_window.set_resizable(true);
-            let _ = main_window.set_decorations(false);
-            let _ = main_window.set_always_on_top(false);
-            let _ = main_window.set_shadow(true);
-            let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
-            let _ = main_window.set_size(LogicalSize::new(1200.0, 800.0));
-            let _ = main_window.center();
-        }
+        apply_floating_mode(&main_window, to_floating);
+        let _ = main_window.show();
         return Ok(());
     }
 
@@ -46,6 +99,16 @@ fn toggle_floating_mode(app: AppHandle, to_floating: bool) -> Result<(), AppErro
         code: "WINDOW_NOT_FOUND".into(),
         message: "未找到目标窗口实例".into(),
     })
+}
+
+// 后台托盘检测到会议时，将隐藏窗口切换为 42px 置顶悬浮胶囊并浮现（不强抢主窗口焦点）
+#[tauri::command]
+fn reveal_floating_pill(app: AppHandle) -> Result<(), AppError> {
+    if let Some(main_window) = app.get_webview_window("main") {
+        apply_floating_mode(&main_window, true);
+        let _ = main_window.show();
+    }
+    Ok(())
 }
 
 // 原生窗口拖拽命令：由 Rust 端直接调用 AppKit/Cocoa performWindowDragWithEvent，规避前端插件权限限制
@@ -80,11 +143,45 @@ fn toggle_maximize_window(app: AppHandle) -> Result<(), AppError> {
     Ok(())
 }
 
-// 原生窗口关闭或隐藏命令
+// 原生窗口关闭命令：隐藏主窗口到系统托盘常驻，不退出进程
 #[tauri::command]
 fn close_window(app: AppHandle) -> Result<(), AppError> {
     if let Some(main_window) = app.get_webview_window("main") {
-        let _ = main_window.close();
+        let _ = main_window.hide();
+    }
+    Ok(())
+}
+
+// 真正退出应用命令（供 Cmd+Q 或托盘菜单「退出听序」调用）
+#[tauri::command]
+fn quit_app(
+    app: AppHandle,
+    exit_state: tauri::State<'_, AppExitState>,
+) -> Result<(), AppError> {
+    exit_state.0.store(true, Ordering::SeqCst);
+    stop_audio_capture_gracefully(&app);
+    app.exit(0);
+    Ok(())
+}
+
+// 同步会议录音状态到顶部菜单栏托盘（macOS 显示实时红点计时，全平台更新悬停提示）
+#[tauri::command]
+fn update_tray_recording_state(
+    app: AppHandle,
+    status: String,
+    elapsed_label: Option<String>,
+) -> Result<(), AppError> {
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let (title, tooltip) = format_tray_status(&status, elapsed_label.as_deref());
+        #[cfg(target_os = "macos")]
+        {
+            let _ = tray.set_title(Some(title));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = title;
+        }
+        let _ = tray.set_tooltip(Some(tooltip));
     }
     Ok(())
 }
@@ -254,9 +351,21 @@ fn open_system_audio_permission_settings() -> Result<(), AppError> {
 
 fn main() {
     let audio_state = AudioCaptureState(Arc::new(Mutex::new(SystemAudioCapture::new())));
+    let exit_state = AppExitState::default();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state == ShortcutState::Pressed {
+                        show_and_focus_main_window(app);
+                        let _ = app.emit("tingxu://tray-quick-start-meeting", ());
+                    }
+                })
+                .build(),
+        )
         .manage(audio_state)
+        .manage(exit_state)
         .manage(LocalMedia::default())
         .register_uri_scheme_protocol("tingxu-media", |ctx, request| {
             use tingxu_desktop::media::playback::read_range;
@@ -279,17 +388,16 @@ fn main() {
             } else { *response.status_mut()=tauri::http::StatusCode::RANGE_NOT_SATISFIABLE; }
             response
         })
-        .on_tray_icon_event(|app, event| {
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                button_state: tauri::tray::MouseButtonState::Up,
-                ..
-            } = event
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    let _ = window.show();
-                    let _ = window.unminimize();
-                    let _ = window.set_focus();
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let exiting = window
+                    .app_handle()
+                    .state::<AppExitState>()
+                    .0
+                    .load(Ordering::SeqCst);
+                if window.label() == "main" && !should_allow_window_close(exiting) {
+                    api.prevent_close();
+                    let _ = window.hide();
                 }
             }
         })
@@ -297,6 +405,85 @@ fn main() {
             if let Some(main_window) = app.get_webview_window("main") {
                 // 确保 Webview 与 Window 底层物理完全透明，杜绝 macOS 下圆角边缘露出直角白底
                 let _ = main_window.set_background_color(Some(tauri::utils::config::Color(0, 0, 0, 0)));
+            }
+
+            // 为系统托盘绑定原生菜单：支持一键秒开录制、唤起悬浮胶囊、显示主窗口与真正退出
+            if let Some(tray) = app.tray_by_id("main-tray") {
+                #[cfg(target_os = "macos")]
+                let quick_record_label = "🎙️ 快速开始会议录制 (⌥⌘R)";
+                #[cfg(not(target_os = "macos"))]
+                let quick_record_label = "🎙️ 快速开始会议录制 (Ctrl+Alt+R)";
+
+                let quick_record = MenuItem::with_id(
+                    app,
+                    "tray_quick_record",
+                    quick_record_label,
+                    true,
+                    None::<&str>,
+                )?;
+                let floating_pill = MenuItem::with_id(
+                    app,
+                    "tray_floating_pill",
+                    "💊 打开桌面悬浮胶囊",
+                    true,
+                    None::<&str>,
+                )?;
+                let show_main = MenuItem::with_id(
+                    app,
+                    "tray_show_main",
+                    "显示听序主窗口",
+                    true,
+                    None::<&str>,
+                )?;
+                let separator = PredefinedMenuItem::separator(app)?;
+                let quit_item = MenuItem::with_id(
+                    app,
+                    "tray_quit",
+                    "退出听序",
+                    true,
+                    Some("CmdOrCtrl+Q"),
+                )?;
+
+                let tray_menu = Menu::with_items(
+                    app,
+                    &[&quick_record, &floating_pill, &show_main, &separator, &quit_item],
+                )?;
+
+                let _ = tray.set_menu(Some(tray_menu));
+                let _ = tray.set_show_menu_on_left_click(true);
+                tray.on_menu_event(|app, event| match event.id.as_ref() {
+                    "tray_quick_record" => {
+                        show_and_focus_main_window(app);
+                        let _ = app.emit("tingxu://tray-quick-start-meeting", ());
+                    }
+                    "tray_floating_pill" => {
+                        if let Some(main_window) = app.get_webview_window("main") {
+                            apply_floating_mode(&main_window, true);
+                            let _ = main_window.show();
+                        }
+                        let _ = app.emit("tingxu://tray-open-floating-pill", ());
+                    }
+                    "tray_show_main" => {
+                        if let Some(main_window) = app.get_webview_window("main") {
+                            apply_floating_mode(&main_window, false);
+                            let _ = main_window.show();
+                            let _ = main_window.unminimize();
+                            let _ = main_window.set_focus();
+                        }
+                        let _ = app.emit("tingxu://tray-show-workbench", ());
+                    }
+                    "tray_quit" => {
+                        app.state::<AppExitState>().0.store(true, Ordering::SeqCst);
+                        stop_audio_capture_gracefully(app);
+                        app.exit(0);
+                    }
+                    _ => {}
+                });
+            }
+
+            // 注册系统级全局快捷开录热键（macOS: ⌥⌘R / Windows: Ctrl+Alt+R），若被占用则优雅降级不阻断启动
+            if let Err(err) = app.global_shortcut().register(GLOBAL_QUICK_RECORD_SHORTCUT) {
+                eprintln!("[Tingxu] 注册系统级全局快捷键 {GLOBAL_QUICK_RECORD_SHORTCUT} 失败（可能被其他软件占用）: {err}");
             }
 
             let handle = app.handle().clone();
@@ -319,10 +506,13 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             toggle_floating_mode,
+            reveal_floating_pill,
             drag_window,
             minimize_window,
             toggle_maximize_window,
             close_window,
+            quit_app,
+            update_tray_recording_state,
             set_floating_pill_visible,
             check_running_meeting_apps,
             check_local_asr_model,
@@ -340,6 +530,46 @@ fn main() {
             open_local_recording, release_local_recording, delete_local_recording,
             get_recording_storage_usage, prune_local_recordings
         ])
-        .run(tauri::generate_context!())
-        .expect("运行听序 Tauri 客户端异常");
+        .build(tauri::generate_context!())
+        .expect("构建听序 Tauri 客户端异常");
+
+    app.run(|app_handle, event| match event {
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::Reopen { .. } => {
+            show_and_focus_main_window(app_handle);
+        }
+        tauri::RunEvent::ExitRequested { .. } => {
+            app_handle
+                .state::<AppExitState>()
+                .0
+                .store(true, Ordering::SeqCst);
+            stop_audio_capture_gracefully(app_handle);
+        }
+        _ => {}
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_tray_status, should_allow_window_close};
+
+    #[test]
+    fn test_window_close_hides_to_tray_unless_explicitly_exiting() {
+        assert!(!should_allow_window_close(false));
+        assert!(should_allow_window_close(true));
+    }
+
+    #[test]
+    fn test_format_tray_status_reflects_recording_and_idle_states() {
+        let (title, tooltip) = format_tray_status("RECORDING", Some("03:45"));
+        assert_eq!(title, " ● 03:45");
+        assert!(tooltip.contains("03:45"));
+
+        let (paused_title, _) = format_tray_status("PAUSED", Some("03:45"));
+        assert_eq!(paused_title, " ⏸ 03:45");
+
+        let (idle_title, idle_tooltip) = format_tray_status("IDLE", None);
+        assert!(idle_title.is_empty());
+        assert_eq!(idle_tooltip, "听序 — AI 会议助手");
+    }
 }

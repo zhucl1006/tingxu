@@ -41,7 +41,7 @@ describe('AppLayout 自定义无边框窗口交互 (Issue #5 TDD)', () => {
     }
   });
 
-  it('按下 Cmd+W 或 Ctrl+W 快捷键时应触发 close_window 关闭当前窗口', () => {
+  it('按下 Cmd+W 或 Ctrl+W 快捷键时应触发 close_window 隐藏到托盘，按下 Cmd+Q 应触发 quit_app 真正退出', () => {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     try {
       render(<AppLayout />);
@@ -52,8 +52,21 @@ describe('AppLayout 自定义无边框窗口交互 (Issue #5 TDD)', () => {
       invokeMock.mockClear();
       fireEvent.keyDown(window, { key: 'W', ctrlKey: true });
       expect(invokeMock).toHaveBeenCalledWith('close_window');
+
+      invokeMock.mockClear();
+      fireEvent.keyDown(window, { key: 'q', metaKey: true });
+      expect(invokeMock).toHaveBeenCalledWith('quit_app');
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
     }
+  });
+
+  it('在空闲状态下按下 Cmd+Shift+R 应一键快速开始会议录制', () => {
+    render(<AppLayout />);
+    expect(useMeetingStore.getState().status).toBe('IDLE');
+
+    fireEvent.keyDown(window, { key: 'r', metaKey: true, shiftKey: true });
+    expect(useMeetingStore.getState().status).toBe('RECORDING');
+    expect(useMeetingStore.getState().currentRoute).toBe('record');
   });
 });

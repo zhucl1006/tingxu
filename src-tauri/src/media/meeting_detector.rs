@@ -36,6 +36,31 @@ const MEETING_APP_RULES: &[(&str, &str, &[&str])] = &[
         "dingtalk",
         &["dingtalk"],
     ),
+    (
+        "企业微信",
+        "wecom",
+        &["wxwork", "wecom", "企业微信"],
+    ),
+    (
+        "Webex",
+        "webex",
+        &["webex", "ciscowebex"],
+    ),
+    (
+        "FaceTime",
+        "facetime",
+        &["facetime"],
+    ),
+    (
+        "Google Meet",
+        "google_meet",
+        &["google meet"],
+    ),
+    (
+        "微信通话",
+        "wechat",
+        &["wechat"],
+    ),
 ];
 
 pub fn match_meeting_app_name(raw_name: &str) -> Option<(&'static str, &'static str)> {
@@ -60,6 +85,14 @@ pub fn match_meeting_app_name(raw_name: &str) -> Option<(&'static str, &'static 
 #[cfg(target_os = "macos")]
 #[link(name = "CoreAudio", kind = "framework")]
 extern "C" {
+    fn AudioObjectGetPropertyDataSize(
+        in_object_id: u32,
+        in_address: *const AudioObjectPropertyAddress,
+        in_qualifier_data_size: u32,
+        in_qualifier_data: *const std::ffi::c_void,
+        out_data_size: *mut u32,
+    ) -> i32;
+
     fn AudioObjectGetPropertyData(
         in_object_id: u32,
         in_address: *const AudioObjectPropertyAddress,
@@ -79,59 +112,168 @@ struct AudioObjectPropertyAddress {
 }
 
 #[cfg(target_os = "macos")]
+#[repr(C)]
+struct AudioBufferHeader {
+    m_number_channels: u32,
+    m_data_byte_size: u32,
+    m_data: *mut std::ffi::c_void,
+}
+
+#[cfg(target_os = "macos")]
 const K_AUDIO_OBJECT_SYSTEM_OBJECT: u32 = 1;
+#[cfg(target_os = "macos")]
+const K_AUDIO_HARDWARE_PROPERTY_DEVICES: u32 = 1684370979; // 'dev#'
 #[cfg(target_os = "macos")]
 const K_AUDIO_HARDWARE_PROPERTY_DEFAULT_INPUT_DEVICE: u32 = 1682533920; // 'dIn '
 #[cfg(target_os = "macos")]
 const K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL: u32 = 1735159650; // 'glob'
 #[cfg(target_os = "macos")]
+const K_AUDIO_DEVICE_PROPERTY_SCOPE_INPUT: u32 = 1768845428; // 'inpt'
+#[cfg(target_os = "macos")]
 const K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN: u32 = 0;
 #[cfg(target_os = "macos")]
 const K_AUDIO_DEVICE_PROPERTY_DEVICE_IS_RUNNING_SOMEWHERE: u32 = 1735356005; // 'gone'
+#[cfg(target_os = "macos")]
+const K_AUDIO_DEVICE_PROPERTY_STREAM_CONFIGURATION: u32 = 1936482681; // 'slay'
 
-/// 检测 macOS 系统默认麦克风当前是否处于活跃采集/录制状态 (CoreAudio HAL 硬件占用感知)
+#[cfg(target_os = "macos")]
+unsafe fn is_audio_device_running(device_id: u32) -> bool {
+    let mut is_running: u32 = 0;
+    let mut size = std::mem::size_of::<u32>() as u32;
+    let run_addr = AudioObjectPropertyAddress {
+        m_selector: K_AUDIO_DEVICE_PROPERTY_DEVICE_IS_RUNNING_SOMEWHERE,
+        m_scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
+        m_element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let status = AudioObjectGetPropertyData(
+        device_id,
+        &run_addr,
+        0,
+        std::ptr::null(),
+        &mut size,
+        &mut is_running as *mut u32 as *mut std::ffi::c_void,
+    );
+    status == 0 && is_running != 0
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn device_has_input_channels(device_id: u32) -> bool {
+    let addr = AudioObjectPropertyAddress {
+        m_selector: K_AUDIO_DEVICE_PROPERTY_STREAM_CONFIGURATION,
+        m_scope: K_AUDIO_DEVICE_PROPERTY_SCOPE_INPUT,
+        m_element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
+    };
+    let mut data_size: u32 = 0;
+    let status = AudioObjectGetPropertyDataSize(
+        device_id,
+        &addr,
+        0,
+        std::ptr::null(),
+        &mut data_size,
+    );
+    if status != 0 || data_size < std::mem::size_of::<u32>() as u32 {
+        return false;
+    }
+
+    let mut raw = vec![0u8; data_size as usize];
+    let status = AudioObjectGetPropertyData(
+        device_id,
+        &addr,
+        0,
+        std::ptr::null(),
+        &mut data_size,
+        raw.as_mut_ptr() as *mut std::ffi::c_void,
+    );
+    if status != 0 || raw.len() < std::mem::size_of::<u32>() {
+        return false;
+    }
+
+    let num_buffers = u32::from_ne_bytes([raw[0], raw[1], raw[2], raw[3]]) as usize;
+    if num_buffers == 0 {
+        return false;
+    }
+    // AudioBufferList: u32 mNumberBuffers + padding(4 on 64-bit) + [AudioBuffer]
+    let header_offset = std::mem::align_of::<AudioBufferHeader>();
+    let buf_size = std::mem::size_of::<AudioBufferHeader>();
+    for i in 0..num_buffers {
+        let offset = header_offset + i * buf_size;
+        if offset + std::mem::size_of::<u32>() <= raw.len() {
+            let channels = u32::from_ne_bytes([
+                raw[offset],
+                raw[offset + 1],
+                raw[offset + 2],
+                raw[offset + 3],
+            ]);
+            if channels > 0 {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// 检测 macOS 任意麦克风输入设备（含默认麦、AirPods、外接 USB 麦）当前是否处于活跃采集状态
 #[cfg(target_os = "macos")]
 pub fn is_system_microphone_active() -> bool {
     unsafe {
+        // 1. 快速路径：先查系统默认输入设备
         let mut default_input_device: u32 = 0;
         let mut size = std::mem::size_of::<u32>() as u32;
-        let addr = AudioObjectPropertyAddress {
+        let default_addr = AudioObjectPropertyAddress {
             m_selector: K_AUDIO_HARDWARE_PROPERTY_DEFAULT_INPUT_DEVICE,
             m_scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
             m_element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
         };
-
         let status = AudioObjectGetPropertyData(
             K_AUDIO_OBJECT_SYSTEM_OBJECT,
-            &addr,
+            &default_addr,
             0,
             std::ptr::null(),
             &mut size,
             &mut default_input_device as *mut u32 as *mut std::ffi::c_void,
         );
-
-        if status != 0 || default_input_device == 0 {
-            return false;
+        if status == 0 && default_input_device != 0 && is_audio_device_running(default_input_device) {
+            return true;
         }
 
-        let mut is_running: u32 = 0;
-        size = std::mem::size_of::<u32>() as u32;
-        let run_addr = AudioObjectPropertyAddress {
-            m_selector: K_AUDIO_DEVICE_PROPERTY_DEVICE_IS_RUNNING_SOMEWHERE,
+        // 2. 全量兜底：扫描所有具备输入声道的音频设备，防止会议软件选用非默认耳机麦时漏检
+        let devices_addr = AudioObjectPropertyAddress {
+            m_selector: K_AUDIO_HARDWARE_PROPERTY_DEVICES,
             m_scope: K_AUDIO_OBJECT_PROPERTY_SCOPE_GLOBAL,
             m_element: K_AUDIO_OBJECT_PROPERTY_ELEMENT_MAIN,
         };
-
-        let status = AudioObjectGetPropertyData(
-            default_input_device,
-            &run_addr,
+        let mut devices_size: u32 = 0;
+        let status = AudioObjectGetPropertyDataSize(
+            K_AUDIO_OBJECT_SYSTEM_OBJECT,
+            &devices_addr,
             0,
             std::ptr::null(),
-            &mut size,
-            &mut is_running as *mut u32 as *mut std::ffi::c_void,
+            &mut devices_size,
         );
+        if status != 0 || devices_size == 0 {
+            return false;
+        }
 
-        status == 0 && is_running != 0
+        let count = devices_size as usize / std::mem::size_of::<u32>();
+        let mut device_ids = vec![0u32; count];
+        let status = AudioObjectGetPropertyData(
+            K_AUDIO_OBJECT_SYSTEM_OBJECT,
+            &devices_addr,
+            0,
+            std::ptr::null(),
+            &mut devices_size,
+            device_ids.as_mut_ptr() as *mut std::ffi::c_void,
+        );
+        if status != 0 {
+            return false;
+        }
+
+        device_ids.into_iter().any(|dev_id| {
+            dev_id != 0
+                && dev_id != default_input_device
+                && device_has_input_channels(dev_id)
+                && is_audio_device_running(dev_id)
+        })
     }
 }
 
@@ -222,6 +364,22 @@ mod tests {
         assert_eq!(
             match_meeting_app_name("DingTalk"),
             Some(("钉钉", "dingtalk"))
+        );
+        assert_eq!(
+            match_meeting_app_name("WXWork"),
+            Some(("企业微信", "wecom"))
+        );
+        assert_eq!(
+            match_meeting_app_name("Webex"),
+            Some(("Webex", "webex"))
+        );
+        assert_eq!(
+            match_meeting_app_name("FaceTime"),
+            Some(("FaceTime", "facetime"))
+        );
+        assert_eq!(
+            match_meeting_app_name("WeChat"),
+            Some(("微信通话", "wechat"))
         );
 
         // 负例

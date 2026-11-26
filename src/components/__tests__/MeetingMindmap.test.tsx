@@ -232,4 +232,34 @@ describe('MeetingMindmap - 会议思维导图组件 (TDD)', () => {
     expect(badge).toHaveTextContent('00:15');fireEvent.click(badge);expect(onSeekSegment).toHaveBeenCalledWith('seg15');expect(onSeekTimestamp).not.toHaveBeenCalled();
   });
 
+  it('长标题与长责任人标签分层排布、不挤压成竖排，且去除重复前导圆点', () => {
+    const longActionMeeting: HistoryMeeting = {
+      ...mockMeeting,
+      structuredSummary: {
+        suggestedTitle: '产品发版早会',
+        overview: '汇总发版安排。',
+        decisions: [],
+        actions: [
+          {
+            title: '· 与产品确认卡片配置方案并安排合理迭代',
+            assignee: '待确认 (发言者跟进，秋月协同)',
+            dueDate: '待确认',
+            evidenceQuote: '02:42',
+          },
+        ],
+        risks: [],
+        facts: [],
+      },
+    };
+    render(<MeetingMindmap meeting={longActionMeeting} />);
+
+    // 去除 AI 返回的前导中点，不再出现 "• · 与产品..." 双圆点
+    expect(screen.getByText('• 与产品确认卡片配置方案并安排合理迭代')).toBeInTheDocument();
+    // 时间戳与长责任人标签放入独立可换行元信息行，避免与主标题抢宽
+    const metaRow = screen.getByTestId('meeting-mindmap-meta-row-node-action-0');
+    expect(metaRow).toHaveClass('flex-wrap');
+    expect(metaRow).toHaveTextContent('02:42');
+    expect(metaRow).toHaveTextContent('👤 待确认 (发言者跟进，秋月协同)');
+  });
+
 });

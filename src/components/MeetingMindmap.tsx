@@ -362,7 +362,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
       <div
         key={branch.id}
         data-testid={`meeting-mindmap-branch-${branch.id}`}
-        className={`w-[310px] rounded-xl border ${colors.border} ${colors.bg} p-3.5 transition-all shadow-xs flex flex-col`}
+        className={`w-[340px] rounded-xl border ${colors.border} ${colors.bg} p-3 transition-all shadow-xs flex flex-col`}
       >
         {/* 分支标题条 */}
         <div className={`flex items-center justify-between gap-2 ${alignLeft ? 'flex-row-reverse' : ''}`}>
@@ -385,51 +385,61 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
 
         {/* 分支子节点列表 */}
         {!isCollapsed && branch.children && (
-          <div className={`mt-3 space-y-2.5 ${alignLeft ? 'pr-2 border-r-2' : 'pl-2 border-l-2'} border-border-subtle/70`}>
-            {branch.children.map((child) => (
-              <div
-                key={child.id}
-                data-testid={`meeting-mindmap-node-${child.id}`}
-                className="p-2.5 rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue/30 transition-all text-xs space-y-1 shadow-xs"
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold text-text-primary flex items-center gap-1.5">
-                    <span className={`w-1.5 h-1.5 rounded-full ${colors.dot}`} />
-                    <span>• {child.title}</span>
-                  </span>
-                  <div className="flex items-center gap-1 shrink-0">
-                    {child.timeQuote && (
-                      <button
-                        type="button"
-                        data-testid={`meeting-mindmap-badge-time-${child.id}`}
-                        onClick={() => child.evidenceSegmentId && onSeekSegment ? onSeekSegment(child.evidenceSegmentId) : onSeekTimestamp?.(child.timeQuote!)}
-                        className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-subtle text-brand-blue hover:bg-brand-blue hover:text-white cursor-pointer transition-colors"
-                        title="点击定位现场原声与逐字稿"
-                      >
-                        ⏱ {child.timeQuote}
-                      </button>
-                    )}
-                    {child.badge && (
-                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-subtle text-text-secondary">
-                        {child.badge}
-                      </span>
-                    )}
+          <div className={`mt-2.5 space-y-2 ${alignLeft ? 'pr-2 border-r-2' : 'pl-2 border-l-2'} border-border-subtle/70`}>
+            {branch.children.map((child) => {
+              const cleanTitle = child.title.replace(/^[•·\-–—]\s*/, '');
+              return (
+                <div
+                  key={child.id}
+                  data-testid={`meeting-mindmap-node-${child.id}`}
+                  className="p-2.5 rounded-lg bg-canvas border border-border-subtle hover:border-brand-blue/30 transition-all text-xs space-y-1.5 shadow-xs overflow-hidden"
+                >
+                  {/* 主标题独占完整行宽，杜绝被责任人/时间标签挤压成单字竖排 */}
+                  <div className="min-w-0">
+                    <span className="font-semibold text-text-primary leading-snug break-words block">
+                      • {cleanTitle}
+                    </span>
                   </div>
+
+                  {/* 时码与责任人/标签作为次级元信息行自动换行 */}
+                  {(child.timeQuote || child.badge) && (
+                    <div
+                      data-testid={`meeting-mindmap-meta-row-${child.id}`}
+                      className="flex flex-wrap items-center gap-1.5 pl-2.5"
+                    >
+                      {child.timeQuote && (
+                        <button
+                          type="button"
+                          data-testid={`meeting-mindmap-badge-time-${child.id}`}
+                          onClick={() => child.evidenceSegmentId && onSeekSegment ? onSeekSegment(child.evidenceSegmentId) : onSeekTimestamp?.(child.timeQuote!)}
+                          className="text-[10px] font-mono tabular-nums px-1.5 py-0.5 rounded bg-subtle text-brand-blue hover:bg-brand-blue hover:text-white cursor-pointer transition-colors shrink-0"
+                          title="点击定位现场原声与逐字稿"
+                        >
+                          ⏱ {child.timeQuote}
+                        </button>
+                      )}
+                      {child.badge && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-subtle text-text-secondary break-words leading-snug max-w-full">
+                          {child.badge}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {child.detail && child.detail !== child.title && (
+                    <p className="text-[11px] text-text-secondary leading-relaxed pl-2.5 break-words">
+                      {child.detail}
+                    </p>
+                  )}
+
+                  {child.meta && (
+                    <div className="text-[10px] text-text-tertiary font-mono pl-2.5 break-words">
+                      {child.meta}
+                    </div>
+                  )}
                 </div>
-
-                {child.detail && child.detail !== child.title && (
-                  <p className="text-[11px] text-text-secondary leading-relaxed pl-2.5">
-                    {child.detail}
-                  </p>
-                )}
-
-                {child.meta && (
-                  <div className="text-[10px] text-text-tertiary font-mono pl-2.5">
-                    {child.meta}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -466,7 +476,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
               type="button"
               data-testid="meeting-mindmap-btn-zoom-out"
               onClick={() => setZoomLevel((z) => Math.max(60, z - 10))}
-              className="px-1 hover:text-brand-blue"
+              className="px-1.5 py-0.5 hover:text-brand-blue"
               title="缩小"
             >
               -
@@ -476,7 +486,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
               type="button"
               data-testid="meeting-mindmap-btn-zoom-in"
               onClick={() => setZoomLevel((z) => Math.min(140, z + 10))}
-              className="px-1 hover:text-brand-blue"
+              className="px-1.5 py-0.5 hover:text-brand-blue"
               title="放大"
             >
               +
@@ -485,7 +495,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
               type="button"
               data-testid="meeting-mindmap-btn-zoom-reset"
               onClick={() => { dragRef.current = null; setIsDragging(false); setZoomLevel(100); setPan({ x: 0, y: 0 }); }}
-              className="text-[10px] text-text-tertiary hover:text-text-primary ml-1"
+              className="text-[11px] text-text-tertiary hover:text-text-primary px-1 py-0.5"
               title="回到中心并重置缩放"
               aria-label="回到中心并重置缩放"
             >
@@ -551,7 +561,7 @@ export const MeetingMindmap: React.FC<MeetingMindmapProps> = ({ meeting, onSeekT
         <div
           data-testid="summary-page-mindmap-div-content"
           style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${zoomLevel / 100})`, transformOrigin: 'center center' }}
-          className="absolute left-1/2 top-1/2 inline-flex items-center justify-center gap-12 lg:gap-16 w-max"
+          className="absolute left-1/2 top-1/2 inline-flex items-center justify-center gap-8 lg:gap-12 w-max"
         >
           {/* SVG 贝塞尔曲线连线层 (平滑曲线) */}
           <svg

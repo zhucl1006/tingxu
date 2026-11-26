@@ -1,6 +1,6 @@
 [package]
 name = "tingxu-desktop"
-version = "0.4.2"
+version = "0.4.3"
 description = "听序 — AI 实时会议记录与智能纪要桌面助手"
 authors = ["Tingxu Team"]
 edition = "2021"
@@ -24,3 +24,6 @@ sysinfo = "0.30"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 screencapturekit = { version = "11", features = ["async"] }
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-global-shortcut = "2"

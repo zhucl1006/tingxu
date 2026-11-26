@@ -5,6 +5,7 @@ import { AppLayout } from './components/AppLayout';
 import { FloatingPill } from './components/FloatingPill';
 import { DetectedMeetingApp } from './types/meeting';
 import { getMeetingPipelineService } from './audio/meetingPipelineService';
+import { formatSeconds } from './utils/formatTime';
 
 export const App: React.FC = () => {
   useAppearance();
@@ -20,6 +21,7 @@ export const App: React.FC = () => {
     setActiveWindow,
     tickTimer,
     status,
+    elapsedSeconds,
     setDetectedMeetingApp,
   } = useMeetingStore();
 
@@ -43,30 +45,69 @@ export const App: React.FC = () => {
     }
   }, [setActiveWindow]);
 
-  // 监听 Tauri 原生进程检测事件（第三方会议软件启动通知）
+  // 监听 Tauri 原生进程检测事件与托盘快捷操作（快速开录、胶囊切换、主窗口恢复）
   useEffect(() => {
     if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
       return;
     }
 
-    let unlisten: (() => void) | undefined;
-    import('@tauri-apps/api/event')
-      .then(({ listen }) => {
-        return listen<DetectedMeetingApp | DetectedMeetingApp[] | null>('meeting_app_detected', (event) => {
-          const payload = event.payload;
-          const app = Array.isArray(payload) ? (payload.length > 0 ? payload[0] : null) : payload;
-          setDetectedMeetingApp(app);
-        });
-      })
-      .then((fn) => {
-        unlisten = fn;
+    let unlisteners: Array<() => void> = [];
+    let cancelled = false;
+
+    Promise.all([
+      import('@tauri-apps/api/event'),
+      import('@tauri-apps/api/core'),
+    ])
+      .then(async ([{ listen }, { invoke }]) => {
+        const fns = await Promise.all([
+          listen<DetectedMeetingApp | DetectedMeetingApp[] | null>('meeting_app_detected', (event) => {
+            const payload = event.payload;
+            const app = Array.isArray(payload) ? (payload.length > 0 ? payload[0] : null) : payload;
+            const prevDetected = useMeetingStore.getState().detectedMeetingApp;
+            setDetectedMeetingApp(app);
+
+            // 若当前处于托盘隐藏待机态，且新检测到第三方会议软件激活，自动浮现 42px 置顶悬浮胶囊提示一键开录
+            const nextState = useMeetingStore.getState();
+            if (
+              app &&
+              !prevDetected &&
+              nextState.status === 'IDLE' &&
+              nextState.detectedMeetingApp?.appId === app.appId &&
+              document.hidden
+            ) {
+              nextState.setActiveWindow('floating-pill');
+              void invoke('reveal_floating_pill').catch(() => {});
+            }
+          }),
+          listen('tingxu://tray-quick-start-meeting', () => {
+            const state = useMeetingStore.getState();
+            if (state.status === 'IDLE') {
+              state.startMeeting();
+            } else {
+              state.setCurrentRoute('record');
+            }
+          }),
+          listen('tingxu://tray-open-floating-pill', () => {
+            useMeetingStore.getState().setActiveWindow('floating-pill');
+          }),
+          listen('tingxu://tray-show-workbench', () => {
+            useMeetingStore.getState().setActiveWindow('workbench');
+          }),
+        ]);
+
+        if (cancelled) {
+          fns.forEach((fn) => fn());
+        } else {
+          unlisteners = fns;
+        }
       })
       .catch((err) => {
-        console.warn('[App] 监听 meeting_app_detected 失败:', err);
+        console.warn('[App] 监听 Tauri 原生事件失败:', err);
       });
 
     return () => {
-      if (unlisten) unlisten();
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
     };
   }, [setDetectedMeetingApp]);
 
@@ -80,6 +121,25 @@ export const App: React.FC = () => {
 
     return () => clearInterval(timer);
   }, [status, tickTimer]);
+
+  // 将会议录音状态与计时实时同步至顶部菜单栏托盘（macOS 显示 ● MM:SS）
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('__TAURI_INTERNALS__' in window)) {
+      return;
+    }
+
+    const elapsedLabel =
+      status === 'RECORDING' || status === 'PAUSED' ? formatSeconds(elapsedSeconds) : null;
+
+    import('@tauri-apps/api/core')
+      .then(({ invoke }) => {
+        void invoke('update_tray_recording_state', {
+          status,
+          elapsedLabel,
+        }).catch(() => {});
+      })
+      .catch(() => {});
+  }, [status, elapsedSeconds]);
 
   // 全场景根节点透明治理：html 与 body 始终保持透明，彻底杜绝主工作台与悬浮胶囊四角露出直角矩形底色
   useEffect(() => {

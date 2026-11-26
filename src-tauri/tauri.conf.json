@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "tingxu",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "identifier": "com.tingxu.app",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -12,6 +12,7 @@
   "app": {
     "macOSPrivateApi": true,
     "trayIcon": {
+      "id": "main-tray",
       "iconPath": "icons/tray-icon.png",
       "tooltip": "听序 — AI 会议助手"
     },
@@ -46,6 +47,7 @@
     "longDescription": "听序（Tingxu）是一款专注于中国大陆办公场景的高性能本地优先 AI 实时会议记录与智能纪要助手。",
     "category": "Productivity",
     "macOS": {
+      "signingIdentity": "-",
       "hardenedRuntime": true,
       "entitlements": "Entitlements.plist",
       "infoPlist": "Info.plist"

@@ -55,7 +55,7 @@ export function classifySystemAudioError(err: unknown): {
   if (isPermissionIssue) {
     const message =
       raw ||
-      '未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中勾选听序，并完全退出（Cmd+Q）后重新打开应用。';
+      '未获得 macOS「屏幕与系统音频录制」权限，远端参会者声音暂无法拾取。请在「系统设置 → 隐私与安全性 → 屏幕与系统音频录制」中勾选听序（若升级版本后已开启但仍提示未生效，请先选中听序点「-」移除再点「+」重新添加），并完全退出（Cmd+Q）后重新打开应用。';
     return { status: 'denied', message };
   }
   return {

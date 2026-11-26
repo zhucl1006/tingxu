@@ -16,6 +16,7 @@ export const AppLayout: React.FC = () => {
     currentRoute,
     detectedMeetingApp,
     status,
+    startMeeting,
     quickStartDetectedMeeting,
     dismissDetectedMeetingApp,
   } = useMeetingStore();
@@ -31,27 +32,45 @@ export const AppLayout: React.FC = () => {
   const handleCloseWindow = useCallback(() => {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       invoke('close_window').catch(() => {
-        getCurrentWebviewWindow().close().catch(() => {});
+        getCurrentWebviewWindow().hide().catch(() => {});
       });
     }
   }, []);
 
-  // 无边框窗口支持 Cmd+W (macOS) / Ctrl+W (Windows/Linux) 关闭快捷键
+  const handleQuitApp = useCallback(() => {
+    if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+      invoke('quit_app').catch(() => {});
+    }
+  }, []);
+
+  // 无边框窗口快捷键：Cmd/Ctrl+W 隐藏至托盘，Cmd+Q 退出应用，Cmd/Ctrl+Shift+R 极速开录
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        !event.altKey &&
-        !event.shiftKey &&
-        event.key.toLowerCase() === 'w'
-      ) {
+      const key = event.key.toLowerCase();
+      if ((event.metaKey || event.ctrlKey) && !event.altKey && !event.shiftKey && key === 'w') {
         event.preventDefault();
         handleCloseWindow();
+        return;
+      }
+      if (event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && key === 'q') {
+        event.preventDefault();
+        handleQuitApp();
+        return;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.shiftKey && !event.altKey && key === 'r') {
+        const target = event.target as HTMLElement | null;
+        const isTyping =
+          target &&
+          (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable);
+        if (!isTyping && useMeetingStore.getState().status === 'IDLE') {
+          event.preventDefault();
+          startMeeting();
+        }
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleCloseWindow]);
+  }, [handleCloseWindow, handleQuitApp, startMeeting]);
 
   const renderActiveView = () => {
     switch (currentRoute) {

@@ -61,7 +61,7 @@ describe('WindowControls - 自定义无边框窗口控制组件 (TDD: Custom Win
     }
   });
 
-  it('点击关闭按钮时触发原生窗口关闭或隐藏动作', () => {
+  it('点击关闭按钮时应调用 close_window 隐藏到系统托盘，而不直接销毁退出应用', () => {
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
     try {
       render(<WindowControls />);
@@ -69,7 +69,7 @@ describe('WindowControls - 自定义无边框窗口控制组件 (TDD: Custom Win
       fireEvent.click(closeBtn);
 
       expect(invokeMock).toHaveBeenCalledWith('close_window');
-      expect(closeMock).toHaveBeenCalled();
+      expect(closeMock).not.toHaveBeenCalled();
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
     }

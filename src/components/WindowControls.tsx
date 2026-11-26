@@ -9,10 +9,12 @@ export const WindowControls: React.FC = () => {
   const handleClose = () => {
     if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
       try {
-        invoke('close_window').catch(() => {});
-        getCurrentWebviewWindow().close().catch(() => {});
+        // 点击关闭按钮仅隐藏到系统托盘常驻，不销毁窗口或退出应用
+        invoke('close_window').catch(() => {
+          getCurrentWebviewWindow().hide().catch(() => {});
+        });
       } catch (err) {
-        console.warn('[WindowControls] close failed:', err);
+        console.warn('[WindowControls] hide to tray failed:', err);
       }
     }
   };
@@ -47,7 +49,7 @@ export const WindowControls: React.FC = () => {
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         onClick={handleClose}
         className="w-3 h-3 rounded-full bg-[#ff5f57] border border-[#e0443e] flex items-center justify-center text-[8px] text-[#730000] font-bold opacity-90 hover:opacity-100 transition-all cursor-pointer shadow-sm active:scale-95"
-        title="关闭窗口"
+        title="关闭窗口（隐藏至系统托盘）"
       >
         <span className="opacity-0 group-hover:opacity-100 leading-none">✕</span>
       </button>
